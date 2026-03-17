@@ -25,7 +25,7 @@ import yaml
 from PIL import Image, PngImagePlugin
 from plyfile import PlyData, PlyElement
 from safetensors.torch import load_file as load_sft, save_file as save_sft
-from torchvision.io import decode_image
+from torchvision.io import decode_image, read_file
 from yaml import CLoader
 
 from mapanything.utils.wai.ops import (
@@ -359,7 +359,7 @@ def _load_image(
 
     # Fastest way to load into torch tensor
     if resize is None and fmt == "torch":
-        return decode_image(str(fname)).float() / 255.0
+        return decode_image(read_file(str(fname))).float() / 255.0
 
     # Load using PIL
     with open(fname, "rb") as f:
