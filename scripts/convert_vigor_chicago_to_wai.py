@@ -26,8 +26,6 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from mapanything.utils.wai.core import store_data
-
 
 def natural_key(name: str) -> list[object]:
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
@@ -117,16 +115,7 @@ def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool) -> dict[s
     with open(target_scene_root / "scene_meta.json", "w", encoding="utf-8") as f:
         json.dump(scene_meta, f, indent=2)
 
-    num_frames = len(wai_frames)
-    covis_dir = target_scene_root / "covisibility" / "v0"
-    covis_dir.mkdir(parents=True, exist_ok=True)
-    covis = np.ones((num_frames, num_frames), dtype=np.float32)
-    stale_covis = covis_dir / "full_dense.npy"
-    if stale_covis.exists():
-        stale_covis.unlink()
-    store_data(covis_dir / "full_dense.npy", covis, "mmap")
-
-    return {"scene_name": scene_name, "num_frames": num_frames}
+    return {"scene_name": scene_name, "num_frames": len(wai_frames)}
 
 
 def parse_args() -> argparse.Namespace:

@@ -69,22 +69,27 @@ class VigorChicagoWAI(BaseDataset):
         scene_file_names = list(scene_meta["frame_names"].keys())
         num_views_in_scene = len(scene_file_names)
 
-        covisibility_map_dir = os.path.join(scene_root, "covisibility", "v0")
-        covisibility_candidates = sorted(
-            f for f in os.listdir(covisibility_map_dir) if f.endswith(".npy")
+        pairwise_covis_meta = scene_meta.get("scene_modalities", {}).get(
+            "pairwise_covisibility"
         )
-        covisibility_map_name = next(
-            (
-                f
-                for f in covisibility_candidates
-                if "--" in f
-            ),
-            covisibility_candidates[0],
-        )
-        pairwise_covisibility = load_data(
-            os.path.join(covisibility_map_dir, covisibility_map_name),
-            "mmap",
-        )
+        if pairwise_covis_meta:
+            covisibility_map_path = os.path.join(
+                scene_root, pairwise_covis_meta["scene_key"]
+            )
+        else:
+            covisibility_map_dir = os.path.join(scene_root, "covisibility", "v0")
+            covisibility_candidates = sorted(
+                f for f in os.listdir(covisibility_map_dir) if f.endswith(".npy")
+            )
+            covisibility_map_name = next(
+                (f for f in covisibility_candidates if "--" in f),
+                covisibility_candidates[0],
+            )
+            covisibility_map_path = os.path.join(
+                covisibility_map_dir, covisibility_map_name
+            )
+
+        pairwise_covisibility = load_data(covisibility_map_path, "mmap")
 
         view_indices = self._sample_view_indices(
             num_views_to_sample, num_views_in_scene, pairwise_covisibility

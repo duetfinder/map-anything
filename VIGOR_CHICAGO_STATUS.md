@@ -59,8 +59,18 @@ vigor_chicago_processed/
 
 - 将 `jpg + exr + npz` 转为 WAI scene 结构
 - 为每个 scene 生成 `scene_meta.json`
-- 生成多视角采样所需的 covisibility 文件
 - 生成 train / val / test scene list
+
+新增 GT depth covisibility 生成脚本：
+
+- [scripts/generate_vigor_chicago_gt_covisibility.py](/root/autodl-tmp/Models/map-anything/scripts/generate_vigor_chicago_gt_covisibility.py)
+
+作用：
+
+- 复用 MapAnything / WAI 原生 covisibility 计算逻辑
+- 直接使用 VIGOR Chicago 已有的 GT depth `.exr`
+- 为每个 scene 生成真实的 `pairwise_covisibility--NxN.npy`
+- 更新每个 scene 的 `scene_meta.json`，让 dataset 直接读取真实 covisibility
 
 ### 3.2 自定义数据集注册
 
@@ -116,16 +126,38 @@ vigor_chicago_processed/
 MapAnything 的 WAI loader 读取 covisibility 时，要求文件名里编码矩阵 shape，例如：
 
 ```text
-full_dense--45x45.npy
+pairwise_covisibility--45x45.npy
 ```
 
-因此转换脚本已经改成使用 MapAnything 自己的 `store_data(..., "mmap")` 来写 covisibility。
+因此 covisibility 生成脚本使用 MapAnything 自己的 `store_data(..., "mmap")` 来写矩阵。
 
 ### 4.2 covisibility 文件选择逻辑
 
-由于早期生成过一个普通 `full_dense.npy`，自定义 dataset 已经改成优先读取带 `--` 的 mmap 文件，避免旧文件干扰。
+`VigorChicagoWAI` dataset 已改成优先读取 `scene_meta.json` 里登记的 `scene_modalities.pairwise_covisibility`。
 
-### 4.3 torchvision 图像读取兼容
+这意味着：
+
+- 如果 scene 已生成真实 covisibility，就直接用真实矩阵
+- 只有在缺少该字段时，才会回退到旧的目录扫描逻辑
+
+这样可以避免旧文件名或目录结构继续干扰训练。
+
+### 4.3 covisibility 当前定义
+
+当前 VIGOR Chicago 使用的 covisibility 已不再是早期占位用的全 1 矩阵。
+
+现在使用的是“MapAnything 原生风格”的 covisibility：
+
+- 从 GT depth 出发
+- 将一个视图的深度点重投影到其他视图
+- 按深度一致性阈值计算 pairwise overlap score
+
+对应实现复用了：
+
+- [data_processing/wai_processing/scripts/covisibility.py](/root/autodl-tmp/Models/map-anything/data_processing/wai_processing/scripts/covisibility.py)
+- [data_processing/wai_processing/utils/covis_utils.py](/root/autodl-tmp/Models/map-anything/data_processing/wai_processing/utils/covis_utils.py)
+
+### 4.4 torchvision 图像读取兼容
 
 当前环境下，仓库原始实现里的：
 
@@ -149,10 +181,15 @@ decode_image(read_file(str(fname)))
 
 - scene 数：`50`
 - frame 总数：`1682`
+- 真实 covisibility scene 数：`50`
 
 转换总结文件：
 
 - [/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/conversion_summary.json](/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/conversion_summary.json)
+
+GT depth covisibility 批处理总结文件：
+
+- [/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json](/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json)
 
 当前 split：
 
@@ -197,6 +234,24 @@ split 总结文件：
 - 有效 `3 x 3` intrinsics
 
 说明数据接入已经通了。
+
+### 7.1.1 covisibility 现状
+
+当前 `vigor_chicago_wai` 的每个 scene 都已经生成了真实 covisibility，输出目录形如：
+
+```text
+location_x/
+  covisibility/
+    v0_gtdepth_native/
+      pairwise_covisibility--NxN.npy
+      generation_summary.json
+```
+
+例如：
+
+- [/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy](/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy)
+
+旧的全 1 `covisibility/v0/full_dense*` 已从数据目录中清理，避免与真实 covisibility 混用。
 
 ### 7.2 2-GPU smoke test 验证
 
@@ -524,3 +579,67 @@ bash bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.s
 - 2-GPU 端到端 smoke test 已成功完成
 
 也就是说，当前已经不再是“能不能接进来”的问题，而是“如何把它变成真正的微调实验”的问题。
+
+
+## 12. RS-Aerial benchmark 当前状态
+
+在训练链路之外，当前还新增了一个面向“空中视图 + 遥感视图”任务的 benchmark 骨架，位置在：
+
+- `benchmarking/rs_guided_dense_mv/`
+
+### 12.1 当前 benchmark 分层
+
+当前 benchmark 分为两层：
+
+- Stage-0：空中视图 baseline
+  - 入口：`benchmarking/rs_guided_dense_mv/benchmark.py`
+  - 指标：`pointmaps_abs_rel`、`z_depth_abs_rel`、`pose_ate_rmse`、`pose_auc_5`、`ray_dirs_err_deg`
+- Stage-1：遥感视图单独几何评测
+  - 入口：`benchmarking/rs_guided_dense_mv/benchmark_stage1.py`
+  - 指标：`rs_pointmap_abs_rel`、`rs_height_mae`、`rs_height_rmse`
+
+当前还没有实现 Stage-2 joint benchmark，因此：
+
+- Stage-0 结果文件只包含空中视图指标
+- Stage-1 结果文件只包含遥感视图指标
+- 不会在同一个结果文件里同时出现两类指标
+
+### 12.2 遥感数据接入
+
+为接入 `exp_005` 新输出，新增了：
+
+- `scripts/prepare_rs_aerial_benchmark_metadata.py`
+- `mapanything/datasets/wai/vigor_chicago_rs_aerial.py`
+
+当前遥感监督使用：
+
+- `pixel_to_point_map.npz['xyz']`
+- `valid_mask.npy`
+- `height_map.npy`
+- `info.json`
+
+manifest 输出目录：
+
+- `outputs/dataset/mapanything_metadata/vigor_chicago_rs_aerial`
+
+### 12.3 运行脚本
+
+当前 benchmark 相关脚本：
+
+- Stage-0 Pi3：`bash_scripts/benchmark/rs_guided_dense_mv/pi3.sh`
+- Stage-0 VGGT：`bash_scripts/benchmark/rs_guided_dense_mv/vggt.sh`
+- Stage-1 Pi3：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage1.sh`
+
+### 12.4 当前已验证结果
+
+- Stage-0 Pi3：已跑通
+- Stage-1 Pi3：已在 7 个可用遥感 scene 上跑通
+- Stage-1 输出目录：`outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/pi3_stage1_7scenes_v2`
+- Stage-1 当前平均结果：
+  - `rs_pointmap_abs_rel: 1.4527127572468348`
+  - `rs_height_mae: 1.033700440611158`
+  - `rs_height_rmse: 1.1238195385251726`
+
+更完整的 benchmark 定义与结构说明见：
+
+- `RS_GUIDED_DENSE_MV_BENCHMARK_DESIGN_CN.md`

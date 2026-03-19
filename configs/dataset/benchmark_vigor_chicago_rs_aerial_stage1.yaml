@@ -1,0 +1,18 @@
+defaults:
+  - default
+
+num_workers: 0
+num_views: 1
+resolution_train: ${dataset.resolution_options.518_1_00_ar}
+resolution_val: ${dataset.resolution_options.518_1_00_ar}
+
+train_dataset: null
+test_dataset:
+  "VigorChicagoRSAerial(
+    metadata_root='${mapanything_dataset_metadata_dir}/vigor_chicago_rs_aerial',
+    split='train',
+    provider='Google_Satellite',
+    overfit_num_sets=None,
+    load_aerial_scene_meta=False,
+    transform='imgnorm',
+    resolution=(518, 518))"
