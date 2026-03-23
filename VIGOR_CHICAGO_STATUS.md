@@ -112,11 +112,13 @@ vigor_chicago_processed/
 
 - [bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh)
 - [bash_scripts/train/examples/vigor_chicago_50_pi3_finetune.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_pi3_finetune.sh)
+- [bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh)
 - [bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh)
 
 其中：
 
-- 前两个脚本是后续正式微调的入口模板
+- 前两个脚本是单卡 / 通用入口模板
+- `vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh` 是已经实际跑通过的 2-GPU 预训练微调脚本
 - 最后一个脚本是已经验证过的 2-GPU 最小 smoke test 配置
 
 ## 4. 为了跑通本地环境做的修复
@@ -290,24 +292,39 @@ location_x/
 - `model=pi3`
 - `model.model_config.load_pretrained_weights=true`
 - 2 卡训练
-- 仍然保持最小显存配置：
+- 小规模配置：
   - `num_views=2`
   - `max_num_of_imgs_per_gpu=2`
-  - 少量 scene
-  - `epochs=1`
+  - `train.overfit_num_sets=2`
+  - `val.overfit_num_sets=1`
+  - `test.overfit_num_sets=1`
+  - `epochs=10`
+  - `train transform=imgnorm`
 
 验证结果：
 
 - 程序能够正常进入 Hugging Face 官方 Pi3 权重加载流程
-- 训练能够真正启动
+- 训练已经实际完成一次小规模 2-GPU 预训练微调
 - `cuDNN` 日志里的 `Plan failed` 只是 warning，不是致命报错
-- 说明当前脚本已经不是单纯的链路验证，而是真实的预训练微调路径
+- 输出目录：
+  - [/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu)
+- 产物包括：
+  - [checkpoint-last.pth](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/checkpoint-last.pth)
+  - [checkpoint-final.pth](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/checkpoint-final.pth)
+  - [log.txt](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/log.txt)
+  - [train.log](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/train.log)
+- 训练时间约 `21s`
+- 显存峰值约 `23.7 GB / GPU`
+- 日志中可见 epoch 级 loss 已持续记录，不是只启动到下载权重
+  - epoch 1: `train_loss = 12.1578`
+  - epoch 5: `train_loss = 0.9059`
+  - epoch 9: `train_loss = 2.8871`
 
 这意味着：
 
 - 当前 `pretrained_2gpu` 脚本使用的是官方预训练 Pi3 权重
-- 它是实际 fine-tuning 脚本，不是随机初始化训练脚本
-- 只是规模仍然被压得很小，用来先验证资源和训练稳定性
+- 它已经不只是“能启动”，而是完成了一次真实的小规模 fine-tuning
+- 只是规模仍然被压得很小，用来先验证资源、显存和训练稳定性
 
 ## 8. 什么叫 smoke 配置
 
@@ -353,17 +370,13 @@ location_x/
 2. 模型结构不变
 3. 在你的自定义数据上继续优化
 
-因此，下一步如果把 `load_pretrained_weights=true` 打开，并在你的数据上继续训练，那才是严格意义上的小规模微调。
+而当前项目状态已经进一步推进：`load_pretrained_weights=true` 的小规模 Pi3 fine-tune 不仅能够启动，而且已经完成了一次实际训练并保存 checkpoint。
 
-补充：
+因此当前更准确的表述是：
 
-- 已经实际发起过一次 `load_pretrained_weights=true` 的小规模 Pi3 fine-tune 启动
-- 训练脚本、分布式、dataset、dataloader 都正常
-- 程序也已经进入 Hugging Face 官方权重下载流程
-- 当前阻塞点是 `yyfz233/Pi3` 的 `model.safetensors` 约 `3.83 GB`
-- 在当前网络速度下下载需要较长时间，因此本轮没有等待其完整下载结束
-
-这说明真正的预训练 fine-tune 路径在逻辑上已经打通到了“开始加载官方预训练权重”这一步。
+- smoke test 不算真正微调
+- `pi3_finetune_pretrained_2gpu` 这条路径已经算真正的小规模预训练微调
+- 当前问题已经不是“能不能做预训练 fine-tune”，而是“如何把它扩展成更正式的实验配置”
 
 ## 10. 当前是不是全量微调
 
@@ -387,9 +400,226 @@ location_x/
 - 不是只训练 head
 - 不是冻结 backbone 的 partial fine-tune
 
-## 11. 哪些因素主要增加显存，哪些主要增加训练时间
+### 10.1 如果想冻结部分网络，当前怎么做
 
-### 11.1 对显存最敏感的因素
+当前框架已经支持按子模块前缀设置不同学习率；当某个子模块的 `lr=0` 时，该子模块参数会在优化器分组时被直接冻结。
+
+对应逻辑见：
+
+- [configs/train_params/pi3_finetune.yaml](/root/autodl-tmp/Models/map-anything/configs/train_params/pi3_finetune.yaml)
+- [configs/train_params/finetune_heads_only.yaml](/root/autodl-tmp/Models/map-anything/configs/train_params/finetune_heads_only.yaml)
+- [mapanything/utils/train_tools.py](/root/autodl-tmp/Models/map-anything/mapanything/utils/train_tools.py)
+
+对当前 `Pi3Wrapper` 来说，实际参数前缀是 `model.xxx`，因为 wrapper 将 Pi3 主体挂在 `self.model` 下。已经核对到的前缀示例包括：
+
+- `model.encoder`
+- `model.decoder`
+- `model.point_decoder`
+- `model.point_head`
+- `model.conf_decoder`
+- `model.conf_head`
+- `model.camera_decoder`
+- `model.camera_head`
+- `model.register_token`
+
+这意味着如果想冻结 encoder，推荐直接在训练配置里写：
+
+```yaml
+train_params:
+  submodule_configs:
+    model.encoder:
+      lr: 0
+```
+
+同理，如果想只训练 head，可以只给 `model.point_head` / `model.conf_head` / `model.camera_head` 保留非零学习率。
+
+需要注意：
+
+- 仓库里的通用 `freeze_encoder.yaml` 使用的是 `encoder` 前缀
+- 对 `Pi3Wrapper` 不能直接假设这个前缀一定命中
+- 最稳妥的做法是按 `named_parameters()` 的真实前缀写成 `model.encoder`
+
+### 10.2 当前是否支持 LoRA / Adapter 风格微调
+
+当前仓库没有原生的 LoRA / PEFT / adapter 支持，也没有现成脚本或配置示例。
+
+也就是说：
+
+- 没有 `lora` / `LoRA` / `peft` 的内置实现
+- 没有现成的 LoRA fine-tune 入口脚本
+- 当前可直接复用的现成例子主要是“部分冻结”而不是“参数高效微调”
+
+但从训练框架机制上说，LoRA 不是完全不可行。原因是当前优化器只依赖：
+
+- `named_parameters()`
+- `requires_grad`
+- `submodule_configs`
+
+因此如果后续手动把 LoRA 模块插到 Pi3 的线性层或 attention 层中，并让：
+
+- 原始权重冻结
+- LoRA 参数可训练
+
+那么 MapAnything 的训练循环本身可以带着这些参数训练。
+
+真正需要额外处理的是：
+
+- LoRA 注入代码
+- 预训练权重与 LoRA 参数的加载逻辑
+- checkpoint 保存 / 恢复策略
+- 训练脚本和配置命名
+
+结论是：
+
+- “部分冻结”当前已经方便做
+- “LoRA 微调”当前没有现成支持，但可以作为后续定制开发项
+
+## 11. 当前损失函数、可替换损失与自定义难度
+
+### 11.1 当前 Pi3 训练实际使用的损失
+
+当前 Pi3 训练使用的 loss 配置是：
+
+- [configs/loss/pi3_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/pi3_loss.yaml)
+
+当前 `train_criterion` / `test_criterion` 的总体形式为：
+
+```text
+ExcludeTopNPercentPixelLoss(
+  FactoredGeometryRegr3DPlusNormalGMLoss(
+    RobustRegressionLoss(...)
+  )
+)
+```
+
+其核心监督项包括：
+
+- 世界坐标点 `pts3d`
+- 相机坐标点 `pts3d_cam`
+- `depth_z`
+- `ray_directions`
+- 成对相对位姿
+- `normal` 与 `gm` 项
+
+当前 Pi3 loss 的关键特点：
+
+- `compute_pairwise_relative_pose_loss=true`
+- `compute_world_frame_points_loss=true`
+- `convert_predictions_to_view0_frame=true`
+- `top_n_percent=5`
+- 使用 robust regression 作为基础误差形式
+
+### 11.2 当前仓库里已有的 loss 类型
+
+loss 实现主要在：
+
+- [mapanything/train/losses.py](/root/autodl-tmp/Models/map-anything/mapanything/train/losses.py)
+
+当前仓库中已实现的代表性 loss 类包括：
+
+- `L1Loss`
+- `L2Loss`
+- `RobustRegressionLoss`
+- `ConfLoss`
+- `ExcludeTopNPercentPixelLoss`
+- `ConfAndExcludeTopNPercentPixelLoss`
+- `Regr3D`
+- `FactoredGeometryRegr3D`
+- `FactoredGeometryRegr3DPlusNormalGMLoss`
+- `FactoredGeometryScaleRegr3D`
+- `FactoredGeometryScaleRegr3DPlusNormalGMLoss`
+- `DisentangledFactoredGeometryScaleRegr3D`
+- `DisentangledFactoredGeometryScaleRegr3DPlusNormalGMLoss`
+
+对应现成配置示例见：
+
+- [configs/loss/pi3_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/pi3_loss.yaml)
+- [configs/loss/vggt_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/vggt_loss.yaml)
+- [configs/loss/overall_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/overall_loss.yaml)
+- [configs/loss/overall_disentangled_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/overall_disentangled_loss.yaml)
+- [configs/loss/moge2_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/moge2_loss.yaml)
+- 以及若干 ablation 配置，例如 `no_depth_loss` / `no_pose_loss` / `no_points_loss`
+
+### 11.3 改 loss 是否方便
+
+比较方便。
+
+原因是当前训练循环不是把某个 loss 写死在代码里，而是在训练启动时从 Hydra 配置读取 loss 字符串，再动态实例化。
+
+对应逻辑见：
+
+- [mapanything/train/training.py](/root/autodl-tmp/Models/map-anything/mapanything/train/training.py)
+
+也就是说，改 loss 通常有两种层级：
+
+1. 轻量改法：
+   - 直接切换 `configs/loss/*.yaml`
+   - 或者新建一个 loss yaml，重组已有 loss 类
+2. 深度改法：
+   - 在 `mapanything/train/losses.py` 里新增 loss 类
+   - 再在 yaml 中把 `train_criterion` 写成新的构造表达式
+
+### 11.4 自定义 loss 时最关键的约束
+
+不是框架本身难改，而是：
+
+- loss 读取的字段
+- model wrapper 输出的字段
+- dataset 提供的 GT 字段
+
+这三者必须对齐。
+
+例如如果新 loss 想额外监督一个新分支输出，那么：
+
+- model 必须把这个新分支结果输出出来
+- batch 中必须有对应 GT 或可构造 supervision
+- loss 配置和实现必须读取到这个键
+
+## 12. 如果改变模型结构，比如加入一个新的分支
+
+如果只是改 Pi3 内部结构，例如增加一个新的 prediction branch，通常不只是改一个模型文件，而是要连带完成下面这些工作。
+
+### 12.1 必改项
+
+1. 改底层模型定义
+   - 通常落在 [mapanything/models/external/pi3/models/pi3.py](/root/autodl-tmp/Models/map-anything/mapanything/models/external/pi3/models/pi3.py)
+2. 改 wrapper 输出接口
+   - 对应 [mapanything/models/external/pi3/__init__.py](/root/autodl-tmp/Models/map-anything/mapanything/models/external/pi3/__init__.py)
+3. 改 loss
+   - 如果新分支要参与监督，就必须改 [mapanything/train/losses.py](/root/autodl-tmp/Models/map-anything/mapanything/train/losses.py) 或新增 loss 配置
+4. 改 train_params
+   - 如果新分支需要单独学习率、冻结策略或 schedule，就要加到 `submodule_configs`
+
+### 12.2 容易忽略但实际很关键的工作
+
+- 预训练权重兼容
+  - 当前 Pi3 通过 Hugging Face 官方权重加载
+  - 一旦结构变了，新分支通常拿不到现成权重
+  - 往往需要 `strict=False` 或单独初始化新分支
+- checkpoint 兼容
+  - 新结构会改变 state dict key
+- benchmark / inference 兼容
+  - 如果新分支改变输出语义，后续 benchmark 或推理代码也可能要同步改
+
+### 12.3 什么时候需要注册成一个新模型
+
+如果只是对现有 `Pi3Wrapper` 做少量扩展，可以继续沿用 `model=pi3` 的入口。
+
+如果改动已经比较大，例如：
+
+- 新增明显不同的结构分支
+- 改了输出定义
+- 不再希望和原始 Pi3 checkpoint 语义混用
+
+那么更稳妥的做法是：
+
+- 新建一个 wrapper
+- 在 [mapanything/models/__init__.py](/root/autodl-tmp/Models/map-anything/mapanything/models/__init__.py) 中注册新的 `model_str`
+- 同时新增对应 `configs/model/*.yaml`
+
+## 13. 哪些因素主要增加显存，哪些主要增加训练时间
+
+### 13.1 对显存最敏感的因素
 
 以下因素通常会显著增加显存占用：
 
@@ -407,7 +637,7 @@ location_x/
 - 模型规模越大，参数和优化器状态显存越高
 - 打开 gradient checkpointing 往往能省显存，但会牺牲速度
 
-### 11.2 对训练时间最敏感的因素
+### 13.2 对训练时间最敏感的因素
 
 以下因素更直接增加总训练时间：
 
@@ -426,7 +656,7 @@ location_x/
 - `eval_freq` 越高，整体 wall-clock 时间越长
 - 更强的数据增强一般更耗 CPU 和 data time，而不是主要吃 GPU 显存
 
-### 11.3 主要是“时间增加大于显存增加”的因素
+### 13.3 主要是“时间增加大于显存增加”的因素
 
 这类因素更偏时间成本：
 
@@ -436,7 +666,7 @@ location_x/
 - dataloader `num_workers`
 - 额外日志、可视化和评测
 
-### 11.4 通常“显存和时间都会一起增加”的因素
+### 13.4 通常“显存和时间都会一起增加”的因素
 
 这类最需要谨慎：
 
@@ -445,11 +675,11 @@ location_x/
 - 分辨率
 - 更大的模型结构
 
-## 12. 针对当前任务的典型配置范围
+## 14. 针对当前任务的典型配置范围
 
 下面给的是针对你当前 2 张 `4080 SUPER`、Pi3、多视角重建、自定义 50-scene pilot 的实用范围。
 
-### 12.1 最小验证配置
+### 14.1 最小验证配置
 
 适合先确认训练稳定：
 
@@ -466,7 +696,7 @@ location_x/
 - 最省显存
 - 主要用于确认真实微调能持续跑
 
-### 12.2 小规模真实 fine-tune 配置
+### 14.2 小规模真实 fine-tune 配置
 
 适合开始看收敛：
 
@@ -481,7 +711,7 @@ location_x/
 
 这是下一阶段最实用的区间。
 
-### 12.3 50 个 location 的第一版正式训练建议
+### 14.3 50 个 location 的第一版正式训练建议
 
 如果要开始做第一版正式实验，建议先从这里起步：
 
@@ -501,7 +731,7 @@ location_x/
 
 也就是说，遇到显存不够时，优先减 batch，不要先减 scene 数和 epoch 数。
 
-### 12.4 不建议一开始就拉太大的配置
+### 14.4 不建议一开始就拉太大的配置
 
 不建议一开始直接上：
 
@@ -515,36 +745,44 @@ location_x/
 - 一旦出问题，不容易判断是数据、模型、显存还是训练策略的问题
 - 对当前阶段不够稳妥
 
-## 13. 当前仍然简化的地方
+## 15. 当前仍然简化的地方
 
 虽然链路已经跑通，但当前 pilot 仍然是简化版：
 
-- covisibility 目前是全连接，不是真实几何 overlap
 - smoke test 只用了极少 scene
 - smoke test 没有加载预训练权重
 - smoke test 把 `num_views` 压到了 `2`
 - smoke test 为了稳定，把 train transform 改成了 `imgnorm`
+- 已完成的 pretrained fine-tune 也仍然是小规模 overfit 风格配置：
+  - `num_views=2`
+  - 每卡 `max_num_of_imgs_per_gpu=2`
+  - `train.overfit_num_sets=2`
+  - `epochs=10`
+- 目前还没有做更正式的 40/5/5 场景级训练和验证
+- 当前仓库没有原生 LoRA / PEFT 支持
+- 如果后续要做“冻结部分模块”或“参数高效微调”，还需要专门整理配置策略
 
 这些都是刻意为“先跑通”做的简化，不是最终实验配置。
 
-## 14. 下一步建议
+## 16. 下一步建议
 
 下一阶段建议按这个顺序推进：
 
-1. 保持 `pi3`，完成一次真正的小规模 fine-tune
-   - `load_pretrained_weights=true`
-   - 仍然保持小 batch、小 split
-   - 最关键前提是先把 Hugging Face 权重缓存下载完成
-2. 在预训练微调能稳定跑通后，再增大：
-   - `num_views`
-   - scene 数
-   - epoch 数
+1. 保持 `pi3`，在已经跑通的小规模 pretrained fine-tune 基础上，扩大训练配置
+   - 先从 `num_views=2 -> 4` 开始
+   - 逐步增大 scene 数
+   - 再增大 epoch 数
+2. 在预训练微调能稳定跑通后，再系统比较不同微调策略：
+   - 全量微调
+   - 冻结 encoder
+   - heads-only
+   - 后续若需要，再评估是否值得接入 LoRA
 3. 最后再做：
    - 更合理的 covisibility / overlap
    - 更完整的验证集评估
    - 与 `vggt` 的对比
 
-## 15. 常用命令
+## 17. 常用命令
 
 重建 50-scene 的 WAI pilot 数据：
 
@@ -561,14 +799,14 @@ cd /root/autodl-tmp/Models/map-anything
 bash bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh
 ```
 
-运行真正的小规模 Pi3 fine-tune（需要先拿到官方预训练权重）：
+运行已经实际验证过的小规模 Pi3 pretrained fine-tune：
 
 ```bash
 cd /root/autodl-tmp/Models/map-anything
 bash bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh
 ```
 
-## 16. 当前结论
+## 18. 当前结论
 
 截至现在，项目状态已经从“自定义数据还没接入 MapAnything”，推进到了：
 
@@ -577,17 +815,22 @@ bash bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.s
 - Hydra 配置已接好
 - 本地环境已补齐到可训练
 - 2-GPU 端到端 smoke test 已成功完成
+- 2-GPU 小规模 Pi3 预训练微调也已实际完成并保存 checkpoint
 
-也就是说，当前已经不再是“能不能接进来”的问题，而是“如何把它变成真正的微调实验”的问题。
+也就是说，当前已经不再是“能不能接进来”的问题，而是：
+
+- 如何把当前的小规模预训练微调扩展成正式实验
+- 如何选择合适的冻结 / 微调策略
+- 是否需要为后续实验引入新的 loss 或新的结构分支
 
 
-## 12. RS-Aerial benchmark 当前状态
+## 19. RS-Aerial benchmark 当前状态
 
 在训练链路之外，当前还新增了一个面向“空中视图 + 遥感视图”任务的 benchmark 骨架，位置在：
 
 - `benchmarking/rs_guided_dense_mv/`
 
-### 12.1 当前 benchmark 分层
+### 19.1 当前 benchmark 分层
 
 当前 benchmark 分为两层：
 
@@ -604,7 +847,7 @@ bash bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.s
 - Stage-1 结果文件只包含遥感视图指标
 - 不会在同一个结果文件里同时出现两类指标
 
-### 12.2 遥感数据接入
+### 19.2 遥感数据接入
 
 为接入 `exp_005` 新输出，新增了：
 
@@ -622,15 +865,16 @@ manifest 输出目录：
 
 - `outputs/dataset/mapanything_metadata/vigor_chicago_rs_aerial`
 
-### 12.3 运行脚本
+### 19.3 运行脚本
 
 当前 benchmark 相关脚本：
 
 - Stage-0 Pi3：`bash_scripts/benchmark/rs_guided_dense_mv/pi3.sh`
 - Stage-0 VGGT：`bash_scripts/benchmark/rs_guided_dense_mv/vggt.sh`
 - Stage-1 Pi3：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage1.sh`
+- Stage-2 Pi3：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage2.sh`
 
-### 12.4 当前已验证结果
+### 19.4 当前已验证结果
 
 - Stage-0 Pi3：已跑通
 - Stage-1 Pi3：已在 7 个可用遥感 scene 上跑通
@@ -643,3 +887,25 @@ manifest 输出目录：
 更完整的 benchmark 定义与结构说明见：
 
 - `RS_GUIDED_DENSE_MV_BENCHMARK_DESIGN_CN.md`
+
+
+### 19.5 Stage-2 joint skeleton
+
+当前已新增 Stage-2 joint benchmark 骨架：
+
+- `benchmarking/rs_guided_dense_mv/benchmark_stage2.py`
+- `configs/rs_aerial_stage2_benchmark.yaml`
+- `configs/dataset/benchmark_vigor_chicago_rs_aerial_stage2.yaml`
+- `bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage2.sh`
+
+其当前作用是：
+
+- 仅在 paired scenes 上同时输出 aerial 指标与 remote 指标
+- 保持结果组织为 per-scene / avg-across-scenes
+- 当前已新增第一个真正的 cross-view 指标：`crossview_pointmap_gap_abs`
+
+它当前还不是完整的跨视图一致性 benchmark，尚未实现：
+
+- 联合点云对齐后的整体误差
+- 空中 / 遥感预测点云重叠区域误差
+- 其他真正的 cross-view consistency 指标

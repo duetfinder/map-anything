@@ -27,6 +27,7 @@ class VigorChicagoWAI(BaseDataset):
         dataset_metadata_dir,
         split="train",
         overfit_num_sets=None,
+        scene_list_path: str | None = None,
         sample_specific_scene: bool = False,
         specific_scene_name: str | None = None,
         **kwargs,
@@ -35,6 +36,7 @@ class VigorChicagoWAI(BaseDataset):
         self.ROOT = ROOT
         self.dataset_metadata_dir = dataset_metadata_dir
         self.overfit_num_sets = overfit_num_sets
+        self.scene_list_path = scene_list_path
         self.sample_specific_scene = sample_specific_scene
         self.specific_scene_name = specific_scene_name
         self._load_data()
@@ -54,6 +56,11 @@ class VigorChicagoWAI(BaseDataset):
             self.scenes = list(split_scene_list)
         else:
             self.scenes = [self.specific_scene_name]
+
+        if self.scene_list_path is not None:
+            filtered_scene_list = np.load(self.scene_list_path, allow_pickle=True)
+            allowed_scene_set = set(filtered_scene_list.tolist())
+            self.scenes = [scene for scene in self.scenes if scene in allowed_scene_set]
 
         if self.overfit_num_sets is not None:
             self.scenes = self.scenes[: self.overfit_num_sets]

@@ -10,6 +10,9 @@
 - `benchmark_stage1.py`
   - Stage-1 remote-view geometry benchmark
   - 仅评测遥感视图几何重建
+- `benchmark_stage2.py`
+  - Stage-2 joint benchmark skeleton
+  - 在 paired scenes 上同时输出 aerial 与 remote 指标
 
 ## 当前指标
 
@@ -27,11 +30,17 @@
 - `rs_height_mae`
 - `rs_height_rmse`
 
+### Stage-2
+
+- 空中视图：`pointmaps_abs_rel`、`z_depth_abs_rel`、`pose_ate_rmse`、`pose_auc_5`、`ray_dirs_err_deg`
+- 遥感视图：`rs_pointmap_abs_rel`、`rs_height_mae`、`rs_height_rmse`
+- 跨视图：`crossview_pointmap_gap_abs`
+
 ## 重要说明
 
 - Stage-1 当前不是 joint benchmark
 - 因此 Stage-1 的结果文件只包含遥感视图几何指标
-- 如果需要在同一个 benchmark 中同时输出空中视图与遥感视图指标，需要后续实现 Stage-2
+- Stage-2 当前会同时输出两类指标，并已新增第一个 cross-view 指标：`crossview_pointmap_gap_abs`
 
 ## 配置与脚本
 
@@ -48,6 +57,9 @@
 - 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_aerial_stage1.yaml`
 - metadata 准备：`scripts/prepare_rs_aerial_benchmark_metadata.py`
 - 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage1.sh`
+- 配置：`configs/rs_aerial_stage2_benchmark.yaml`
+- 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_aerial_stage2.yaml`
+- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage2.sh`
 
 更完整的中文设计说明见：
 
