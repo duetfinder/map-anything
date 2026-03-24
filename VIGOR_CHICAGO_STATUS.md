@@ -2,6 +2,8 @@
 
 本文档记录当前将 VIGOR Chicago 重建数据接入 `Models/map-anything` 的工作状态，目标是让 MapAnything 框架可以在该数据上进行多视角训练，并验证训练链路已经打通。
 
+说明：本文档中的文件链接统一使用相对于当前 Markdown 文件的相对路径，不使用绝对路径。
+
 当前相关路径：
 
 - 原始数据：`/root/autodl-tmp/outputs/experiments/exp_001_reconstrc/vigor_chicago_processed`
@@ -52,8 +54,8 @@ vigor_chicago_processed/
 
 新增脚本：
 
-- [scripts/convert_vigor_chicago_to_wai.py](/root/autodl-tmp/Models/map-anything/scripts/convert_vigor_chicago_to_wai.py)
-- [scripts/prepare_vigor_chicago_splits.py](/root/autodl-tmp/Models/map-anything/scripts/prepare_vigor_chicago_splits.py)
+- [scripts/convert_vigor_chicago_to_wai.py](scripts/convert_vigor_chicago_to_wai.py)
+- [scripts/prepare_vigor_chicago_splits.py](scripts/prepare_vigor_chicago_splits.py)
 
 作用：
 
@@ -63,7 +65,7 @@ vigor_chicago_processed/
 
 新增 GT depth covisibility 生成脚本：
 
-- [scripts/generate_vigor_chicago_gt_covisibility.py](/root/autodl-tmp/Models/map-anything/scripts/generate_vigor_chicago_gt_covisibility.py)
+- [scripts/generate_vigor_chicago_gt_covisibility.py](scripts/generate_vigor_chicago_gt_covisibility.py)
 
 作用：
 
@@ -76,11 +78,11 @@ vigor_chicago_processed/
 
 新增：
 
-- [mapanything/datasets/wai/vigor_chicago.py](/root/autodl-tmp/Models/map-anything/mapanything/datasets/wai/vigor_chicago.py)
+- [mapanything/datasets/wai/vigor_chicago.py](mapanything/datasets/wai/vigor_chicago.py)
 
 更新：
 
-- [mapanything/datasets/__init__.py](/root/autodl-tmp/Models/map-anything/mapanything/datasets/__init__.py)
+- [mapanything/datasets/__init__.py](mapanything/datasets/__init__.py)
 
 该数据集类目前已经能够：
 
@@ -93,12 +95,12 @@ vigor_chicago_processed/
 
 新增配置：
 
-- [configs/dataset/vigor_chicago_wai/default.yaml](/root/autodl-tmp/Models/map-anything/configs/dataset/vigor_chicago_wai/default.yaml)
-- [configs/dataset/vigor_chicago_wai/train/default.yaml](/root/autodl-tmp/Models/map-anything/configs/dataset/vigor_chicago_wai/train/default.yaml)
-- [configs/dataset/vigor_chicago_wai/val/default.yaml](/root/autodl-tmp/Models/map-anything/configs/dataset/vigor_chicago_wai/val/default.yaml)
-- [configs/dataset/vigor_chicago_wai/test/default.yaml](/root/autodl-tmp/Models/map-anything/configs/dataset/vigor_chicago_wai/test/default.yaml)
-- [configs/dataset/vigor_chicago_50_518.yaml](/root/autodl-tmp/Models/map-anything/configs/dataset/vigor_chicago_50_518.yaml)
-- [configs/machine/autodl_vigor.yaml](/root/autodl-tmp/Models/map-anything/configs/machine/autodl_vigor.yaml)
+- [configs/dataset/vigor_chicago_wai/default.yaml](configs/dataset/vigor_chicago_wai/default.yaml)
+- [configs/dataset/vigor_chicago_wai/train/default.yaml](configs/dataset/vigor_chicago_wai/train/default.yaml)
+- [configs/dataset/vigor_chicago_wai/val/default.yaml](configs/dataset/vigor_chicago_wai/val/default.yaml)
+- [configs/dataset/vigor_chicago_wai/test/default.yaml](configs/dataset/vigor_chicago_wai/test/default.yaml)
+- [configs/dataset/vigor_chicago_50_518.yaml](configs/dataset/vigor_chicago_50_518.yaml)
+- [configs/machine/autodl_vigor.yaml](configs/machine/autodl_vigor.yaml)
 
 这些配置提供了：
 
@@ -110,10 +112,10 @@ vigor_chicago_processed/
 
 新增训练脚本：
 
-- [bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh)
-- [bash_scripts/train/examples/vigor_chicago_50_pi3_finetune.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_pi3_finetune.sh)
-- [bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh)
-- [bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh](/root/autodl-tmp/Models/map-anything/bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh)
+- [bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh](bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh)
+- [bash_scripts/train/examples/vigor_chicago_50_pi3_finetune.sh](bash_scripts/train/examples/vigor_chicago_50_pi3_finetune.sh)
+- [bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh](bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh)
+- [bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh](bash_scripts/train/examples/vigor_chicago_50_pi3_smoke_2gpu.sh)
 
 其中：
 
@@ -156,8 +158,8 @@ pairwise_covisibility--45x45.npy
 
 对应实现复用了：
 
-- [data_processing/wai_processing/scripts/covisibility.py](/root/autodl-tmp/Models/map-anything/data_processing/wai_processing/scripts/covisibility.py)
-- [data_processing/wai_processing/utils/covis_utils.py](/root/autodl-tmp/Models/map-anything/data_processing/wai_processing/utils/covis_utils.py)
+- [data_processing/wai_processing/scripts/covisibility.py](data_processing/wai_processing/scripts/covisibility.py)
+- [data_processing/wai_processing/utils/covis_utils.py](data_processing/wai_processing/utils/covis_utils.py)
 
 ### 4.4 torchvision 图像读取兼容
 
@@ -175,7 +177,7 @@ decode_image(read_file(str(fname)))
 
 修复文件：
 
-- [mapanything/utils/wai/io.py](/root/autodl-tmp/Models/map-anything/mapanything/utils/wai/io.py)
+- [mapanything/utils/wai/io.py](mapanything/utils/wai/io.py)
 
 ## 5. 已经生成的数据
 
@@ -187,11 +189,11 @@ decode_image(read_file(str(fname)))
 
 转换总结文件：
 
-- [/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/conversion_summary.json](/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/conversion_summary.json)
+- [../../outputs/dataset/vigor_chicago_wai/conversion_summary.json](../../outputs/dataset/vigor_chicago_wai/conversion_summary.json)
 
 GT depth covisibility 批处理总结文件：
 
-- [/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json](/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json)
+- [../../outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json](../../outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json)
 
 当前 split：
 
@@ -201,7 +203,7 @@ GT depth covisibility 批处理总结文件：
 
 split 总结文件：
 
-- [/root/autodl-tmp/outputs/dataset/mapanything_metadata/vigor_chicago/split_summary.json](/root/autodl-tmp/outputs/dataset/mapanything_metadata/vigor_chicago/split_summary.json)
+- [../../outputs/dataset/mapanything_metadata/vigor_chicago/split_summary.json](../../outputs/dataset/mapanything_metadata/vigor_chicago/split_summary.json)
 
 ## 6. 已补齐的环境依赖
 
@@ -251,7 +253,7 @@ location_x/
 
 例如：
 
-- [/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy](/root/autodl-tmp/outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy)
+- [../../outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy](../../outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy)
 
 旧的全 1 `covisibility/v0/full_dense*` 已从数据目录中清理，避免与真实 covisibility 混用。
 
@@ -264,13 +266,13 @@ location_x/
 
 已经成功完成一次 2-GPU 最小训练运行，输出目录：
 
-- [/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu)
+- [../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu)
 
 产物包括：
 
-- [checkpoint-last.pth](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu/checkpoint-last.pth)
-- [checkpoint-final.pth](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu/checkpoint-final.pth)
-- [log.txt](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu/log.txt)
+- [checkpoint-last.pth](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu/checkpoint-last.pth)
+- [checkpoint-final.pth](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu/checkpoint-final.pth)
+- [log.txt](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_smoke_2gpu/log.txt)
 
 首个训练 step 的结果：
 
@@ -307,12 +309,12 @@ location_x/
 - 训练已经实际完成一次小规模 2-GPU 预训练微调
 - `cuDNN` 日志里的 `Plan failed` 只是 warning，不是致命报错
 - 输出目录：
-  - [/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu)
+  - [../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu)
 - 产物包括：
-  - [checkpoint-last.pth](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/checkpoint-last.pth)
-  - [checkpoint-final.pth](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/checkpoint-final.pth)
-  - [log.txt](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/log.txt)
-  - [train.log](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/train.log)
+  - [checkpoint-last.pth](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/checkpoint-last.pth)
+  - [checkpoint-final.pth](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/checkpoint-final.pth)
+  - [log.txt](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/log.txt)
+  - [train.log](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago_50/pi3_finetune_pretrained_2gpu/train.log)
 - 训练时间约 `21s`
 - 显存峰值约 `23.7 GB / GPU`
 - 日志中可见 epoch 级 loss 已持续记录，不是只启动到下载权重
@@ -406,9 +408,9 @@ location_x/
 
 对应逻辑见：
 
-- [configs/train_params/pi3_finetune.yaml](/root/autodl-tmp/Models/map-anything/configs/train_params/pi3_finetune.yaml)
-- [configs/train_params/finetune_heads_only.yaml](/root/autodl-tmp/Models/map-anything/configs/train_params/finetune_heads_only.yaml)
-- [mapanything/utils/train_tools.py](/root/autodl-tmp/Models/map-anything/mapanything/utils/train_tools.py)
+- [configs/train_params/pi3_finetune.yaml](configs/train_params/pi3_finetune.yaml)
+- [configs/train_params/finetune_heads_only.yaml](configs/train_params/finetune_heads_only.yaml)
+- [mapanything/utils/train_tools.py](mapanything/utils/train_tools.py)
 
 对当前 `Pi3Wrapper` 来说，实际参数前缀是 `model.xxx`，因为 wrapper 将 Pi3 主体挂在 `self.model` 下。已经核对到的前缀示例包括：
 
@@ -480,7 +482,7 @@ train_params:
 
 当前 Pi3 训练使用的 loss 配置是：
 
-- [configs/loss/pi3_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/pi3_loss.yaml)
+- [configs/loss/pi3_loss.yaml](configs/loss/pi3_loss.yaml)
 
 当前 `train_criterion` / `test_criterion` 的总体形式为：
 
@@ -513,7 +515,7 @@ ExcludeTopNPercentPixelLoss(
 
 loss 实现主要在：
 
-- [mapanything/train/losses.py](/root/autodl-tmp/Models/map-anything/mapanything/train/losses.py)
+- [mapanything/train/losses.py](mapanything/train/losses.py)
 
 当前仓库中已实现的代表性 loss 类包括：
 
@@ -533,11 +535,11 @@ loss 实现主要在：
 
 对应现成配置示例见：
 
-- [configs/loss/pi3_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/pi3_loss.yaml)
-- [configs/loss/vggt_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/vggt_loss.yaml)
-- [configs/loss/overall_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/overall_loss.yaml)
-- [configs/loss/overall_disentangled_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/overall_disentangled_loss.yaml)
-- [configs/loss/moge2_loss.yaml](/root/autodl-tmp/Models/map-anything/configs/loss/moge2_loss.yaml)
+- [configs/loss/pi3_loss.yaml](configs/loss/pi3_loss.yaml)
+- [configs/loss/vggt_loss.yaml](configs/loss/vggt_loss.yaml)
+- [configs/loss/overall_loss.yaml](configs/loss/overall_loss.yaml)
+- [configs/loss/overall_disentangled_loss.yaml](configs/loss/overall_disentangled_loss.yaml)
+- [configs/loss/moge2_loss.yaml](configs/loss/moge2_loss.yaml)
 - 以及若干 ablation 配置，例如 `no_depth_loss` / `no_pose_loss` / `no_points_loss`
 
 ### 11.3 改 loss 是否方便
@@ -548,7 +550,7 @@ loss 实现主要在：
 
 对应逻辑见：
 
-- [mapanything/train/training.py](/root/autodl-tmp/Models/map-anything/mapanything/train/training.py)
+- [mapanything/train/training.py](mapanything/train/training.py)
 
 也就是说，改 loss 通常有两种层级：
 
@@ -582,11 +584,11 @@ loss 实现主要在：
 ### 12.1 必改项
 
 1. 改底层模型定义
-   - 通常落在 [mapanything/models/external/pi3/models/pi3.py](/root/autodl-tmp/Models/map-anything/mapanything/models/external/pi3/models/pi3.py)
+   - 通常落在 [mapanything/models/external/pi3/models/pi3.py](mapanything/models/external/pi3/models/pi3.py)
 2. 改 wrapper 输出接口
-   - 对应 [mapanything/models/external/pi3/__init__.py](/root/autodl-tmp/Models/map-anything/mapanything/models/external/pi3/__init__.py)
+   - 对应 [mapanything/models/external/pi3/__init__.py](./mapanything/models/external/pi3/__init__.py)
 3. 改 loss
-   - 如果新分支要参与监督，就必须改 [mapanything/train/losses.py](/root/autodl-tmp/Models/map-anything/mapanything/train/losses.py) 或新增 loss 配置
+   - 如果新分支要参与监督，就必须改 [mapanything/train/losses.py](mapanything/train/losses.py) 或新增 loss 配置
 4. 改 train_params
    - 如果新分支需要单独学习率、冻结策略或 schedule，就要加到 `submodule_configs`
 
@@ -614,7 +616,7 @@ loss 实现主要在：
 那么更稳妥的做法是：
 
 - 新建一个 wrapper
-- 在 [mapanything/models/__init__.py](/root/autodl-tmp/Models/map-anything/mapanything/models/__init__.py) 中注册新的 `model_str`
+- 在 [mapanything/models/__init__.py](mapanything/models/__init__.py) 中注册新的 `model_str`
 - 同时新增对应 `configs/model/*.yaml`
 
 ## 13. 哪些因素主要增加显存，哪些主要增加训练时间
