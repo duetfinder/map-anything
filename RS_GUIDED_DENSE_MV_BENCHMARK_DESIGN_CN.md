@@ -1227,3 +1227,203 @@ $$
   - $\mathrm{Sim3}$-aligned $\mathrm{joint\_global\_point\_l1}$
 
 但它们应作为辅助分析结果，而不是正式主指标。
+
+
+## 19. 当前统一 benchmark 实现
+
+当前统一 benchmark 已经支持三种评测模式在一次运行中同时输出：
+
+- `aerial_only`
+- `rs_only`
+- `joint`
+
+其中 `joint` 当前的含义是：
+
+- 将同一 scene 的 aerial multi-view 与一张 RS 图像一起输入模型前向
+- 分别读取联合前向下的 aerial 预测结果与 RS 预测结果
+- 再与 `aerial_only`、`rs_only` 的 baseline 做差，得到提升量
+
+因此当前统一 benchmark 已经能够回答：
+
+- 加入 RS 输入后，aerial 重建是否提升
+- 加入 aerial 输入后，RS 高度恢复是否提升
+
+当前仍未实现的部分是：
+
+- `joint_global_point_l1` 已实现
+- 它在真实全局坐标系下联合统计 aerial 点云与 RS 点云的 L1 误差，用于衡量二者是否共同进入同一个空间
+
+当前正式实现已经收敛为统一入口：
+
+- benchmark 入口：`benchmarking/rs_guided_dense_mv/benchmark_unified.py`
+- 顶层配置：`configs/rs_aerial_benchmark.yaml`
+- 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_aerial.yaml`
+- 启动脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified.sh`
+
+当前统一 benchmark 的执行范围为：
+
+- `aerial_only`
+  - 输出：`pointmaps_abs_rel`、`z_depth_abs_rel`、`pose_ate_rmse`、`pose_auc_5`、`ray_dirs_err_deg`、`metric_scale_abs_rel`、`metric_point_l1`
+- `rs_only`
+  - 输出：`rs_height_mae`、`rs_height_rmse`
+- `joint`
+  - 当前仅保留结果结构占位
+  - 目标指标为 `joint_global_point_l1`
+  - 当前尚未在正式 benchmark 中实现
+
+统一 benchmark 的结果文件组织为：
+
+- `rs_aerial_benchmark_results.json`
+- `rs_aerial_per_scene_results.json`
+
+其中主结果 JSON 结构固定为：
+
+- `metadata`
+- `aerial_only`
+- `rs_only`
+- `joint`
+- `improvement`
+- `per_scene_results`
+
+当前仍保留的 `benchmark.py`、`benchmark_stage1.py`、`benchmark_stage2.py` 仅作为历史实现与迁移参考，不再作为正式对外入口。
+
+
+## 20. 结果可视化建议
+
+当前 benchmark 结果建议配套使用：
+
+- `scripts/visualize_rs_aerial_benchmark.py`
+
+输入：
+
+- `rs_aerial_benchmark_results.json`
+
+输出：
+
+- `summary.md`
+  - 适合直接阅读平均指标与 improvement 表格
+- `per_scene_compact.csv`
+  - 适合按 scene 做透视表、排序和散点图
+- `scene_ranking.csv`
+  - 适合快速查看哪些 scene 在 joint 输入下提升最大或退化最明显
+
+建议的可视化方式：
+
+- 平均指标总表：直接阅读 `summary.md`
+- scene 排名条形图：横轴使用 `aerial_gain_pointmaps_abs_rel` 或 `rs_gain_height_mae`
+- baseline vs joint 对比散点图：
+  - x 轴：`aerial_only.pointmaps_abs_rel`
+  - y 轴：`joint.pointmaps_abs_rel`
+  - 落在对角线下方表示 joint 更好
+- RS 高度对比散点图：
+  - x 轴：`rs_only.rs_height_mae`
+  - y 轴：`joint.rs_height_mae`
+- joint 空间一致性排序图：
+  - 使用 `joint_global_point_l1` 做 scene 级排序
+
+
+## 20. 2026-03-25 统一 benchmark 指标适用范围修订
+
+### 20.1 指标适用模型修订
+
+当前统一 benchmark 中，指标按是否要求 **metric scale** 分为两类：
+
+- 仅对显式输出 `metric_scaling_factor` 的模型报告：
+  - `metric_scale_abs_rel`
+  - `metric_point_l1`
+  - `rs_height_mae`
+  - `rs_height_rmse`
+  - `joint_global_point_l1`
+- 对所有模型都报告：
+  - `pointmaps_abs_rel`
+  - `z_depth_abs_rel`
+  - `pose_ate_rmse`
+  - `pose_auc_5`
+  - `ray_dirs_err_deg`
+  - `rs_height_mae_affine`
+  - `rs_height_rmse_affine`
+  - `joint_global_pointmaps_abs_rel`
+
+在当前接入的 3 个模型中：
+
+- `MapAnything`：报告全部上述指标
+- `Pi3`：不报告 metric-only 指标，metric-only 字段留空
+- `VGGT`：不报告 metric-only 指标，metric-only 字段留空
+
+### 20.2 有效集合记号统一
+
+为避免之前文档中 $M$ 含义不清，这里统一使用以下记号：
+
+- $\mathcal{M}_a$：Aerial-only 指标中的有效像素集合；对每个 aerial 视图单独定义，来源于当前视图的 `valid_mask`，并进一步与 $\lVert \mathbf{P}^{gt} Vert_2 > 0$ 的条件求交
+- $\mathcal{M}_r$：RS-only 指标中的有效像素集合；来源于 `remote_valid_mask`，并进一步要求 GT 与预测高度都是有限值
+- $\mathcal{M}_{global}$：Joint 全局非 metric 指标中的有效像素集合；它由所有 aerial 视图与 RS 视图的有效像素并集组成，但在具体计算时仍按各自 view 的有效像素逐项累积
+
+### 20.3 `pointmaps_abs_rel` 当前到底在评什么
+
+当前 unified benchmark 中的 `pointmaps_abs_rel` **只评测 aerial 视图**，不包含 RS 视图。
+
+其计算过程是：
+
+1. 将同一个 multi-view set 的 GT aerial 点云与预测 aerial 点云分别转换到各自的 $view0$ 参考系；
+2. 仅使用 **aerial 视图集合** 做联合尺度归一化；
+3. 在每个视图自己的有效集合 $\mathcal{M}_a$ 上计算相对误差；
+4. 再对多视图结果取平均。
+
+因此：
+
+- 这里的联合归一化 **不包含 RS 点云**；
+- 这里的有效集合也不是“全体像素全集”，而是每个 aerial 视图自己的 $\mathcal{M}_a$。
+
+### 20.4 RS 非 metric 指标修订
+
+由于 Pi3 与 VGGT 当前不提供显式 metric scale 输出，因此对这两个模型：
+
+- 不再把 `rs_height_mae` / `rs_height_rmse` 作为主报告指标；
+- 改为报告仿射 z 对齐后的非 metric 指标：
+  - `rs_height_mae_affine`
+  - `rs_height_rmse_affine`
+
+其对齐形式为：
+
+$$
+z^{pr}_{aligned} = a z^{pr} + b
+$$
+
+其中 $a, b$ 通过在 $\mathcal{M}_r$ 上做最小二乘拟合得到。
+
+这样做的目的，是把非 metric 模型在 RS 任务上的“整体 z 缩放与偏移自由度”消掉，只评估其恢复相对高度结构的能力。
+
+### 20.5 Joint 非 metric 指标修订
+
+为了给所有模型提供统一的 Joint 全局一致性指标，新增：
+
+- `joint_global_pointmaps_abs_rel`
+
+其定义是：
+
+1. 将 aerial 视图的全局点图与 RS 视图的全局点图一起组成一个联合点云集合；
+2. 对 GT 联合集合与预测联合集合分别做一次 **全局联合尺度归一化**；
+3. 在 $\mathcal{M}_{global}$ 上累计逐像素相对误差。
+
+因此该指标：
+
+- 不要求模型具有 metric scale；
+- 可以同时用于 `Pi3`、`VGGT`、`MapAnything`；
+- 比当前 aerial-only 的 `pointmaps_abs_rel` 更接近“联合输入后是否进入同一个全局空间”的问题定义。
+
+### 20.6 可视化规则修订
+
+统一 sweep 可视化现在采用：
+
+- 颜色：区分模型
+- 线型：区分是否输入 RS
+  - `Aerial+RS`：实线
+  - `Aerial-only`：虚线
+- 横轴：显式固定为帧数 $\{2,4,8,16,24,32,40\}$
+
+其中：
+
+- `rs_height_mae` / `rs_height_rmse` 只对 `MapAnything` 出现曲线；
+- `rs_height_mae_affine` / `rs_height_rmse_affine` 对所有模型都出现曲线；
+- `joint_global_point_l1` 只对 `MapAnything` 出现曲线；
+- `joint_global_pointmaps_abs_rel` 对所有模型都出现曲线。

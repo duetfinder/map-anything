@@ -1,0 +1,13 @@
+defaults:
+  - default
+  - vigor_chicago_wai: default
+
+num_workers: 4
+num_views: 4
+resolution_train: ${dataset.resolution_options.518_1_00_ar}
+resolution_val: ${dataset.resolution_options.518_1_00_ar}
+
+train_dataset: ${dataset.vigor_chicago_wai.train.dataset_str}
+test_dataset:
+  "+ 40 @ ${dataset.vigor_chicago_wai.val.dataset_str}
+  + 40 @ ${dataset.vigor_chicago_wai.test.dataset_str}"

@@ -1,0 +1,34 @@
+defaults:
+  - default
+  - vigor_chicago_wai: default
+
+num_workers: 0
+num_views: 2
+resolution_train: ${dataset.resolution_options.518_1_00_ar}
+resolution_val: ${dataset.resolution_options.518_1_00_ar}
+
+train_dataset: null
+test_dataset_aerial:
+  "VigorChicagoWAI(
+    split='val',
+    resolution=${dataset.resolution_val},
+    principal_point_centered=${dataset.vigor_chicago_wai.val.principal_point_centered},
+    seed=${dataset.vigor_chicago_wai.val.seed},
+    transform='imgnorm',
+    data_norm_type='${model.data_norm_type}',
+    ROOT='${dataset.vigor_chicago_wai.val.ROOT}',
+    dataset_metadata_dir='${dataset.vigor_chicago_wai.val.dataset_metadata_dir}',
+    overfit_num_sets=None,
+    scene_list_path='${mapanything_dataset_metadata_dir}/vigor_chicago_rs_aerial/val/vigor_chicago_rs_aerial_scene_list_val.npy',
+    variable_num_views=${dataset.val.variable_num_views},
+    num_views=${dataset.num_views},
+    covisibility_thres=${dataset.vigor_chicago_wai.val.covisibility_thres})"
+test_dataset_remote:
+  "VigorChicagoRSAerial(
+    metadata_root='${mapanything_dataset_metadata_dir}/vigor_chicago_rs_aerial',
+    split='val',
+    provider='Google_Satellite',
+    overfit_num_sets=None,
+    load_aerial_scene_meta=False,
+    transform='imgnorm',
+    resolution=(518, 518))"

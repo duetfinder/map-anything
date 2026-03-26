@@ -4,6 +4,8 @@
 
 说明：本文档中的文件链接统一使用相对于当前 Markdown 文件的相对路径，不使用绝对路径。
 
+训练相关的详细设计、当前 loss 与后续 joint training 规划，单独整理在：[VIGOR_CHICAGO_TRAINING_CN.md](VIGOR_CHICAGO_TRAINING_CN.md)。
+
 当前相关路径：
 
 - 原始数据：`/root/autodl-tmp/outputs/experiments/exp_001_reconstrc/vigor_chicago_processed`

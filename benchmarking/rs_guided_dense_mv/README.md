@@ -1,66 +1,83 @@
 # RS-Aerial Reconstruction Benchmark
 
-当前 benchmark 采用分阶段实现，组织形式尽量保持与 `dense_n_view` 一致。
+当前正式入口已经收敛为统一 benchmark，组织形式尽量保持与 `dense_n_view` 一致。
 
-## 当前结构
+## 正式入口
 
-- `benchmark.py`
-  - Stage-0 baseline
-  - 仅评测空中透视多视图重建
-- `benchmark_stage1.py`
-  - Stage-1 remote-view geometry benchmark
-  - 仅评测遥感视图几何重建
-- `benchmark_stage2.py`
-  - Stage-2 joint benchmark skeleton
-  - 在 paired scenes 上同时输出 aerial 与 remote 指标
+- `benchmark_unified.py`
+  - 正式 benchmark 入口
+  - 在 paired scenes 上统一输出 `aerial_only`、`rs_only` 和 `joint` 结果结构
+  - 当前已经实现：
+    - `aerial_only`：空中多视图重建指标
+    - `rs_only`：遥感高度指标
+    - `joint`：空中视图 + 遥感视图联合前向后的两类任务指标
+    - `improvement`：`joint` 相对 `aerial_only` / `rs_only` 的提升量
+  - 当前已实现：
+    - `joint_global_point_l1`
 
-## 当前指标
+## 当前正式指标
 
-### Stage-0
+### Aerial-only
 
 - `pointmaps_abs_rel`
 - `z_depth_abs_rel`
 - `pose_ate_rmse`
 - `pose_auc_5`
 - `ray_dirs_err_deg`
+- `metric_scale_abs_rel`
+- `metric_point_l1`
 
-### Stage-1
+### RS-only
 
-- `rs_pointmap_abs_rel`
 - `rs_height_mae`
 - `rs_height_rmse`
 
-### Stage-2
+### Joint
 
-- 空中视图：`pointmaps_abs_rel`、`z_depth_abs_rel`、`pose_ate_rmse`、`pose_auc_5`、`ray_dirs_err_deg`
-- 遥感视图：`rs_pointmap_abs_rel`、`rs_height_mae`、`rs_height_rmse`
-- 跨视图：`crossview_pointmap_gap_abs`
-
-## 重要说明
-
-- Stage-1 当前不是 joint benchmark
-- 因此 Stage-1 的结果文件只包含遥感视图几何指标
-- Stage-2 当前会同时输出两类指标，并已新增第一个 cross-view 指标：`crossview_pointmap_gap_abs`
+- 当前只保留结果结构占位
+- 正式目标指标：`joint_global_point_l1`
+- 当前不再把 `crossview_pointmap_gap_abs` 作为正式主指标
 
 ## 配置与脚本
 
-### Stage-0
-
-- 配置：`configs/rs_guided_dense_mv_benchmark.yaml`
-- 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_guided_518.yaml`
-- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3.sh`
-- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/vggt.sh`
-
-### Stage-1
-
-- 配置：`configs/rs_aerial_stage1_benchmark.yaml`
-- 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_aerial_stage1.yaml`
+- 配置：`configs/rs_aerial_benchmark.yaml`
+- 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_aerial.yaml`
 - metadata 准备：`scripts/prepare_rs_aerial_benchmark_metadata.py`
-- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage1.sh`
-- 配置：`configs/rs_aerial_stage2_benchmark.yaml`
-- 数据配置：`configs/dataset/benchmark_vigor_chicago_rs_aerial_stage2.yaml`
-- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_stage2.sh`
+- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified.sh`
+- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/vggt_unified.sh`
+- 脚本：`bash_scripts/benchmark/rs_guided_dense_mv/mapanything_unified.sh`
+- 批量脚本：`bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified_sweep.sh`
+- 批量脚本：`bash_scripts/benchmark/rs_guided_dense_mv/vggt_unified_sweep.sh`
+- 批量脚本：`bash_scripts/benchmark/rs_guided_dense_mv/mapanything_unified_sweep.sh`
+
+## 历史实现
+
+下面几个文件仍保留，作为统一 benchmark 的实现参考或迁移来源，不再作为正式对外入口：
+
+- `benchmark.py`
+- `benchmark_stage1.py`
+- `benchmark_stage2.py`
 
 更完整的中文设计说明见：
 
 - `RS_GUIDED_DENSE_MV_BENCHMARK_DESIGN_CN.md`
+
+## 结果可视化
+
+- 脚本：`scripts/visualize_rs_aerial_benchmark.py`
+- 输入：`rs_aerial_benchmark_results.json`
+- 输出：
+  - `visualized/summary.md`
+  - `visualized/per_scene_compact.csv`
+  - `visualized/scene_ranking.csv`
+
+## 运行说明
+
+- 三个 unified 脚本都会在运行前尝试执行：`source /etc/profile.d/clash.sh && proxy_on`，用于加速首次权重下载。
+- 帧数由 `dataset.num_views` 控制；当前脚本通过环境变量 `NUM_VIEWS` 覆盖，因此不需要改 YAML。
+- 单次运行示例：`NUM_VIEWS=4 BATCH_SIZE=1 bash bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified.sh`
+- 批量运行示例：`bash bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified_sweep.sh`
+- `VGGT` 当前框架内的预训练入口固定为 `facebook/VGGT-1B`。如果要切换到别的 VGGT 规模，需要修改 `mapanything/models/external/vggt/__init__.py` 里硬编码的 `from_pretrained(...)` repo id，现有配置文件本身还没有暴露这个开关。
+- `Pi3` 当前框架内的预训练入口固定为 `yyfz233/Pi3`。`decoder_size` 只在 `load_pretrained_weights=false` 时用于从零初始化结构，不能直接切换到另一套预训练尺度。
+- `MapAnything` 的结构规模由 `configs/model/mapanything*.yaml` 的默认组合决定，例如 `model=mapanything` 使用 giant encoder，`model=mapanything_v1` 使用 large encoder；但 benchmark 运行仍需要对应结构的本地 checkpoint：`export MAPANYTHING_CKPT=/path/to/checkpoint-last.pth`。
+- 如果某个模型不支持某个指标，结果文件里该指标保留为空值或 `NaN`，不再单独拆表。
