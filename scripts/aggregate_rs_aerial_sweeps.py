@@ -9,6 +9,7 @@ MODELS = {
     'pi3': 'Pi3',
     'vggt': 'VGGT',
     'mapanything': 'MapAnything',
+    'da3': 'DA3',
 }
 VIEWS = [2, 4, 8, 16, 24, 32, 40]
 AERIAL_METRICS = [
@@ -74,10 +75,10 @@ def collect_rows(root: Path):
                 else:
                     row['joint_global_point_l1'] = None
                     row['joint_global_pointmaps_abs_rel'] = None
-                    row['rs_height_mae'] = result['rs_only']['average'].get('rs_height_mae') if model_name == 'MapAnything' else None
-                    row['rs_height_rmse'] = result['rs_only']['average'].get('rs_height_rmse') if model_name == 'MapAnything' else None
-                    row['rs_height_mae_affine'] = result['rs_only']['average'].get('rs_height_mae_affine')
-                    row['rs_height_rmse_affine'] = result['rs_only']['average'].get('rs_height_rmse_affine')
+                    row['rs_height_mae'] = None
+                    row['rs_height_rmse'] = None
+                    row['rs_height_mae_affine'] = None
+                    row['rs_height_rmse_affine'] = None
                 rows.append(row)
     return rows
 
@@ -107,6 +108,7 @@ def plot_metrics(rows, out_dir: Path):
         'Pi3': '#1f77b4',
         'VGGT': '#d62728',
         'MapAnything': '#2ca02c',
+        'DA3': '#9467bd',
     }
     mode_labels = {
         'aerial_only': 'Aerial-only',
@@ -118,7 +120,7 @@ def plot_metrics(rows, out_dir: Path):
     axes = axes.flatten()
 
     for ax, metric in zip(axes, ALL_METRICS):
-        for model in ['Pi3', 'VGGT', 'MapAnything']:
+        for model in ['Pi3', 'VGGT', 'MapAnything', 'DA3']:
             model_df = df[df['model'] == model]
             if model_df.empty:
                 continue

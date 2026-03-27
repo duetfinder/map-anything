@@ -25,12 +25,12 @@ def build_scene_manifest(
     scene_name: str,
     aerial_root: Path,
     remote_root: Path,
-    satellite_maps_root: Path,
+    satellite_maps_root: Path | None,
     provider: str,
 ) -> dict:
     aerial_scene_dir = aerial_root / scene_name
     remote_scene_dir = remote_root / scene_name / provider
-    remote_image_path = satellite_maps_root / scene_name / f"{provider}.png"
+    unified_remote_image_path = remote_scene_dir / "image.png"
 
     if not aerial_scene_dir.exists():
         raise FileNotFoundError(f"Missing aerial scene dir: {aerial_scene_dir}")
@@ -38,8 +38,17 @@ def build_scene_manifest(
         raise FileNotFoundError(f"Missing aerial scene meta: {aerial_scene_dir / 'scene_meta.json'}")
     if not remote_scene_dir.exists():
         raise FileNotFoundError(f"Missing remote scene dir: {remote_scene_dir}")
-    if not remote_image_path.exists():
-        raise FileNotFoundError(f"Missing remote image: {remote_image_path}")
+
+    if unified_remote_image_path.exists():
+        remote_image_path = unified_remote_image_path
+    else:
+        if satellite_maps_root is None:
+            raise FileNotFoundError(
+                f"Missing unified remote image {unified_remote_image_path} and no legacy satellite_maps_root was provided"
+            )
+        remote_image_path = satellite_maps_root / scene_name / f"{provider}.png"
+        if not remote_image_path.exists():
+            raise FileNotFoundError(f"Missing remote image: {remote_image_path}")
 
     pointmap_path = remote_scene_dir / "pixel_to_point_map.npz"
     valid_mask_path = remote_scene_dir / "valid_mask.npy"
@@ -119,12 +128,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--remote-root",
         type=Path,
-        default=Path("/root/autodl-tmp/outputs/experiments/exp_005_map_points_generate/vigor/chicago"),
+        default=Path("/root/autodl-tmp/outputs/dataset/vigor_chicago_rs"),
     )
     parser.add_argument(
         "--satellite-maps-root",
         type=Path,
-        default=Path("/root/autodl-tmp/dataset/Vigor/map/chicago_subset_2000"),
+        default=None,
+        help="Optional legacy map root. Only needed when remote-root still uses the old split geometry/image layout.",
     )
     parser.add_argument(
         "--output-root",
