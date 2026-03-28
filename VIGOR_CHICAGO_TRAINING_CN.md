@@ -34,6 +34,16 @@
 - dataset loader：[mapanything/datasets/wai/vigor_chicago.py](mapanything/datasets/wai/vigor_chicago.py)
 - 数据配置：[configs/dataset/vigor_chicago_50_518.yaml](configs/dataset/vigor_chicago_50_518.yaml)
 - 500-scene 正式配置：[configs/dataset/vigor_chicago_500_518.yaml](configs/dataset/vigor_chicago_500_518.yaml)
+- 500-scene Pi3 debug 短跑脚本：[bash_scripts/train/vigor_chicago/p0_pi3_data_sanity_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p0_pi3_data_sanity_500_pretrained_2gpu.sh)
+- 500-scene Pi3 baseline 正式脚本：[bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh)
+- 旧的 example 脚本：[bash_scripts/train/examples/vigor_chicago_500_pi3_finetune_pretrained_2gpu.sh](bash_scripts/train/examples/vigor_chicago_500_pi3_finetune_pretrained_2gpu.sh)
+
+说明：
+
+- `examples/vigor_chicago_500_pi3_finetune_pretrained_2gpu.sh` 与正式 baseline 在训练逻辑上已经非常接近。
+- 新增的 [bash_scripts/train/vigor_chicago/p0_pi3_data_sanity_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p0_pi3_data_sanity_500_pretrained_2gpu.sh) 是 `P0 Data Sanity` 调试入口，用于 1-epoch / 小样本短跑。
+- 新增的 [bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh) 主要是把 baseline 重新命名、单独归档，并显式定义为 `P1 Baseline-Main` 实验入口。
+- 新脚本同时暴露了 `NUM_VIEWS / BATCH_SIZE / OUTPUT_DIR`，而 P0 额外暴露了 `TRAIN_SETS / VAL_SETS / TEST_SETS`，便于在不改脚本的前提下做 debug 和 baseline 内部调参。
 
 ## 2. 当前 aerial-only 训练的数据接口
 
@@ -314,61 +324,171 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 - covisibility 继续只用于 aerial views
 - remote image 由 scene pairing 决定，而不是由 covisibility 决定
 
-## 8. 推荐的推进顺序
+## 8. 当前对 baseline 的更具体判断
 
-### 8.1 第一阶段：不改现有 aerial 主训练逻辑
+目前更合理的做法是：
 
-目标：先验证 joint input + remote auxiliary loss 能不能稳定训练。
+- baseline 先固定成一条清晰的 `aerial-only` 正式训练线
+- 不要在 baseline 阶段同时展开 `全量微调 / 冻结 encoder / 部分微调 / LoRA` 的系统对比
+- `num_views` 的变化更适合视作 baseline 内部的训练配置选择，而不是单独的大实验方向
 
-建议：
+也就是说，当前优先回答的问题应当是：
 
-- 保持 aerial loss 完全不变
-- 新增 remote pointmap / height auxiliary loss
-- 不引入 remote pose loss
-- 不要求 remote 进入 `BaseDataset` 标准 camera model 流程
+1. 哪个模型先作为主 baseline。
+2. baseline 先采用哪一种最稳妥的 fine-tune 方式。
+3. baseline 在 `num_views=2` 还是 `num_views=4` 下更适合当前显存和训练稳定性。
+4. 在 baseline 稳定之后，再决定是否需要做额外的 fine-tune strategy ablation。
 
-### 8.2 第二阶段：比较三种训练方式
+对当前项目，推荐把 baseline 先收敛为：
 
-建议对比：
+- 500-scene aerial-only
+- 直接加载官方预训练权重
+- 先用当前已经跑通过的常规 fine-tune 路线
+- encoder 先保持低学习率而不是完全冻结
+- 不在第一阶段引入 LoRA
 
-- aerial-only
-- aerial + remote auxiliary loss
-- aerial + remote auxiliary loss + joint forward input
+原因：
 
-这样可以先分离两个问题：
+- 当前最主要的不确定性来自数据组织更新和 RS 联合训练设计，而不是 fine-tune strategy 本身。
+- 如果 baseline 阶段同时比较太多训练方式，后续很难判断问题究竟来自数据、模型，还是训练策略。
+- LoRA 当前仓库里没有内置支持，也没有现成例子；它更适合放到后续的策略对比，而不是第一条 baseline。
 
-- 遥感监督本身有没有帮助
-- 遥感图像作为额外输入有没有帮助
+## 9. 训练实验安排表
 
-### 8.3 第三阶段：等相机模型问题更清楚后再升级几何约束
+下表的核心目的不是一次性把所有实验都做完，而是先把训练安排拆成“必须先做”和“后续可选对比”两层。
 
-只有在 remote 的投影模型、全局坐标系关系、以及可解释相机参数更明确之后，才建议进一步尝试：
+| 阶段 | 实验名 | 目标 | 模型建议 | 数据输入 | 训练方式 | 损失 | 对应脚本 | 备注 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| P0 | Data Sanity | 确认 500-scene 数据与 joint dataset 可稳定取样 | `pi3` | aerial-only 或 joint dataset 读数检查 | 不正式训练，先做 dataloader / 1-epoch smoke | 当前 `pi3_loss` | [bash_scripts/train/vigor_chicago/p0_pi3_data_sanity_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p0_pi3_data_sanity_500_pretrained_2gpu.sh) | 已有 joint dataset 基础，重点确认 `traindata` 迁移后读取稳定 |
+| P1 | Baseline-Main | 建立正式对照组 | `pi3` | aerial-only, 500 scenes | 常规 pretrained fine-tune | `pi3_loss` | [bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh) | 当前最推荐的主 baseline |
+| P1a | Baseline-Views | 在 baseline 内部选择合适的 `num_views` | `pi3` | aerial-only, 500 scenes | 与 P1 相同，只改 `num_views` | `pi3_loss` | 复用 [bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh) | 本质上是调参，建议只比较 `2` 和 `4` |
+| P1b | Baseline-FT-Strategy | 检查是否有必要做训练策略对比 | `pi3` | aerial-only, 500 scenes | 全量微调 / encoder 低 lr / encoder 冻结 | `pi3_loss` | 待后续按策略拆分脚本 | 不建议一开始就展开，只有在 baseline 不稳或效果不理想时再做 |
+| P1c | Baseline-LoRA | 检查参数高效微调是否值得引入 | `pi3` | aerial-only, 500 scenes | LoRA / adapter | `pi3_loss` | 当前无脚本 | 当前仓库未原生支持，优先级低于 P1 / P1a / P2 |
+| P2 | RS-Auxiliary | 先验证 RS supervision 本身是否有帮助 | `pi3` | aerial multi-view + remote supervision | 主干保持 aerial-only，多一个 remote 辅助监督 | `pi3_loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | 待新增联合训练脚本 | 当前最值得优先实现的 joint training 方向 |
+| P2a | RS-Loss-Ablation | 比较 remote loss 设计 | `pi3` | 同 P2 | 与 P2 相同 | 比较 `masked L1` / `robust` / `height-only` | 复用 P2 脚本并切 loss config | 先不要引入 remote pose loss |
+| P3 | RS-Input | 检查把 remote image 作为额外输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + remote auxiliary loss` | 待新增联合输入脚本 | 风险更高，放在 P2 后 |
+| P4 | Model-Compare | 在稳定实验设置下比较不同模型 | `pi3` / `vggt` / `mapanything` / `da3` | 与选定任务一致 | 跟随对应 baseline / joint 设置 | 跟随模型对应主 loss | 视模型逐个补脚本 | 只有在 P1/P2 跑稳后再展开 |
 
-- remote pose-related losses
-- aerial / remote cross-view consistency losses
-- 更强的 shared-frame joint geometric losses
+补充解释：
 
-## 9. 当前建议改动点总表
+- `P1` 才是当前真正意义上的 baseline。
+- `P1a` 属于 baseline 内部调参，不需要把它抬升成一条完全独立的研究主线。
+- `P1b` 和 `P1c` 是训练策略 ablation，不是 baseline 本身。
+- 如果你的目标是尽快推进 RS 联合训练，`P1b / P1c` 完全可以后置。
 
-如果要启动第一版 joint training，建议优先改这些文件：
+## 10. 当前推荐的 loss 选择
 
-- 新增训练 dataset
-  - [mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py](mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py)
-- [mapanything/datasets/wai/vigor_chicago_rs.py](mapanything/datasets/wai/vigor_chicago_rs.py)
-- 更新 dataset registry
-  - [mapanything/datasets/__init__.py](mapanything/datasets/__init__.py)
-- 新增训练 dataset config
-  - `configs/dataset/vigor_chicago_50_rs_joint_518.yaml`
-- 新增 joint loss config
-  - `configs/loss/pi3_loss_rs_joint.yaml`
-- 视需要改训练循环
-  - [mapanything/train/training.py](mapanything/train/training.py)
-- 视需要新增 remote auxiliary loss 实现
-  - [mapanything/train/losses.py](mapanything/train/losses.py)
-- 新增训练脚本
-  - `bash_scripts/train/examples/vigor_chicago_50_pi3_rs_joint_finetune_2gpu.sh`
+结合当前代码和你的数据约束，建议这样分层：
 
-## 10. 与状态总文档的关系
+### 10.1 aerial-only baseline
+
+直接使用当前主 loss：
+
+- [configs/loss/pi3_loss.yaml](configs/loss/pi3_loss.yaml)
+
+也就是：
+
+- `ExcludeTopNPercentPixelLoss(...)`
+- 内部主项是 `FactoredGeometryRegr3DPlusNormalGMLoss(...)`
+- 基础回归项是 `RobustRegressionLoss(alpha=0.5, scaling_c=0.05)`
+
+这条线当前不要改 loss。
+
+### 10.2 RS auxiliary 第一版
+
+考虑到卫星图像当前没有可靠相机模型，第一版建议只加几何监督，不加视角相关项：
+
+```text
+total_loss = aerial_loss + lambda_remote_pm * remote_pointmap_loss + lambda_remote_h * remote_height_loss
+```
+
+其中：
+
+- `aerial_loss = pi3_loss`
+- `remote_pointmap_loss`
+  - 推荐先用 masked `L1`，其次再试 `RobustRegressionLoss`
+- `remote_height_loss`
+  - 推荐先用 masked `L1`
+- 当前先不引入：
+  - remote pose loss
+  - remote relative pose loss
+  - 依赖 perspective camera 的 remote view consistency loss
+
+建议第一版权重从小值开始，例如：
+
+- `lambda_remote_pm = 0.1`
+- `lambda_remote_h = 0.05`
+
+目的不是一次到位，而是先避免 remote 辅助项压过 aerial 主任务。
+
+## 11. 模型选择建议
+
+当前候选模型不只是 `MapAnything`，还包括 `da3 / pi3 / vggt`。从工程角度看，它们差别是比较大的。
+
+### 11.1 MapAnything
+
+特点：
+
+- 仓库原生模型，训练脚本、ablation、loss 配置最完整。
+- 适合做深度定制，例如几何输入控制、info sharing、结构改动。
+- 但它也是当前改动面最大、训练链路最复杂的一条线。
+
+工程判断：
+
+- 如果你的目标是“尽快得到一个稳定 baseline”，它不是第一优先。
+- 如果你的目标是“后续要深改结构、把 RS 联合训练做成框架级方案”，它反而最有潜力。
+
+### 11.2 Pi3
+
+特点：
+
+- 当前 VIGOR Chicago 上已经有最完整、最直接的训练验证路径。
+- 已经有现成脚本：[bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh](bash_scripts/train/examples/vigor_chicago_50_pi3_finetune_pretrained_2gpu.sh) 和 [bash_scripts/train/examples/vigor_chicago_500_pi3_finetune_pretrained_2gpu.sh](bash_scripts/train/examples/vigor_chicago_500_pi3_finetune_pretrained_2gpu.sh)
+- wrapper 简单，前向接口清晰，当前最容易继续扩展。
+- 冻结子模块也比较直接，因为 `named_parameters()` 前缀清楚。
+
+工程判断：
+
+- 当前最适合作为主 baseline。
+- 也是最适合作为第一版 RS auxiliary training 的承载模型。
+
+### 11.3 VGGT
+
+特点：
+
+- 同样是强多视角几何模型，训练上比 Pi3 更“完整相机模型导向”。
+- 当前仓库里已经有 fine-tune 入口：[bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh](bash_scripts/train/examples/vigor_chicago_50_vggt_finetune.sh)
+- 但从工程复杂度和显存压力看，通常会比 Pi3 更重。
+
+工程判断：
+
+- 更适合作为第二候选 baseline 或对比模型。
+- 如果只是想快速推进，不建议先拿它做第一主线。
+
+### 11.4 DA3
+
+特点：
+
+- 当前仓库中是外部 wrapper 接入，不是本项目里最成熟的训练主线。
+- 它本身更偏 foundation depth / camera wrapper 风格，当前没有你这套 VIGOR Chicago 的现成训练脚本。
+- 如果后续要做系统训练，通常需要额外补更多实验脚本和验证。
+
+工程判断：
+
+- 当前不建议作为第一优先模型。
+- 更适合后续在 baseline 稳定后做补充对比。
+
+### 11.5 当前的实际推荐顺序
+
+如果目标是“尽快把训练路线变得清晰且可执行”，推荐顺序是：
+
+1. `pi3` 作为主 baseline。
+2. `pi3` 上先做 RS auxiliary training。
+3. `vggt` 作为第二对比模型。
+4. `mapanything` 留给后续更深的结构化研究。
+5. `da3` 放在更后面的补充实验。
+
+## 12. 与状态总文档的关系
 
 状态总文档见：
 
@@ -379,4 +499,4 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 - `VIGOR_CHICAGO_STATUS.md`
   - 记录全局进展、数据产物、benchmark 状态
 - `VIGOR_CHICAGO_TRAINING_CN.md`
-  - 记录训练设计、训练假设、loss、联合训练策略
+  - 记录训练设计、训练假设、loss、联合训练策略、实验表

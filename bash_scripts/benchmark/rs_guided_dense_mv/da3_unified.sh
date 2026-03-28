@@ -10,7 +10,7 @@ if [ -f /etc/profile.d/clash.sh ]; then
     proxy_on >/dev/null 2>&1 || true
 fi
 
-PYTHONPATH=. python3 \
+PYTHONPATH=/root/autodl-tmp/Models/Depth-Anything-3/src:. python3 \
     benchmarking/rs_guided_dense_mv/benchmark_unified.py \
     machine=autodl_vigor \
     dataset=benchmark_vigor_chicago_rs_aerial \
