@@ -6,7 +6,7 @@
 
 为 VIGOR Chicago 的遥感数据建立统一的数据集根目录：
 
-- 目标目录：`../../outputs/dataset/vigor_chicago_rs`
+- 目标目录：`../../traindata/vigor_chicago_rs`
 
 这样后续训练与 benchmark 都不再直接依赖：
 
@@ -30,7 +30,7 @@
 
 - 几何标签来源：`../../outputs/experiments/exp_005_map_points_generate/vigor/chicago`
 - 遥感图像来源：`../../dataset/Vigor/map/chicago_subset_2000`
-- 统一目标目录：`../../outputs/dataset/vigor_chicago_rs`
+- 统一目标目录：`../../traindata/vigor_chicago_rs`
 
 也就是说，脚本会把两套源数据整合为一个统一 root。
 
@@ -39,7 +39,7 @@
 建议采用如下结构：
 
 ```text
-outputs/dataset/vigor_chicago_rs/
+traindata/vigor_chicago_rs/
   README.md
   dataset_meta.json
   providers.json
@@ -89,8 +89,8 @@ outputs/dataset/vigor_chicago_rs/
 
 迁到：
 
-- `../../outputs/dataset/vigor_chicago_rs/location_x/map_metadata.json`
-- `../../outputs/dataset/vigor_chicago_rs/location_x/map_parameters.txt`
+- `../../traindata/vigor_chicago_rs/location_x/map_metadata.json`
+- `../../traindata/vigor_chicago_rs/location_x/map_parameters.txt`
 
 ### 4.2 provider 级别遥感图像
 
@@ -100,7 +100,7 @@ outputs/dataset/vigor_chicago_rs/
 
 迁到：
 
-- `../../outputs/dataset/vigor_chicago_rs/location_x/<provider>/image.png`
+- `../../traindata/vigor_chicago_rs/location_x/<provider>/image.png`
 
 ### 4.3 provider 级别几何标签
 
@@ -113,10 +113,10 @@ outputs/dataset/vigor_chicago_rs/
 
 迁到：
 
-- `../../outputs/dataset/vigor_chicago_rs/location_x/<provider>/pixel_to_point_map.npz`
-- `../../outputs/dataset/vigor_chicago_rs/location_x/<provider>/valid_mask.npy`
-- `../../outputs/dataset/vigor_chicago_rs/location_x/<provider>/height_map.npy`
-- `../../outputs/dataset/vigor_chicago_rs/location_x/<provider>/info.json`
+- `../../traindata/vigor_chicago_rs/location_x/<provider>/pixel_to_point_map.npz`
+- `../../traindata/vigor_chicago_rs/location_x/<provider>/valid_mask.npy`
+- `../../traindata/vigor_chicago_rs/location_x/<provider>/height_map.npy`
+- `../../traindata/vigor_chicago_rs/location_x/<provider>/info.json`
 
 ### 4.4 provider 级别可选附加文件
 
@@ -147,7 +147,13 @@ outputs/dataset/vigor_chicago_rs/
 
 1. 先 `--dry-run` 检查
 2. 再用 `--mode symlink` 建立统一目录
-3. 确认训练/benchmark 新路径稳定后，再决定是否改成 `copy`
+3. 确认路径与 metadata 稳定后，再用 `--mode copy --overwrite` 实体化
+
+当前实际状态：
+
+- 数据根已经迁到 `../../traindata/vigor_chicago_rs`
+- 当前 RS 数据已经用 `copy` 模式实体化，不再依赖软链接
+- `location_1_1`、`location_13_2` 这类异常 scene 不纳入正式训练数据集
 
 ## 6. 使用示例
 
@@ -172,14 +178,21 @@ cd Models/map-anything
 python scripts/migrate_vigor_chicago_rs_dataset.py --mode symlink --overwrite
 ```
 
-### 6.4 只迁移前 50 个 location
+### 6.4 全量实体化为真实文件
+
+```bash
+cd Models/map-anything
+python scripts/migrate_vigor_chicago_rs_dataset.py --mode copy --skip-missing --overwrite
+```
+
+### 6.5 只迁移前 50 个 location
 
 ```bash
 cd Models/map-anything
 python scripts/migrate_vigor_chicago_rs_dataset.py --max-locations 50 --mode symlink
 ```
 
-### 6.5 只迁移指定 provider
+### 6.6 只迁移指定 provider
 
 ```bash
 cd Models/map-anything
@@ -205,15 +218,22 @@ python scripts/migrate_vigor_chicago_rs_dataset.py --providers Google_Satellite 
 
 完成迁移后，下一步建议是：
 
-1. 将 RS benchmark / train metadata 生成逻辑改为直接读取 `../../outputs/dataset/vigor_chicago_rs`
+1. 将 RS benchmark / train metadata 生成逻辑改为直接读取 `../../traindata/vigor_chicago_rs`
 2. 逐步去掉对 `exp_005_map_points_generate` 和原始 `Vigor/map` 的直接运行时依赖
-3. 让训练和 benchmark 都只依赖：
-   - `../../outputs/dataset/vigor_chicago_wai`
-   - `../../outputs/dataset/vigor_chicago_rs`
-   - `../../outputs/dataset/mapanything_metadata/...`
+3. 当前训练和 benchmark 已统一依赖：
+   - `../../traindata/vigor_chicago_wai`
+   - `../../traindata/vigor_chicago_rs`
+   - `../../traindata/mapanything_metadata/...`
 
 ## 9. 当前结论
 
-当前遥感数据还没有像 aerial 数据那样形成一个统一 dataset root，因此路径组织仍然偏“实验产物导向”。
+当前遥感数据已经形成统一 dataset root：`../../traindata/vigor_chicago_rs`。
 
-本脚本和本文档的目标，就是把这部分整理成标准数据资产，为后续联合训练和长期维护做准备。
+当前状态：
+
+- 数据根已从 `outputs/dataset` 迁到 `traindata`
+- RS 数据已用 `copy` 模式实体化为真实文件
+- RS-aerial metadata 已重建到 `../../traindata/mapanything_metadata/vigor_chicago_rs_aerial`
+- 训练与 benchmark 默认都应以 `traindata` 为准
+
+本脚本和本文档现在不只是“设计草案”，而是当前真实数据组织方式的说明。

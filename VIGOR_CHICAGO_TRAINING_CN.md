@@ -4,6 +4,20 @@
 
 本文档只记录 `VIGOR Chicago` 在 `Models/map-anything` 中的训练相关内容，与 benchmark 设计、RS-Aerial 指标定义等内容拆开维护。
 
+## 0. 当前数据根目录
+
+当前训练相关数据已经统一迁移到 `../../traindata`：
+
+- aerial WAI：[`../../traindata/vigor_chicago_wai`](../../traindata/vigor_chicago_wai)
+- RS 数据：[`../../traindata/vigor_chicago_rs`](../../traindata/vigor_chicago_rs)
+- split / metadata：[`../../traindata/mapanything_metadata`](../../traindata/mapanything_metadata)
+
+补充说明：
+
+- `vigor_chicago_rs` 当前已经是实体文件，不再依赖软链接
+- `vigor_chicago_wai` 当前仍使用相对链接组织 image / depth，但链接已按 `traindata` 修复
+- joint training 的 dataset 数据层已新增并验证通过：`VigorChicagoJointRSAerial`
+
 ## 1. 当前训练状态
 
 当前已经完成两条训练链路验证：
@@ -19,6 +33,7 @@
 
 - dataset loader：[mapanything/datasets/wai/vigor_chicago.py](mapanything/datasets/wai/vigor_chicago.py)
 - 数据配置：[configs/dataset/vigor_chicago_50_518.yaml](configs/dataset/vigor_chicago_50_518.yaml)
+- 500-scene 正式配置：[configs/dataset/vigor_chicago_500_518.yaml](configs/dataset/vigor_chicago_500_518.yaml)
 
 ## 2. 当前 aerial-only 训练的数据接口
 
@@ -50,7 +65,7 @@
 
 ## 3. 当前遥感数据的组织方式
 
-当前遥感图像已经有可复用的数据组织，但它目前主要服务于 benchmark，而不是训练。
+当前遥感图像已经有统一的数据组织，既可服务于 benchmark，也已经具备训练接入的基础。
 
 相关代码：
 
@@ -110,7 +125,7 @@
 
 ### 5.2 推荐的数据组织方式
 
-当前最值得复用的是 benchmark 已经准备好的 paired manifest，而不是重新发明一种完全不同的数据组织。
+当前最值得复用的是已经重建到 `traindata` 下的 paired manifest，同时训练侧也已经具备直接读取统一 RS 根目录的 dataset。
 
 推荐做法：
 
@@ -136,7 +151,8 @@
 
 建议新增：
 
-- `mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py`
+- [mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py](mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py)
+- [mapanything/datasets/wai/vigor_chicago_rs.py](mapanything/datasets/wai/vigor_chicago_rs.py)
 
 其返回结构建议分成两部分：
 
@@ -337,7 +353,8 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 如果要启动第一版 joint training，建议优先改这些文件：
 
 - 新增训练 dataset
-  - `mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py`
+  - [mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py](mapanything/datasets/wai/vigor_chicago_joint_rs_aerial.py)
+- [mapanything/datasets/wai/vigor_chicago_rs.py](mapanything/datasets/wai/vigor_chicago_rs.py)
 - 更新 dataset registry
   - [mapanything/datasets/__init__.py](mapanything/datasets/__init__.py)
 - 新增训练 dataset config

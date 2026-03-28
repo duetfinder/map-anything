@@ -32,12 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset_root",
         type=Path,
-        default=Path("/root/autodl-tmp/outputs/dataset/vigor_chicago_wai"),
+        default=Path("/root/autodl-tmp/traindata/vigor_chicago_wai"),
     )
     parser.add_argument(
         "--metadata_root",
         type=Path,
-        default=Path("/root/autodl-tmp/outputs/dataset/mapanything_metadata/vigor_chicago"),
+        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago"),
     )
     parser.add_argument("--train_scenes", type=int, default=40)
     parser.add_argument("--val_scenes", type=int, default=5)

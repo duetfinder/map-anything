@@ -9,8 +9,10 @@
 当前相关路径：
 
 - 原始数据：`/root/autodl-tmp/outputs/experiments/exp_001_reconstrc/vigor_chicago_processed`
-- 转换后的 WAI 数据：`/root/autodl-tmp/outputs/dataset/vigor_chicago_wai`
-- split / metadata：`/root/autodl-tmp/outputs/dataset/mapanything_metadata/vigor_chicago`
+- 转换后的 WAI 数据：`/root/autodl-tmp/traindata/vigor_chicago_wai`
+- split / metadata：`/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago`
+- RS 数据根目录：`/root/autodl-tmp/traindata/vigor_chicago_rs`
+- RS paired metadata：`/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago_rs_aerial`
 - 训练输出：`/root/autodl-tmp/outputs/mapanything_experiments`
 
 ## 1. 当前工作的目标
@@ -191,11 +193,11 @@ decode_image(read_file(str(fname)))
 
 转换总结文件：
 
-- [../../outputs/dataset/vigor_chicago_wai/conversion_summary.json](../../outputs/dataset/vigor_chicago_wai/conversion_summary.json)
+- [../../traindata/vigor_chicago_wai/conversion_summary.json](../../traindata/vigor_chicago_wai/conversion_summary.json)
 
 GT depth covisibility 批处理总结文件：
 
-- [../../outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json](../../outputs/dataset/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json)
+- [../../traindata/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json](../../traindata/vigor_chicago_wai/gt_covisibility_summary_v0_gtdepth_native.json)
 
 当前 split：
 
@@ -205,7 +207,7 @@ GT depth covisibility 批处理总结文件：
 
 split 总结文件：
 
-- [../../outputs/dataset/mapanything_metadata/vigor_chicago/split_summary.json](../../outputs/dataset/mapanything_metadata/vigor_chicago/split_summary.json)
+- [../../traindata/mapanything_metadata/vigor_chicago/split_summary.json](../../traindata/mapanything_metadata/vigor_chicago/split_summary.json)
 
 ## 6. 已补齐的环境依赖
 
@@ -255,7 +257,7 @@ location_x/
 
 例如：
 
-- [../../outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy](../../outputs/dataset/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy)
+- [../../traindata/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy](../../traindata/vigor_chicago_wai/location_1/covisibility/v0_gtdepth_native/pairwise_covisibility--45x45.npy)
 
 旧的全 1 `covisibility/v0/full_dense*` 已从数据目录中清理，避免与真实 covisibility 混用。
 
@@ -895,7 +897,7 @@ manifest 输出目录：
 
 ### 19.5 Stage-2 joint skeleton
 
-当前已新增 Stage-2 joint benchmark 骨架：
+当前已新增 Stage-2 joint benchmark 骨架；另外，训练侧的 joint dataset 数据层也已接通：
 
 - `benchmarking/rs_guided_dense_mv/benchmark_stage2.py`
 - `configs/rs_aerial_stage2_benchmark.yaml`

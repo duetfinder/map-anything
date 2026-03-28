@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("/root/autodl-tmp/outputs/dataset/vigor_chicago_rs"),
+        default=Path("/root/autodl-tmp/traindata/vigor_chicago_rs"),
         help="Target unified dataset root.",
     )
     parser.add_argument(

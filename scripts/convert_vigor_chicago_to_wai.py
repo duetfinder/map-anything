@@ -39,7 +39,7 @@ def safe_symlink(src: Path, dst: Path) -> None:
     os.symlink(rel_src, dst)
 
 
-def build_scene_meta(scene_name: str, frames: list[dict]) -> dict:
+def build_scene_meta(scene_name: str, frames: list[dict], scene_modalities: dict | None = None) -> dict:
     return {
         "scene_name": scene_name,
         "dataset_name": "vigor_chicago",
@@ -48,7 +48,7 @@ def build_scene_meta(scene_name: str, frames: list[dict]) -> dict:
         "camera_model": "PINHOLE",
         "camera_convention": "opencv",
         "scale_type": "metric",
-        "scene_modalities": {},
+        "scene_modalities": scene_modalities or {},
         "frames": frames,
         "frame_modalities": {
             "image": {"frame_key": "image", "format": "image"},
@@ -111,7 +111,14 @@ def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool) -> dict[s
             }
         )
 
-    scene_meta = build_scene_meta(scene_name, wai_frames)
+    existing_modalities = {}
+    existing_meta_path = target_scene_root / "scene_meta.json"
+    if existing_meta_path.exists():
+        with open(existing_meta_path, "r", encoding="utf-8") as f:
+            existing_meta = json.load(f)
+        existing_modalities = existing_meta.get("scene_modalities", {})
+
+    scene_meta = build_scene_meta(scene_name, wai_frames, scene_modalities=existing_modalities)
     with open(target_scene_root / "scene_meta.json", "w", encoding="utf-8") as f:
         json.dump(scene_meta, f, indent=2)
 
@@ -130,12 +137,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--target_root",
         type=Path,
-        default=Path("/root/autodl-tmp/outputs/dataset/vigor_chicago_wai"),
+        default=Path("/root/autodl-tmp/traindata/vigor_chicago_wai"),
     )
     parser.add_argument(
         "--max_locations",
         type=int,
-        default=50,
+        default=500,
         help="Only convert the first N locations for pilot experiments.",
     )
     parser.add_argument(

@@ -27,6 +27,7 @@ from mapanything.datasets.wai.unrealstereo4k import UnrealStereo4KWAI  # noqa
 from mapanything.datasets.wai.vigor_chicago import VigorChicagoWAI  # noqa
 from mapanything.datasets.wai.vigor_chicago_rs import VigorChicagoRS  # noqa
 from mapanything.datasets.wai.vigor_chicago_rs_aerial import VigorChicagoRSAerial  # noqa
+from mapanything.datasets.wai.vigor_chicago_joint_rs_aerial import VigorChicagoJointRSAerial  # noqa
 from mapanything.utils.train_tools import get_rank, get_world_size
 
 

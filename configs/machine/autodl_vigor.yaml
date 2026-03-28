@@ -1,7 +1,7 @@
 # Root directory containing all datasets
-root_data_dir: /root/autodl-tmp/outputs/dataset
+root_data_dir: /root/autodl-tmp/traindata
 # Dataset metadata directory
-mapanything_dataset_metadata_dir: /root/autodl-tmp/outputs/dataset/mapanything_metadata
+mapanything_dataset_metadata_dir: /root/autodl-tmp/traindata/mapanything_metadata
 # Root directory containing pretrained checkpoints for custom models
 root_pretrained_checkpoints_dir: /root/autodl-tmp/outputs/checkpoints
 # Root directory to log experiments
@@ -9,4 +9,4 @@ root_experiments_dir: /root/autodl-tmp/outputs/mapanything_experiments
 # Root directory containing UniCeption pretrained checkpoints
 root_uniception_pretrained_checkpoints_dir: /root/autodl-tmp/outputs/checkpoints/uniception
 # Root directory containing external benchmark data
-external_benchmark_data_root_data_dir: /root/autodl-tmp/outputs/dataset/external_benchmark
+external_benchmark_data_root_data_dir: /root/autodl-tmp/traindata/external_benchmark
