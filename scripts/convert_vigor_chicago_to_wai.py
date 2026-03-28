@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -31,12 +32,12 @@ def natural_key(name: str) -> list[object]:
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
 
 
-def safe_symlink(src: Path, dst: Path) -> None:
+def copy_file(src: Path, dst: Path) -> None:
+    """Copy a file from source to destination, creating parent directories if needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists() or dst.is_symlink():
+    if dst.exists():
         dst.unlink()
-    rel_src = os.path.relpath(src, start=dst.parent)
-    os.symlink(rel_src, dst)
+    shutil.copy2(src, dst)  # copy2 preserves metadata
 
 
 def build_scene_meta(scene_name: str, frames: list[dict], scene_modalities: dict | None = None) -> dict:
@@ -91,9 +92,9 @@ def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool) -> dict[s
         depth_dst = target_scene_root / depth_rel
 
         if overwrite or not image_dst.exists():
-            safe_symlink(image_src, image_dst)
+            copy_file(image_src, image_dst)
         if overwrite or not depth_dst.exists():
-            safe_symlink(depth_src, depth_dst)
+            copy_file(depth_src, depth_dst)
 
         wai_frames.append(
             {
@@ -148,7 +149,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Overwrite existing symlinks and metadata in the target dataset.",
+        help="Overwrite existing files and metadata in the target dataset.",
     )
     return parser.parse_args()
 
