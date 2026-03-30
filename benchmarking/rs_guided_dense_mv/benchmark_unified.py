@@ -326,22 +326,33 @@ def compute_joint_global_pointmaps_abs_rel(batch, joint_preds, remote_sample):
     return float(total_error / total_count)
 
 
-def select_items(data, indices):
+def select_items(data, indices, batch_size):
     if torch.is_tensor(data):
-        return data[indices]
+        if data.ndim > 0 and data.shape[0] == batch_size:
+            return data[indices]
+        return data
     if isinstance(data, list):
-        return [data[i] for i in indices]
+        if len(data) == batch_size:
+            return [data[i] for i in indices]
+        return data
     if isinstance(data, tuple):
-        return tuple(data[i] for i in indices)
+        if len(data) == batch_size:
+            return tuple(data[i] for i in indices)
+        return data
     return data
 
 
 def select_batch_indices(batch, indices):
     selected_batch = []
     for view in batch:
+        batch_size = None
+        for value in view.values():
+            if torch.is_tensor(value) and value.ndim > 0:
+                batch_size = value.shape[0]
+                break
         selected_view = {}
         for key, value in view.items():
-            selected_view[key] = select_items(value, indices)
+            selected_view[key] = select_items(value, indices, batch_size)
         selected_batch.append(selected_view)
     return selected_batch
 

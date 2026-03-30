@@ -4,12 +4,12 @@ export HYDRA_FULL_ERROR=1
 
 # Format: "batch_size num_views"
 run_configs=(
-    "1 2"
-    "1 4"
-    "1 8"
-    "1 16"
-    "1 24"
-    "1 32"
+    "10 2"
+    "10 4"
+    "10 8"
+    "5 16"
+    "4 24"
+    "2 32"
     "1 40"
 )
 
