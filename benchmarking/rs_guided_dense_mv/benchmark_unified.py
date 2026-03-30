@@ -325,6 +325,40 @@ def compute_joint_global_pointmaps_abs_rel(batch, joint_preds, remote_sample):
         return float("nan")
     return float(total_error / total_count)
 
+
+def select_items(data, indices):
+    if torch.is_tensor(data):
+        return data[indices]
+    if isinstance(data, list):
+        return [data[i] for i in indices]
+    if isinstance(data, tuple):
+        return tuple(data[i] for i in indices)
+    return data
+
+
+def select_batch_indices(batch, indices):
+    selected_batch = []
+    for view in batch:
+        selected_view = {}
+        for key, value in view.items():
+            selected_view[key] = select_items(value, indices)
+        selected_batch.append(selected_view)
+    return selected_batch
+
+
+def select_prediction_sample(preds, sample_idx):
+    selected_preds = []
+    for pred in preds:
+        selected_pred = {}
+        for key, value in pred.items():
+            if torch.is_tensor(value):
+                selected_pred[key] = value[sample_idx : sample_idx + 1]
+            else:
+                selected_pred[key] = value
+        selected_preds.append(selected_pred)
+    return selected_preds
+
+
 def aggregate_scene_metrics(per_scene_results):
     if not per_scene_results:
         return {}
@@ -378,8 +412,6 @@ def benchmark(args):
         amp_dtype = torch.float32
 
     aerial_loader, remote_loader = build_data_loaders(args)
-    if args.batch_size != 1:
-        raise ValueError("Unified RS-Aerial benchmark currently requires batch_size=1.")
 
     remote_samples_by_scene = {
         remote_loader.dataset[idx]["scene_name"]: remote_loader.dataset[idx]
@@ -404,10 +436,19 @@ def benchmark(args):
     improvement_rs = {}
 
     for batch in aerial_loader:
-        scene = batch[0]["label"][0]
-        remote_sample = remote_samples_by_scene.get(scene)
-        if remote_sample is None:
+        scene_names = list(batch[0]["label"])
+        valid_indices = [
+            sample_idx
+            for sample_idx, scene_name in enumerate(scene_names)
+            if scene_name in remote_samples_by_scene
+        ]
+        if not valid_indices:
             continue
+        if len(valid_indices) != len(scene_names):
+            batch = select_batch_indices(batch, valid_indices)
+            scene_names = [scene_names[i] for i in valid_indices]
+
+        remote_samples = [remote_samples_by_scene[scene_name] for scene_name in scene_names]
 
         for view in batch:
             view["idx"] = view["idx"][2:]
@@ -428,71 +469,88 @@ def benchmark(args):
                     continue
                 view[name] = view[name].to(device, non_blocking=True)
 
-        remote_image = remote_sample["remote_image"].unsqueeze(0).to(device, non_blocking=True)
-        remote_view = {"img": remote_image, "data_norm_type": [args.model.data_norm_type]}
+        remote_image = torch.stack(
+            [remote_sample["remote_image"] for remote_sample in remote_samples], dim=0
+        ).to(device, non_blocking=True)
+        remote_view = {
+            "img": remote_image,
+            "data_norm_type": [args.model.data_norm_type] * len(remote_samples),
+        }
 
         with torch.autocast("cuda", enabled=bool(args.amp), dtype=amp_dtype):
             aerial_preds = model(batch)
             rs_preds = model([remote_view])
             joint_preds = model(batch + [remote_view])
 
-        aerial_metrics = compute_aerial_scene_metrics(batch, aerial_preds)[scene]
-        aerial_per_scene[scene] = aerial_metrics
-
-        gt_height = remote_sample["remote_height_map"]
-        valid_mask = remote_sample["remote_valid_mask"].astype(bool)
-
+        aerial_metrics_by_scene = compute_aerial_scene_metrics(batch, aerial_preds)
+        joint_aerial_metrics_by_scene = compute_aerial_scene_metrics(
+            batch, joint_preds[: len(batch)]
+        )
         rs_supports_metric_outputs = model_supports_metric_outputs(rs_preds)
-        rs_metrics = compute_remote_height_metrics_affine(
-            gt_height,
-            rs_preds[0]["pts3d"][0].detach().cpu().numpy(),
-            valid_mask,
-        )
-        if rs_supports_metric_outputs:
-            rs_metrics.update(
-                compute_remote_height_metrics(
-                    gt_height,
-                    rs_preds[0]["pts3d"][0].detach().cpu().numpy(),
-                    valid_mask,
-                )
-            )
-        rs_per_scene[scene] = rs_metrics
-
-        joint_aerial_metrics = compute_aerial_scene_metrics(batch, joint_preds[: len(batch)])[scene]
         joint_supports_metric_outputs = model_supports_metric_outputs(joint_preds)
-        joint_rs_metrics = compute_remote_height_metrics_affine(
-            gt_height,
-            joint_preds[len(batch)]["pts3d"][0].detach().cpu().numpy(),
-            valid_mask,
-        )
-        if joint_supports_metric_outputs:
-            joint_rs_metrics.update(
-                compute_remote_height_metrics(
-                    gt_height,
-                    joint_preds[len(batch)]["pts3d"][0].detach().cpu().numpy(),
-                    valid_mask,
-                )
+
+        for sample_idx, scene in enumerate(scene_names):
+            remote_sample = remote_samples[sample_idx]
+            aerial_metrics = aerial_metrics_by_scene[scene]
+            aerial_per_scene[scene] = aerial_metrics
+
+            gt_height = remote_sample["remote_height_map"]
+            valid_mask = remote_sample["remote_valid_mask"].astype(bool)
+
+            rs_pts = rs_preds[0]["pts3d"][sample_idx].detach().cpu().numpy()
+            rs_metrics = compute_remote_height_metrics_affine(
+                gt_height,
+                rs_pts,
+                valid_mask,
             )
-        joint_per_scene[scene] = {
-            **joint_aerial_metrics,
-            **joint_rs_metrics,
-            "joint_global_point_l1": (
-                compute_joint_global_point_l1(
-                    batch=batch,
-                    joint_preds=joint_preds,
-                    remote_sample=remote_sample,
+            if rs_supports_metric_outputs:
+                rs_metrics.update(
+                    compute_remote_height_metrics(
+                        gt_height,
+                        rs_pts,
+                        valid_mask,
+                    )
                 )
-                if joint_supports_metric_outputs
-                else float("nan")
-            ),
-            "joint_global_pointmaps_abs_rel": compute_joint_global_pointmaps_abs_rel(
-                batch=batch,
-                joint_preds=joint_preds,
-                remote_sample=remote_sample,
-            ),
-        }
-        improvement_aerial[scene] = diff_metric_dict(joint_aerial_metrics, aerial_metrics)
-        improvement_rs[scene] = diff_metric_dict(joint_rs_metrics, rs_metrics)
+            rs_per_scene[scene] = rs_metrics
+
+            joint_aerial_metrics = joint_aerial_metrics_by_scene[scene]
+            joint_rs_pts = joint_preds[len(batch)]["pts3d"][sample_idx].detach().cpu().numpy()
+            joint_rs_metrics = compute_remote_height_metrics_affine(
+                gt_height,
+                joint_rs_pts,
+                valid_mask,
+            )
+            if joint_supports_metric_outputs:
+                joint_rs_metrics.update(
+                    compute_remote_height_metrics(
+                        gt_height,
+                        joint_rs_pts,
+                        valid_mask,
+                    )
+                )
+
+            single_batch = select_batch_indices(batch, [sample_idx])
+            single_joint_preds = select_prediction_sample(joint_preds, sample_idx)
+            joint_per_scene[scene] = {
+                **joint_aerial_metrics,
+                **joint_rs_metrics,
+                "joint_global_point_l1": (
+                    compute_joint_global_point_l1(
+                        batch=single_batch,
+                        joint_preds=single_joint_preds,
+                        remote_sample=remote_sample,
+                    )
+                    if joint_supports_metric_outputs
+                    else float("nan")
+                ),
+                "joint_global_pointmaps_abs_rel": compute_joint_global_pointmaps_abs_rel(
+                    batch=single_batch,
+                    joint_preds=single_joint_preds,
+                    remote_sample=remote_sample,
+                ),
+            }
+            improvement_aerial[scene] = diff_metric_dict(joint_aerial_metrics, aerial_metrics)
+            improvement_rs[scene] = diff_metric_dict(joint_rs_metrics, rs_metrics)
 
     paired_scenes = sorted(set(aerial_per_scene.keys()) & set(rs_per_scene.keys()) & set(joint_per_scene.keys()))
 
