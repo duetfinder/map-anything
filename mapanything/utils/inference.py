@@ -87,10 +87,7 @@ def loss_of_one_batch_multi_view(
                 "idx",
                 "true_shape",
                 "rng",
-                "data_norm_type",
-                "remote_provider",
-                "remote_crop_box_xyxy",
-                "remote_aug_variant",
+                "data_norm_type"
             ]
         )
     for view in batch:
