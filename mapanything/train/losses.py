@@ -298,6 +298,76 @@ def Sum(*losses_and_masks):
         return loss
 
 
+class RSPointmapHeightLoss(nn.Module):
+    """
+    Minimal RS-only loss for training on remote pointmaps and optional height maps.
+
+    This criterion is intentionally camera-agnostic: it only reads the predicted global
+    pointmap and compares it to remote GT geometry under the provided valid mask.
+    """
+
+    def __init__(
+        self,
+        pointmap_criterion=None,
+        height_criterion=None,
+        pointmap_loss_weight=1.0,
+        height_loss_weight=0.1,
+    ):
+        super().__init__()
+        self.pointmap_criterion = pointmap_criterion or L1Loss(reduction="none")
+        self.height_criterion = height_criterion or L1Loss(reduction="none")
+        self.pointmap_loss_weight = pointmap_loss_weight
+        self.height_loss_weight = height_loss_weight
+
+    @staticmethod
+    def _masked_mean(loss_map, mask):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if mask.any():
+            return loss_map[mask].mean()
+        return 0 * loss_map.sum()
+
+    def forward(self, gts, preds, **kwargs):
+        if len(gts) != len(preds):
+            raise ValueError(f"Expected same number of GT views and predictions, got {len(gts)} and {len(preds)}")
+
+        total_loss = None
+        pointmap_losses = []
+        height_losses = []
+
+        for gt, pred in zip(gts, preds):
+            pred_pts3d = pred['pts3d'].float()
+            gt_pointmap = gt['remote_pointmap'].float()
+            valid_mask = gt['remote_valid_mask'].bool()
+
+            pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
+            pointmap_loss = self._masked_mean(pointmap_loss_map, valid_mask)
+            pointmap_losses.append(float(pointmap_loss))
+
+            loss = self.pointmap_loss_weight * pointmap_loss
+
+            if self.height_loss_weight > 0 and 'remote_height_map' in gt:
+                pred_height = pred_pts3d[..., 2:3]
+                gt_height = gt['remote_height_map'].float().unsqueeze(-1)
+                height_loss_map = self.height_criterion(pred_height, gt_height)
+                height_loss = self._masked_mean(height_loss_map, valid_mask)
+                height_losses.append(float(height_loss))
+                loss = loss + self.height_loss_weight * height_loss
+
+            total_loss = loss if total_loss is None else total_loss + loss
+
+        if total_loss is None:
+            raise ValueError('RSPointmapHeightLoss received an empty batch')
+
+        details = {}
+        if pointmap_losses:
+            details['rs_pointmap_loss'] = sum(pointmap_losses) / len(pointmap_losses)
+        if height_losses:
+            details['rs_height_loss'] = sum(height_losses) / len(height_losses)
+
+        return total_loss, details
+
+
 class BaseCriterion(nn.Module):
     "Base Criterion to support different reduction methods"
 

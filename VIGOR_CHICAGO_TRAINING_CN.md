@@ -4,6 +4,8 @@
 
 本文档只记录 `VIGOR Chicago` 在 `Models/map-anything` 中的训练相关内容，与 benchmark 设计、RS-Aerial 指标定义等内容拆开维护。
 
+loss 相关的独立汇总见：[MAPANYTHING_LOSSES_CN.md](MAPANYTHING_LOSSES_CN.md)。
+
 ## 0. 当前数据根目录
 
 当前训练相关数据已经统一迁移到 `../../traindata`：
@@ -116,22 +118,28 @@
 
 ## 5. 如果把遥感图像加入训练，建议怎么做
 
-在当前约束下，更稳妥的方案不是“把遥感图像当成普通 perspective view”，而是把它作为一个额外模态 / 辅助监督分支接入训练。
+在当前约束下，更合理的路线不再是优先做“RS auxiliary supervision”，而是先把遥感图像当成一个独立输入域来验证，再进入联合输入训练。
 
 ### 5.1 推荐的第一阶段目标
 
 推荐先实现：
 
-- aerial multi-view 训练主干保持不变
-- 在 paired scenes 上额外读取 remote image
-- 模型前向时允许输入 `aerial views + remote image`
-- 但 remote 分支当前只吃几何监督，不吃相机位姿监督
+- 先做 `RS-only` 训练
+- 只输入 `remote image`
+- 只监督 `remote_pointmap / remote_height_map / remote_valid_mask`
+- 不要求 remote 进入 `BaseDataset` 标准 camera model 流程
+- 不引入 remote pose / view consistency loss
 
 也就是说，第一阶段更像：
 
-- `aerial multi-view reconstruction loss`
-- `+ remote geometry auxiliary loss`
+- `remote-only geometry regression`
+- `+ masked remote geometry supervision`
 - `- remote pose / view consistency loss`
+
+这样做的目的不是直接追求联合训练效果，而是先回答一个更基础的问题：
+
+- 现有模型能不能适应 RS 这种输入域
+- 在不依赖相机模型的前提下，RS 数据本身能不能形成稳定训练信号
 
 ### 5.2 推荐的数据组织方式
 
@@ -202,18 +210,18 @@
 - `rs_preds = model([remote_view])`
 - `joint_preds = model(batch + [remote_view])`
 
-训练阶段可以借鉴这种输入拼接方式，但 loss 不能照 benchmark 的评测方式原样照搬。
+训练阶段建议按两步走：
+
+1. 先做 `model([remote_view])` 的 `RS-only` 训练。
+2. 再做 `model(batch + [remote_view])` 的联合输入训练。
+
+这样 loss 设计和问题解释都会更清楚。
 
 ### 6.3 loss 层
 
 这是第二个必须改的地方。
 
-当前主 loss 仍然应当保留 aerial 侧的现有训练目标：
-
-- [configs/loss/pi3_loss.yaml](configs/loss/pi3_loss.yaml)
-- [mapanything/train/losses.py](mapanything/train/losses.py)
-
-但 remote 侧不能直接用当前依赖相机模型的监督项，至少当前阶段不建议使用：
+当前如果做 `RS-only` 或 `Joint Input`，remote 侧都不能直接复用当前依赖相机模型的监督项，至少当前阶段不建议使用：
 
 - camera pose loss
 - pairwise relative pose loss
@@ -231,10 +239,16 @@
 1. `remote_pointmap_loss`
    - 对 `remote_pointmap` 在 `remote_valid_mask` 上做 L1 / robust loss
 2. `remote_height_loss`
-   - 对预测点图的 `z` 或 height 派生量做监督
+   - 对 `remote_height_map` 做 masked L1 / L2 loss
 3. 不引入 remote pose loss
 
-因此更合理的训练 loss 形态会变成：
+因此第一阶段更合理的 `RS-only` 训练 loss 形态是：
+
+```text
+total_loss = lambda_remote_pm * remote_pointmap_loss + lambda_remote_h * remote_height_loss
+```
+
+在进入 `Joint Input` 后，再扩展为：
 
 ```text
 total_loss = aerial_multiview_loss + lambda_remote_pm * remote_pointmap_loss + lambda_remote_h * remote_height_loss
@@ -364,17 +378,18 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 | P1a | Baseline-Views | 在 baseline 内部选择合适的 `num_views` | `pi3` | aerial-only, 500 scenes | 与 P1 相同，只改 `num_views` | `pi3_loss` | 复用 [bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh) | 本质上是调参，建议只比较 `2` 和 `4` |
 | P1b | Baseline-FT-Strategy | 检查是否有必要做训练策略对比 | `pi3` | aerial-only, 500 scenes | 全量微调 / encoder 低 lr / encoder 冻结 | `pi3_loss` | 待后续按策略拆分脚本 | 不建议一开始就展开，只有在 baseline 不稳或效果不理想时再做 |
 | P1c | Baseline-LoRA | 检查参数高效微调是否值得引入 | `pi3` | aerial-only, 500 scenes | LoRA / adapter | `pi3_loss` | 当前无脚本 | 当前仓库未原生支持，优先级低于 P1 / P1a / P2 |
-| P2 | RS-Auxiliary | 先验证 RS supervision 本身是否有帮助 | `pi3` | aerial multi-view + remote supervision | 主干保持 aerial-only，多一个 remote 辅助监督 | `pi3_loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | 待新增联合训练脚本 | 当前最值得优先实现的 joint training 方向 |
-| P2a | RS-Loss-Ablation | 比较 remote loss 设计 | `pi3` | 同 P2 | 与 P2 相同 | 比较 `masked L1` / `robust` / `height-only` | 复用 P2 脚本并切 loss config | 先不要引入 remote pose loss |
-| P3 | RS-Input | 检查把 remote image 作为额外输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + remote auxiliary loss` | 待新增联合输入脚本 | 风险更高，放在 P2 后 |
-| P4 | Model-Compare | 在稳定实验设置下比较不同模型 | `pi3` / `vggt` / `mapanything` / `da3` | 与选定任务一致 | 跟随对应 baseline / joint 设置 | 跟随模型对应主 loss | 视模型逐个补脚本 | 只有在 P1/P2 跑稳后再展开 |
+| P2 | RS-Only | 先验证模型能否单独适应 RS 输入域 | `pi3` | remote image only | remote-only 几何回归 | `lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh) | 已完成 2-GPU, 1-epoch smoke；当前是可运行的最小入口 |
+| P2a | RS-Only-Loss-Ablation | 比较 RS-only 的 remote loss 设计 | `pi3` | remote image only | 与 P2 相同 | 比较 `pointmap-only L1` / `pointmap+height L1` / `pointmap robust + height L1` | [bash_scripts/train/vigor_chicago/p2a_pi3_rs_only_loss_ablation_2gpu.sh](bash_scripts/train/vigor_chicago/p2a_pi3_rs_only_loss_ablation_2gpu.sh) | 第一版只做 loss 与权重对比，不引入新结构 |
+| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | 待新增联合输入脚本 | 这是当前真正的联合训练主问题 |
+| P4 | Model-Compare | 在稳定实验设置下比较不同模型 | `pi3` / `vggt` / `mapanything` / `da3` | 与选定任务一致 | 跟随对应 baseline / joint 设置 | 跟随模型对应主 loss | 视模型逐个补脚本 | 只有在 P1/P2/P3 跑稳后再展开 |
 
 补充解释：
 
 - `P1` 才是当前真正意义上的 baseline。
 - `P1a` 属于 baseline 内部调参，不需要把它抬升成一条完全独立的研究主线。
 - `P1b` 和 `P1c` 是训练策略 ablation，不是 baseline 本身。
-- 如果你的目标是尽快推进 RS 联合训练，`P1b / P1c` 完全可以后置。
+- 当前新的研究主线不是“RS auxiliary supervision”，而是“先做 RS-only，再做 Joint Input”。
+- 如果你的目标是尽快推进联合训练，`P1b / P1c` 仍然可以后置。
 
 ## 10. 当前推荐的 loss 选择
 
@@ -394,17 +409,16 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 
 这条线当前不要改 loss。
 
-### 10.2 RS auxiliary 第一版
+### 10.2 RS-only 第一版
 
-考虑到卫星图像当前没有可靠相机模型，第一版建议只加几何监督，不加视角相关项：
+考虑到卫星图像当前没有可靠相机模型，第一版建议把 RS 训练单独拆出来，只做几何监督，不加视角相关项：
 
 ```text
-total_loss = aerial_loss + lambda_remote_pm * remote_pointmap_loss + lambda_remote_h * remote_height_loss
+total_loss = lambda_remote_pm * remote_pointmap_loss + lambda_remote_h * remote_height_loss
 ```
 
 其中：
 
-- `aerial_loss = pi3_loss`
 - `remote_pointmap_loss`
   - 推荐先用 masked `L1`，其次再试 `RobustRegressionLoss`
 - `remote_height_loss`
@@ -416,10 +430,223 @@ total_loss = aerial_loss + lambda_remote_pm * remote_pointmap_loss + lambda_remo
 
 建议第一版权重从小值开始，例如：
 
+- `lambda_remote_pm = 1.0`
+- `lambda_remote_h = 0.1`
+
+这里和联合训练不同，`RS-only` 阶段不需要再担心 remote loss 压过 aerial 主任务，因为当前没有 aerial 主任务。
+
+当前建议把 `P2a` 限定成一个很小的 loss ablation，而不是扩成复杂训练策略研究。第一版只比较三组：
+
+- `pointmap-only L1`
+  - 配置：[configs/loss/pi3_rs_only_pointmap_only_l1_loss.yaml](configs/loss/pi3_rs_only_pointmap_only_l1_loss.yaml)
+- `pointmap + height L1`
+  - 配置：[configs/loss/pi3_rs_only_pointmap_height_l1_loss.yaml](configs/loss/pi3_rs_only_pointmap_height_l1_loss.yaml)
+- `pointmap robust + height L1`
+  - 配置：[configs/loss/pi3_rs_only_pointmap_height_robust_loss.yaml](configs/loss/pi3_rs_only_pointmap_height_robust_loss.yaml)
+
+从当前实现看，`P2a` 本质上就是两类调节：
+
+- loss 项组合
+  - 是否只用 `pointmap`，还是 `pointmap + height`
+- pointmap 主回归的形式
+  - `L1Loss` 还是 `RobustRegressionLoss`
+
+也就是说，你的理解是对的：`P2a` 第一版不需要改模型结构，主要就是调节这两种损失的权重，以及比较 `L1` 和 `RobustRegressionLoss`。
+
+为了避免不同训练 loss 的数值尺度不一致，`P2a` 当前统一建议把验证口径固定成 `masked pointmap L1`。也就是说：
+
+- `train_criterion`
+  - 各实验保持自己的训练 loss
+- `test_criterion`
+  - 统一使用 `pointmap-only masked L1`
+
+这样记录到 `val/test` 日志里的 `loss_avg / loss_med / rs_pointmap_loss_*` 才能直接横向比较。
+
+### 10.2.1 RS 数据增强建议：`random_scale_offset`
+
+这条增强路线已经落地到训练 dataset 和 benchmark dataset，当前通过参数控制。
+
+核心思想不是改变模型输入 tensor 的最终尺寸，而是改变从原始 `1024x1024` 遥感图生成 `518x518` 样本的方式。当前实现支持：
+
+- `crop_mode='none'`
+- `crop_mode='random_scale_center'`
+- `crop_mode='random_scale_offset'`
+- `crop_scale_range=[0.7, 1.0]` 这类比例范围
+- `num_augmented_crops_per_sample`
+  - 训练侧可显式把同一 base sample 扩成多个 crop variant
+  - benchmark 侧建议保持 `1`，只通过 `crop_mode` 控制是否启用增强
+
+`random_scale_offset` 的实现方式是：
+
+- 原始数据仍然从 `1024x1024` 读取
+- 在原图上随机选择一个方形 crop
+- crop 尺寸按比例范围随机采样
+- crop 位置允许随机偏移，不固定中心
+- 最后再 resize 到固定 `518x518`
+
+硬约束仍然不变，以下量必须同步做完全一致的几何变换：
+
+- `remote_image`
+- `remote_pointmap`
+- `remote_valid_mask`
+- `remote_height_map`
+
+也就是说，不能只增强图像，必须同步变换标签。否则 pointmap / height 会和图像错位。
+
+### 10.2.2 当前已实现的数据集控制项
+
+当前训练 dataset `VigorChicagoRS` 已支持：
+
+- 多 provider 展开
+  - `provider='all'` 时会遍历每个 `location` 下的全部 provider
+  - 当前实际 provider 包括：`Bing_Satellite`、`ESRI_Satellite`、`ESRI_Standard`、`Google_Satellite`、`OSM_Standard`、`Positron`、`Yandex_Satellite`
+- `provider_sampling_mode='expand'`
+  - 每个 `(scene, provider)` 视作一个 base sample
+- `num_augmented_crops_per_sample`
+  - 每个 base sample 可再扩成多个 crop variant
+- `crop_mode`
+- `crop_scale_range`
+- `image_resize_mode`
+- `label_resize_mode`
+
+当前 benchmark dataset `VigorChicagoRSAerial` 也已支持：
+
+- `provider` 控制评测时使用哪一种卫星 provider
+- `crop_mode` 控制评测时是否使用遥感裁剪增强
+- `crop_scale_range`
+- `image_resize_mode`
+- `label_resize_mode`
+
+注意：benchmark 当前仍要求每个 scene 只对应一个 remote sample。因此如果 benchmark 使用更宽的 provider 选择，代码会为每个 scene 只保留一个 provider 样本，避免同一 scene 被重复覆盖。
+
+### 10.2.3 当前缩放方式
+
+在这次改动之前：
+
+- `remote_image` 使用 `bilinear`
+- `remote_pointmap / remote_valid_mask / remote_height_map` 使用 `nearest`
+
+当前实现里，训练和 benchmark 都已经把缩放方式做成参数化：
+
+- `image_resize_mode`
+- `label_resize_mode`
+
+当前 `RS` 相关 config 默认都改成了：
+
+- `image_resize_mode='nearest'`
+- `label_resize_mode='nearest'`
+
+如果后续想回到旧行为，也可以显式覆盖成 `image_resize_mode='bilinear'`。
+
+### 10.2.4 P2b RS-Augmentation
+
+`P2b` 现在可以直接按下列对比做：
+
+- `no_aug`
+  - `crop_mode='none'`
+- `random_scale_center`
+  - `crop_mode='random_scale_center'`
+- `random_scale_offset`
+  - `crop_mode='random_scale_offset'`
+
+其中最优先的是 `random_scale_offset`。
+
+### 10.3 Joint Input 第一版
+
+在 `RS-only` 跑通后，再进入联合输入训练：
+
+```text
+total_loss = aerial_loss + lambda_remote_pm * remote_pointmap_loss + lambda_remote_h * remote_height_loss
+```
+
+其中：
+
+- `aerial_loss = pi3_loss`
+- remote 侧 loss 仍然优先使用 `masked L1`
+- 第一版不引入 remote pose-related losses
+
+建议联合训练时再把 remote 权重重新压小，例如：
+
 - `lambda_remote_pm = 0.1`
 - `lambda_remote_h = 0.05`
 
-目的不是一次到位，而是先避免 remote 辅助项压过 aerial 主任务。
+### 10.4 P2 的具体起点定义
+
+如果现在继续推进 `P2 RS-only`，更合理的起点不是“先把一整套联合训练补齐”，而是先定义一个最小、可控、对 `Pi3` 破坏最小的版本。
+
+建议把 `P2` 起点定义成：
+
+- 模型：`Pi3`
+- 初始化：加载官方 pretrained weights
+- 输入：`remote_image` 单视图输入
+- 主监督：`remote_pointmap`
+- 次监督：`remote_height_map`
+- 不监督：pose / relative pose / ray directions / depth along ray / confidence
+
+对应目标可以写成：
+
+```text
+total_loss = 1.0 * masked_L1(pred_pts3d, gt_remote_pointmap)
+           + 0.1 * masked_L1(pred_height, gt_remote_height)
+```
+
+其中：
+
+- `pred_pts3d`
+  - 直接取 `Pi3` 输出中的 `pred['pts3d']`
+- `gt_remote_pointmap`
+  - 取 dataset 返回的 `remote_pointmap`
+- `pred_height`
+  - 第一版可从 `pred['pts3d'][..., 2]` 派生
+- `gt_remote_height`
+  - 取 `remote_height_map`
+- mask
+  - 统一使用 `remote_valid_mask`
+
+保守建议：
+
+- 如果一开始不能完全确认 `pred['pts3d'][..., 2]` 与 `remote_height_map` 的坐标语义严格一致，第一版甚至可以先只跑 `pointmap-only`。
+- 也就是说，最小起点可以进一步缩成：
+
+```text
+total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
+```
+
+### 10.5 为了尽量不破坏 Pi3 原本多视角能力，P2 应该怎么控
+
+仅靠 loss 还不够，`P2` 更关键的是“不要把原本用于多视角分解几何的部分训坏”。
+
+因此建议第一版 `P2` 同时采用偏保守的训练策略：
+
+- `camera_decoder` / `camera_head` 冻结
+- `conf_decoder` / `conf_head` 冻结
+- `encoder` 使用比 `P1` 更低的学习率
+- 主要让 point-related 分支去适配 RS 域
+
+这样做的原因是：
+
+- `P2` 当前根本不监督 pose / camera / confidence
+- 如果这些头仍然大幅更新，只会增加把原模型多视角能力训偏的风险
+- `P2` 的目标是做一次受控的域适配，不是重新定义 `Pi3` 全部输出语义
+
+### 10.6 当前实现层面的最小缺口
+
+`P2` 当前不是只差一个 shell 脚本，它至少还缺这几层最小实现：
+
+1. `RS-only` 训练 dataset 接入到 train dataloader
+   - 已通过 [mapanything/datasets/wai/vigor_chicago_rs.py](mapanything/datasets/wai/vigor_chicago_rs.py) 的训练侧兼容改造补齐
+   - 当前每个 sample 会按单视图 list 返回，并暴露 `make_sampler(...)` 所需属性
+2. `RS-only` loss 接口
+   - 已通过 [mapanything/train/losses.py](mapanything/train/losses.py) 中新增的 `RSPointmapHeightLoss` 补齐
+   - 当前直接读取 `remote_pointmap / remote_height_map / remote_valid_mask`
+3. `RS-only` dataset config
+   - 已新增：[configs/dataset/vigor_chicago_rs_518.yaml](configs/dataset/vigor_chicago_rs_518.yaml)
+4. `RS-only` loss config
+   - 已新增：[configs/loss/pi3_rs_only_loss.yaml](configs/loss/pi3_rs_only_loss.yaml)
+5. `RS-only` 脚本
+   - 已新增：[bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh)
+
+所以，`P2` 当前已经从“纯定义阶段”推进到了“最小 debug 入口已实际跑通”的阶段。当前已验证：2 GPU、1 epoch、`Pi3 + pretrained + RSPointmapHeightLoss` 可以完成 train loop、记录 loss，并正常保存 `checkpoint-last.pth` 与 `checkpoint-final.pth`。现阶段的状态不再是“只剩骨架”，而是“有可运行的 RS-only smoke 起点”，后续主要工作转为补更正式的 P2 配置与 loss ablation。
 
 ## 11. 模型选择建议
 

@@ -27,8 +27,24 @@ test_dataset_remote:
   "VigorChicagoRSAerial(
     metadata_root='${mapanything_dataset_metadata_dir}/vigor_chicago_rs_aerial',
     split='val',
-    provider='Google_Satellite',
-    overfit_num_sets=None,
+    provider='${dataset.vigor_chicago_rs_aerial_benchmark.remote.provider}',
+    overfit_num_sets=${dataset.vigor_chicago_rs_aerial_benchmark.remote.overfit_num_sets},
     load_aerial_scene_meta=False,
     transform='imgnorm',
-    resolution=(518, 518))"
+    resolution=${dataset.vigor_chicago_rs_aerial_benchmark.remote.dataset_resolution},
+    num_augmented_crops_per_sample=${dataset.vigor_chicago_rs_aerial_benchmark.remote.num_augmented_crops_per_sample},
+    crop_mode='${dataset.vigor_chicago_rs_aerial_benchmark.remote.crop_mode}',
+    crop_scale_range=${dataset.vigor_chicago_rs_aerial_benchmark.remote.crop_scale_range},
+    image_resize_mode='${dataset.vigor_chicago_rs_aerial_benchmark.remote.image_resize_mode}',
+    label_resize_mode='${dataset.vigor_chicago_rs_aerial_benchmark.remote.label_resize_mode}')"
+
+vigor_chicago_rs_aerial_benchmark:
+  remote:
+    provider: 'Google_Satellite'
+    overfit_num_sets: null
+    dataset_resolution: ${dataset.resolution_val}
+    num_augmented_crops_per_sample: 1
+    crop_mode: 'none'
+    crop_scale_range: [0.7, 1.0]
+    image_resize_mode: 'nearest'
+    label_resize_mode: 'nearest'

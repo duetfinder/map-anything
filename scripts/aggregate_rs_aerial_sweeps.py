@@ -139,7 +139,7 @@ def plot_metrics(rows, out_dir: Path):
                     marker='o',
                     label=f'{model} / {mode_labels[mode]}',
                 )
-        ax.set_title(metric)
+        ax.set_title(metric + '↑' if 'pose_auc' in metric else (metric + '↓'))    
         ax.set_xlabel('num_views')
         ax.set_xticks(VIEWS)
         ax.set_ylabel(metric)

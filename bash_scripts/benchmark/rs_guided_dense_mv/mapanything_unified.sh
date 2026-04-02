@@ -1,7 +1,7 @@
 #!/bin/bash
 
 export HYDRA_FULL_ERROR=1
-NUM_VIEWS=${NUM_VIEWS:-2}
+NUM_VIEWS=${NUM_VIEWS:-32}
 BATCH_SIZE=${BATCH_SIZE:-1}
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/mapanything_unified'}
 

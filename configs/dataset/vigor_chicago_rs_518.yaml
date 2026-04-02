@@ -1,0 +1,107 @@
+defaults:
+  - default
+
+num_workers: 0
+num_views: 1
+resolution_train: ${dataset.resolution_options.518_1_00_ar}
+resolution_val: ${dataset.resolution_options.518_1_00_ar}
+
+train_dataset: ${dataset.vigor_chicago_rs.train.dataset_str}
+test_dataset:
+  "+ 40 @ ${dataset.vigor_chicago_rs.val.dataset_str}
+  + 40 @ ${dataset.vigor_chicago_rs.test.dataset_str}"
+
+vigor_chicago_rs:
+  train:
+    dataset_str:
+      "VigorChicagoRS(
+        split='${dataset.vigor_chicago_rs.train.split}',
+        resolution=${dataset.vigor_chicago_rs.train.dataset_resolution},
+        transform='${dataset.vigor_chicago_rs.train.transform}',
+        data_norm_type='${dataset.vigor_chicago_rs.train.data_norm_type}',
+        ROOT='${dataset.vigor_chicago_rs.train.ROOT}',
+        dataset_metadata_dir='${dataset.vigor_chicago_rs.train.dataset_metadata_dir}',
+        overfit_num_sets=${dataset.vigor_chicago_rs.train.overfit_num_sets},
+        provider='${dataset.vigor_chicago_rs.train.provider}',
+        provider_sampling_mode='${dataset.vigor_chicago_rs.train.provider_sampling_mode}',
+        num_augmented_crops_per_sample=${dataset.vigor_chicago_rs.train.num_augmented_crops_per_sample},
+        crop_mode='${dataset.vigor_chicago_rs.train.crop_mode}',
+        crop_scale_range=${dataset.vigor_chicago_rs.train.crop_scale_range},
+        image_resize_mode='${dataset.vigor_chicago_rs.train.image_resize_mode}',
+        label_resize_mode='${dataset.vigor_chicago_rs.train.label_resize_mode}')"
+    split: 'train'
+    dataset_resolution: ${dataset.resolution_train}
+    transform: 'imgnorm'
+    data_norm_type: ${model.data_norm_type}
+    ROOT: ${root_data_dir}/vigor_chicago_rs
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    overfit_num_sets: null
+    provider: 'all'
+    provider_sampling_mode: 'expand'
+    num_augmented_crops_per_sample: 1
+    crop_mode: 'none'
+    crop_scale_range: [0.7, 1.0]
+    image_resize_mode: 'nearest'
+    label_resize_mode: 'nearest'
+  val:
+    dataset_str:
+      "VigorChicagoRS(
+        split='${dataset.vigor_chicago_rs.val.split}',
+        resolution=${dataset.vigor_chicago_rs.val.dataset_resolution},
+        transform='${dataset.vigor_chicago_rs.val.transform}',
+        data_norm_type='${dataset.vigor_chicago_rs.val.data_norm_type}',
+        ROOT='${dataset.vigor_chicago_rs.val.ROOT}',
+        dataset_metadata_dir='${dataset.vigor_chicago_rs.val.dataset_metadata_dir}',
+        overfit_num_sets=${dataset.vigor_chicago_rs.val.overfit_num_sets},
+        provider='${dataset.vigor_chicago_rs.val.provider}',
+        provider_sampling_mode='${dataset.vigor_chicago_rs.val.provider_sampling_mode}',
+        num_augmented_crops_per_sample=${dataset.vigor_chicago_rs.val.num_augmented_crops_per_sample},
+        crop_mode='${dataset.vigor_chicago_rs.val.crop_mode}',
+        crop_scale_range=${dataset.vigor_chicago_rs.val.crop_scale_range},
+        image_resize_mode='${dataset.vigor_chicago_rs.val.image_resize_mode}',
+        label_resize_mode='${dataset.vigor_chicago_rs.val.label_resize_mode}')"
+    split: 'val'
+    dataset_resolution: ${dataset.resolution_val}
+    transform: 'imgnorm'
+    data_norm_type: ${model.data_norm_type}
+    ROOT: ${root_data_dir}/vigor_chicago_rs
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    overfit_num_sets: null
+    provider: 'all'
+    provider_sampling_mode: 'expand'
+    num_augmented_crops_per_sample: 1
+    crop_mode: 'none'
+    crop_scale_range: [0.7, 1.0]
+    image_resize_mode: 'nearest'
+    label_resize_mode: 'nearest'
+  test:
+    dataset_str:
+      "VigorChicagoRS(
+        split='${dataset.vigor_chicago_rs.test.split}',
+        resolution=${dataset.vigor_chicago_rs.test.dataset_resolution},
+        transform='${dataset.vigor_chicago_rs.test.transform}',
+        data_norm_type='${dataset.vigor_chicago_rs.test.data_norm_type}',
+        ROOT='${dataset.vigor_chicago_rs.test.ROOT}',
+        dataset_metadata_dir='${dataset.vigor_chicago_rs.test.dataset_metadata_dir}',
+        overfit_num_sets=${dataset.vigor_chicago_rs.test.overfit_num_sets},
+        provider='${dataset.vigor_chicago_rs.test.provider}',
+        provider_sampling_mode='${dataset.vigor_chicago_rs.test.provider_sampling_mode}',
+        num_augmented_crops_per_sample=${dataset.vigor_chicago_rs.test.num_augmented_crops_per_sample},
+        crop_mode='${dataset.vigor_chicago_rs.test.crop_mode}',
+        crop_scale_range=${dataset.vigor_chicago_rs.test.crop_scale_range},
+        image_resize_mode='${dataset.vigor_chicago_rs.test.image_resize_mode}',
+        label_resize_mode='${dataset.vigor_chicago_rs.test.label_resize_mode}')"
+    split: 'test'
+    dataset_resolution: ${dataset.resolution_val}
+    transform: 'imgnorm'
+    data_norm_type: ${model.data_norm_type}
+    ROOT: ${root_data_dir}/vigor_chicago_rs
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    overfit_num_sets: null
+    provider: 'all'
+    provider_sampling_mode: 'expand'
+    num_augmented_crops_per_sample: 1
+    crop_mode: 'none'
+    crop_scale_range: [0.7, 1.0]
+    image_resize_mode: 'nearest'
+    label_resize_mode: 'nearest'

@@ -4,12 +4,16 @@
 # found in the LICENSE file in the root directory of this source tree.
 
 """
-Direct VIGOR Chicago remote-sensing dataset backed by the unified outputs/dataset/vigor_chicago_rs root.
+Direct VIGOR Chicago remote-sensing dataset backed by the unified RS root.
+
+Supports:
+- single-provider or multi-provider expansion
+- deterministic crop augmentation for train/val/test via config
+- explicit virtual dataset expansion via crop variants
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np
@@ -17,23 +21,41 @@ import torch
 import torchvision.transforms as tvf
 from PIL import Image
 
+from mapanything.datasets.base.easy_dataset import EasyDataset
+from mapanything.datasets.wai.vigor_chicago_rs_common import (
+    available_providers,
+    load_scene_list,
+    make_rng_seed,
+    normalize_providers,
+    preprocess_rs_modalities,
+    required_rs_paths,
+    scene_sort_key,
+)
 
-class VigorChicagoRS(torch.utils.data.Dataset):
+
+class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
     def __init__(
         self,
         ROOT,
         split=None,
         provider='Google_Satellite',
+        providers=None,
         dataset_metadata_dir=None,
         scene_list_path=None,
         overfit_num_sets=None,
         transform='imgnorm',
+        data_norm_type='identity',
         resolution=(518, 518),
         skip_missing=False,
+        provider_sampling_mode='expand',
+        num_augmented_crops_per_sample=1,
+        crop_mode='none',
+        crop_scale_range=(1.0, 1.0),
+        image_resize_mode='nearest',
+        label_resize_mode='nearest',
     ):
         self.root = Path(ROOT)
         self.split = split
-        self.provider = provider
         self.dataset_metadata_dir = (
             Path(dataset_metadata_dir) if dataset_metadata_dir is not None else None
         )
@@ -41,6 +63,26 @@ class VigorChicagoRS(torch.utils.data.Dataset):
         self.overfit_num_sets = overfit_num_sets
         self.resolution = tuple(resolution)
         self.skip_missing = skip_missing
+        self.data_norm_type = data_norm_type
+        self.num_views = 1
+        self._resolutions = [tuple(resolution)]
+        self._seed_offset = 0
+        self.provider_sampling_mode = provider_sampling_mode
+        self.num_augmented_crops_per_sample = max(1, int(num_augmented_crops_per_sample))
+        self.crop_mode = crop_mode
+        self.crop_scale_range = tuple(crop_scale_range)
+        self.image_resize_mode = image_resize_mode
+        self.label_resize_mode = label_resize_mode
+        normalized_providers = normalize_providers(providers)
+        if normalized_providers is None and provider is not None:
+            normalized_providers = normalize_providers(provider)
+        self.providers = normalized_providers
+
+        if provider_sampling_mode != 'expand':
+            raise ValueError(
+                f"Unsupported provider_sampling_mode: {provider_sampling_mode}. "
+                "Currently only 'expand' is implemented."
+            )
 
         if transform == 'imgnorm':
             self.transform = tvf.ToTensor()
@@ -48,129 +90,121 @@ class VigorChicagoRS(torch.utils.data.Dataset):
             raise ValueError(f'Unsupported transform: {transform}')
 
         if self.scene_list_path is not None:
-            scene_names = self._load_scene_list(self.scene_list_path)
+            scene_names = load_scene_list(self.scene_list_path)
         elif self.split is not None and self.dataset_metadata_dir is not None:
             split_path = (
                 self.dataset_metadata_dir
                 / self.split
                 / f'vigor_chicago_scene_list_{self.split}.npy'
             )
-            scene_names = self._load_scene_list(split_path)
+            scene_names = load_scene_list(split_path)
         else:
             scene_names = sorted(
-                [p.name for p in self.root.iterdir() if p.is_dir() and p.name.startswith('location_')],
-                key=self._scene_sort_key,
+                [
+                    p.name
+                    for p in self.root.iterdir()
+                    if p.is_dir() and p.name.startswith('location_')
+                ],
+                key=scene_sort_key,
             )
 
-        samples = []
+        base_samples = []
         for scene_name in scene_names:
-            provider_dir = self.root / scene_name / provider
-            if not provider_dir.exists():
+            scene_root = self.root / scene_name
+            if not scene_root.exists():
                 if skip_missing:
                     continue
-                raise FileNotFoundError(f'Missing provider directory: {provider_dir}')
+                raise FileNotFoundError(f'Missing scene directory: {scene_root}')
 
-            required = {
-                'remote_image_path': provider_dir / 'image.png',
-                'remote_pointmap_path': provider_dir / 'pixel_to_point_map.npz',
-                'remote_valid_mask_path': provider_dir / 'valid_mask.npy',
-                'remote_height_map_path': provider_dir / 'height_map.npy',
-                'remote_info_path': provider_dir / 'info.json',
-            }
-            missing = [str(path) for path in required.values() if not path.exists()]
-            if missing:
+            candidate_providers = self.providers or available_providers(scene_root)
+            if not candidate_providers:
                 if skip_missing:
                     continue
-                raise FileNotFoundError(
-                    f'Missing required RS files for {scene_name}/{provider}: {missing}'
+                raise FileNotFoundError(f'No provider directories found under: {scene_root}')
+
+            for provider_name in candidate_providers:
+                provider_dir = scene_root / provider_name
+                if not provider_dir.exists():
+                    if skip_missing:
+                        continue
+                    raise FileNotFoundError(f'Missing provider directory: {provider_dir}')
+
+                required = required_rs_paths(provider_dir)
+                missing = [str(path) for path in required.values() if not path.exists()]
+                if missing:
+                    if skip_missing:
+                        continue
+                    raise FileNotFoundError(
+                        f'Missing required RS files for {scene_name}/{provider_name}: {missing}'
+                    )
+
+                base_samples.append(
+                    {
+                        'scene_name': scene_name,
+                        'remote_provider': provider_name,
+                        **{k: str(v) for k, v in required.items()},
+                    }
                 )
 
-            samples.append(
-                {
-                    'scene_name': scene_name,
-                    'remote_provider': provider,
-                    'remote_scene_dir': str(provider_dir),
-                    **{k: str(v) for k, v in required.items()},
-                }
-            )
-
         if overfit_num_sets is not None:
-            samples = samples[:overfit_num_sets]
+            base_samples = base_samples[:overfit_num_sets]
 
-        self.samples = samples
-
-    @staticmethod
-    def _scene_sort_key(name: str) -> tuple[int, str]:
-        try:
-            return (int(name.split('_')[-1]), name)
-        except Exception:
-            return (10**12, name)
-
-    @staticmethod
-    def _load_scene_list(path: Path) -> list[str]:
-        if not path.exists():
-            raise FileNotFoundError(f'Missing scene list: {path}')
-        return [str(x) for x in np.load(path, allow_pickle=True).tolist()]
+        self.base_samples = base_samples
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.base_samples) * self.num_augmented_crops_per_sample
+
+    def _set_seed_offset(self, idx):
+        self._seed_offset = idx
 
     def __getitem__(self, idx):
-        sample = self.samples[idx]
+        if isinstance(idx, tuple):
+            idx = idx[0]
+
+        base_idx = idx // self.num_augmented_crops_per_sample
+        aug_idx = idx % self.num_augmented_crops_per_sample
+        sample = self.base_samples[base_idx]
 
         remote_image = Image.open(sample['remote_image_path']).convert('RGB')
-        remote_image = remote_image.resize(
-            (self.resolution[1], self.resolution[0]), resample=Image.BILINEAR
-        )
-        remote_image = self.transform(remote_image)
-
         remote_pointmap = np.load(sample['remote_pointmap_path'])['xyz'].astype(np.float32)
         remote_valid_mask = np.load(sample['remote_valid_mask_path']).astype(bool)
         remote_height_map = np.load(sample['remote_height_map_path']).astype(np.float32)
-        with open(sample['remote_info_path'], 'r', encoding='utf-8') as f:
-            remote_info = json.load(f)
 
-        if remote_pointmap.shape[:2] != self.resolution:
-            pointmap_chw = torch.from_numpy(remote_pointmap).permute(2, 0, 1).unsqueeze(0)
-            pointmap_chw = torch.nn.functional.interpolate(
-                pointmap_chw,
-                size=self.resolution,
-                mode='nearest',
-            )
-            remote_pointmap = pointmap_chw[0].permute(1, 2, 0).numpy()
+        rng = np.random.default_rng(
+            make_rng_seed(self.split, base_idx, aug_idx, self._seed_offset)
+        )
+        (
+            remote_image,
+            remote_pointmap,
+            remote_valid_mask,
+            remote_height_map,
+            crop_box,
+        ) = preprocess_rs_modalities(
+            remote_image=remote_image,
+            remote_pointmap=remote_pointmap,
+            remote_valid_mask=remote_valid_mask,
+            remote_height_map=remote_height_map,
+            resolution=self.resolution,
+            crop_mode=self.crop_mode,
+            crop_scale_range=self.crop_scale_range,
+            image_resize_mode=self.image_resize_mode,
+            label_resize_mode=self.label_resize_mode,
+            rng=rng,
+        )
+        remote_image = self.transform(remote_image)
 
-            valid_mask_t = (
-                torch.from_numpy(remote_valid_mask.astype(np.float32))
-                .unsqueeze(0)
-                .unsqueeze(0)
-            )
-            valid_mask_t = torch.nn.functional.interpolate(
-                valid_mask_t,
-                size=self.resolution,
-                mode='nearest',
-            )
-            remote_valid_mask = valid_mask_t[0, 0].numpy() > 0.5
-
-            height_map_t = (
-                torch.from_numpy(remote_height_map.astype(np.float32))
-                .unsqueeze(0)
-                .unsqueeze(0)
-            )
-            height_map_t = torch.nn.functional.interpolate(
-                height_map_t,
-                size=self.resolution,
-                mode='nearest',
-            )
-            remote_height_map = height_map_t[0, 0].numpy()
-
-        return {
-            'scene_name': sample['scene_name'],
+        view = {
+            'img': remote_image,
+            'data_norm_type': self.data_norm_type,
+            'dataset': 'vigor_chicago_rs',
+            'label': sample['scene_name'],
+            'instance': sample['remote_provider'],
             'remote_provider': sample['remote_provider'],
-            'remote_scene_dir': sample['remote_scene_dir'],
-            'remote_image': remote_image,
             'remote_pointmap': remote_pointmap,
             'remote_valid_mask': remote_valid_mask,
             'remote_height_map': remote_height_map,
-            'remote_info': remote_info,
-            'remote_resolution': self.resolution,
+            'remote_crop_box_xyxy': np.asarray(crop_box, dtype=np.int32),
+            'remote_aug_variant': int(aug_idx),
         }
+
+        return [view]

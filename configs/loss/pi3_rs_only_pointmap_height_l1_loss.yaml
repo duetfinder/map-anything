@@ -1,0 +1,14 @@
+train_criterion: >
+  RSPointmapHeightLoss(
+    pointmap_criterion=L1Loss(reduction='none'),
+    height_criterion=L1Loss(reduction='none'),
+    pointmap_loss_weight=1.0,
+    height_loss_weight=0.1
+  )
+test_criterion: >
+  RSPointmapHeightLoss(
+    pointmap_criterion=L1Loss(reduction='none'),
+    height_criterion=L1Loss(reduction='none'),
+    pointmap_loss_weight=1.0,
+    height_loss_weight=0.0
+  )

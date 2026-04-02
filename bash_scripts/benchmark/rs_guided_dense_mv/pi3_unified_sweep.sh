@@ -26,3 +26,5 @@ for cfg in "${run_configs[@]}"; do
     OUTPUT_DIR='${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/pi3_unified_'"${num_views}"'v' \
     bash /root/autodl-tmp/Models/map-anything/bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified.sh
 done
+
+
