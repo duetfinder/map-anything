@@ -199,7 +199,6 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
             'dataset': 'vigor_chicago_rs',
             'label': sample['scene_name'],
             'instance': sample['remote_provider'],
-            'remote_provider': sample['remote_provider'],
             'remote_pointmap': remote_pointmap,
             'remote_valid_mask': remote_valid_mask,
             'remote_height_map': remote_height_map,

@@ -28,9 +28,10 @@ def normalize_providers(providers):
         providers = providers.strip()
         if not providers or providers.lower() == 'all':
             return None
-        return [providers]
+        result = [provider.strip() for provider in providers.split(',') if provider.strip()]
+        return result or None
     if isinstance(providers, Iterable):
-        result = [str(provider) for provider in providers]
+        result = [str(provider).strip() for provider in providers if str(provider).strip()]
         return result or None
     raise TypeError(f'Unsupported providers value: {providers!r}')
 
