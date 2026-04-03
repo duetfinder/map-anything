@@ -10,6 +10,7 @@ MODELS = {
     'vggt': 'VGGT',
     'mapanything': 'MapAnything',
     'da3': 'DA3',
+    'pi3_chicago500_finetuned_p2aL3': 'Pi3 (finetuned)',
 }
 VIEWS = [2, 4, 8, 16, 24, 32, 40]
 AERIAL_METRICS = [
@@ -49,6 +50,7 @@ def collect_rows(root: Path):
             result_path = root / f'{model_key}_unified_{num_views}v' / 'rs_aerial_benchmark_results.json'
             result = load_result(result_path)
             if result is None:
+                print(f'Warning: Result file not found for {model_name} with {num_views} views at {result_path}')
                 continue
             for mode_key, linestyle in [('aerial_only', '--'), ('joint', '-')]:
                 metrics = result[mode_key]['average']
@@ -106,9 +108,10 @@ def plot_metrics(rows, out_dir: Path):
     df = pd.DataFrame(rows)
     colors = {
         'Pi3': '#1f77b4',
-        'VGGT': '#d62728',
+        'VGGT': "#d42727",
         'MapAnything': '#2ca02c',
         'DA3': '#9467bd',
+        'Pi3 (finetuned)': "#fc7c0b",
     }
     mode_labels = {
         'aerial_only': 'Aerial-only',
@@ -120,7 +123,7 @@ def plot_metrics(rows, out_dir: Path):
     axes = axes.flatten()
 
     for ax, metric in zip(axes, ALL_METRICS):
-        for model in ['Pi3', 'VGGT', 'MapAnything', 'DA3']:
+        for model in df['model'].dropna().unique():
             model_df = df[df['model'] == model]
             if model_df.empty:
                 continue

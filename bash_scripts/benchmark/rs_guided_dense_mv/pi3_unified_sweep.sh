@@ -23,8 +23,8 @@ for cfg in "${run_configs[@]}"; do
     echo "Running Pi3 unified benchmark with batch_size=$batch_size num_views=$num_views"
     NUM_VIEWS=$num_views \
     BATCH_SIZE=$batch_size \
-    OUTPUT_DIR='${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/pi3_unified_'"${num_views}"'v' \
-    bash /root/autodl-tmp/Models/map-anything/bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified.sh
+    OUTPUT_DIR='${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/pi3_chicago500_finetuned_p2aL3_unified_'"${num_views}"'v' \
+    bash /root/autodl-tmp/Models/map-anything/bash_scripts/benchmark/rs_guided_dense_mv/pi3_chicago500_finetuned_p2aL3_unified.sh
 done
 
 
