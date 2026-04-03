@@ -47,6 +47,17 @@ loss 相关的独立汇总见：[MAPANYTHING_LOSSES_CN.md](MAPANYTHING_LOSSES_CN
 - 新增的 [bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh) 主要是把 baseline 重新命名、单独归档，并显式定义为 `P1 Baseline-Main` 实验入口。
 - 新脚本同时暴露了 `NUM_VIEWS / BATCH_SIZE / OUTPUT_DIR`，而 P0 额外暴露了 `TRAIN_SETS / VAL_SETS / TEST_SETS`，便于在不改脚本的前提下做 debug 和 baseline 内部调参。
 
+补充：`P3 Joint-Input` 的第一版工程骨架已经补齐，但截至本文档本次更新，尚未记录完整 2-GPU smoke 结果。
+
+已新增的 `P3` 相关入口：
+
+- joint dataset config：[configs/dataset/vigor_chicago_rs_joint_518.yaml](configs/dataset/vigor_chicago_rs_joint_518.yaml)
+- joint loss config：[configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
+- joint loss 实现：[mapanything/train/losses.py](mapanything/train/losses.py)
+- joint forward 组装：[mapanything/utils/inference.py](mapanything/utils/inference.py)
+- debug 脚本：[bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)
+- 500-scene 正式脚本：[bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh)
+
 ## 2. 当前 aerial-only 训练的数据接口
 
 当前 `VigorChicagoWAI` 继承了 `BaseDataset`，其 `_get_views(...)` 返回的每个 view 至少提供：
@@ -256,17 +267,23 @@ total_loss = aerial_multiview_loss + lambda_remote_pm * remote_pointmap_loss + l
 
 ### 6.4 配置层
 
-需要新增至少两类配置：
+当前已经补齐一套可直接用于 `P3` 的第一版配置：
 
 - dataset config
-  - 例如 `configs/dataset/vigor_chicago_50_rs_joint_518.yaml`
+  - [configs/dataset/vigor_chicago_rs_joint_518.yaml](configs/dataset/vigor_chicago_rs_joint_518.yaml)
 - loss config
-  - 例如 `configs/loss/pi3_loss_rs_joint.yaml`
-
-可选地还可以增加：
-
+  - [configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
 - train script
-  - 例如 `bash_scripts/train/examples/vigor_chicago_50_pi3_rs_joint_finetune_2gpu.sh`
+  - [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)
+  - [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh)
+
+当前这套 `P3` 配置的设计点是：
+
+- dataset 仍以 aerial multi-view 为主 batch
+- remote supervision 通过 side-channel 附着在 aerial views 上
+- 训练时在 `loss_of_one_batch_multi_view(...)` 内部构造第 `N+1` 个 `remote_view`
+- `JointAerialRSLoss(...)` 内部把 `aerial` 与 `remote` 两段 supervision 分开计算再求和
+- `loss.remote_pointmap_loss_weight / loss.remote_height_loss_weight` 已暴露为 Hydra 可覆写字段，便于脚本直接调节 `lambda_remote_*`
 
 ### 6.5 benchmark / logging 层
 
@@ -380,7 +397,7 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 | P1c | Baseline-LoRA | 检查参数高效微调是否值得引入 | `pi3` | aerial-only, 500 scenes | LoRA / adapter | `pi3_loss` | 当前无脚本 | 当前仓库未原生支持，优先级低于 P1 / P1a / P2 |
 | P2 | RS-Only | 先验证模型能否单独适应 RS 输入域 | `pi3` | remote image only | remote-only 几何回归 | `lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh) | 已完成 2-GPU, 1-epoch smoke；当前是可运行的最小入口 |
 | P2a | RS-Only-Loss-Ablation | 比较 RS-only 的 remote loss 设计 | `pi3` | remote image only | 与 P2 相同 | 比较 `pointmap-only L1` / `pointmap+height L1` / `pointmap robust + height L1` | [bash_scripts/train/vigor_chicago/p2a_pi3_rs_only_loss_ablation_2gpu.sh](bash_scripts/train/vigor_chicago/p2a_pi3_rs_only_loss_ablation_2gpu.sh) | 第一版只做 loss 与权重对比，不引入新结构 |
-| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | 待新增联合输入脚本 | 这是当前真正的联合训练主问题 |
+| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh) / [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh) | 第一版代码入口已补齐，下一步是补 2-GPU smoke 与日志核对 |
 | P4 | Model-Compare | 在稳定实验设置下比较不同模型 | `pi3` / `vggt` / `mapanything` / `da3` | 与选定任务一致 | 跟随对应 baseline / joint 设置 | 跟随模型对应主 loss | 视模型逐个补脚本 | 只有在 P1/P2/P3 跑稳后再展开 |
 
 补充解释：

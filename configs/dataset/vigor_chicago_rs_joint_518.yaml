@@ -1,0 +1,125 @@
+defaults:
+  - default
+
+num_workers: 4
+num_views: 4
+resolution_train: ${dataset.resolution_options.518_1_00_ar}
+resolution_val: ${dataset.resolution_options.518_1_00_ar}
+
+train_dataset: ${dataset.vigor_chicago_joint_rs_aerial.train.dataset_str}
+test_dataset:
+  "+ 40 @ ${dataset.vigor_chicago_joint_rs_aerial.val.dataset_str}
+  + 40 @ ${dataset.vigor_chicago_joint_rs_aerial.test.dataset_str}"
+
+vigor_chicago_joint_rs_aerial:
+  train:
+    dataset_str:
+      "VigorChicagoJointRSAerial(
+        split='${dataset.vigor_chicago_joint_rs_aerial.train.split}',
+        resolution=${dataset.vigor_chicago_joint_rs_aerial.train.dataset_resolution},
+        principal_point_centered=${dataset.vigor_chicago_joint_rs_aerial.train.principal_point_centered},
+        aug_crop=${dataset.vigor_chicago_joint_rs_aerial.train.aug_crop},
+        transform='${dataset.vigor_chicago_joint_rs_aerial.train.transform}',
+        data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.train.data_norm_type}',
+        ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.ROOT}',
+        dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.train.dataset_metadata_dir}',
+        overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.train.overfit_num_sets},
+        variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.train.variable_num_views},
+        num_views=${dataset.vigor_chicago_joint_rs_aerial.train.num_views},
+        covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.train.covisibility_thres},
+        remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.remote_ROOT}',
+        remote_provider='${dataset.vigor_chicago_joint_rs_aerial.train.remote_provider}',
+        remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.train.remote_resolution},
+        remote_transform='${dataset.vigor_chicago_joint_rs_aerial.train.remote_transform}',
+        skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.train.skip_missing_remote})"
+    split: 'train'
+    dataset_resolution: ${dataset.resolution_train}
+    principal_point_centered: ${dataset.principal_point_centered}
+    aug_crop: 16
+    transform: 'colorjitter+grayscale+gaublur'
+    data_norm_type: ${model.data_norm_type}
+    ROOT: ${root_data_dir}/vigor_chicago_wai
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    overfit_num_sets: null
+    variable_num_views: ${dataset.train.variable_num_views}
+    num_views: ${dataset.num_views}
+    covisibility_thres: 0.05
+    remote_ROOT: ${root_data_dir}/vigor_chicago_rs
+    remote_provider: 'Google_Satellite'
+    remote_resolution: ${dataset.resolution_train}
+    remote_transform: 'imgnorm'
+    skip_missing_remote: false
+  val:
+    dataset_str:
+      "VigorChicagoJointRSAerial(
+        split='${dataset.vigor_chicago_joint_rs_aerial.val.split}',
+        resolution=${dataset.vigor_chicago_joint_rs_aerial.val.dataset_resolution},
+        principal_point_centered=${dataset.vigor_chicago_joint_rs_aerial.val.principal_point_centered},
+        seed=${dataset.vigor_chicago_joint_rs_aerial.val.seed},
+        transform='${dataset.vigor_chicago_joint_rs_aerial.val.transform}',
+        data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.val.data_norm_type}',
+        ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.ROOT}',
+        dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.val.dataset_metadata_dir}',
+        overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.val.overfit_num_sets},
+        variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.val.variable_num_views},
+        num_views=${dataset.vigor_chicago_joint_rs_aerial.val.num_views},
+        covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.val.covisibility_thres},
+        remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.remote_ROOT}',
+        remote_provider='${dataset.vigor_chicago_joint_rs_aerial.val.remote_provider}',
+        remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.val.remote_resolution},
+        remote_transform='${dataset.vigor_chicago_joint_rs_aerial.val.remote_transform}',
+        skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.val.skip_missing_remote})"
+    split: 'val'
+    dataset_resolution: ${dataset.resolution_val}
+    principal_point_centered: ${dataset.principal_point_centered}
+    seed: 777
+    transform: 'imgnorm'
+    data_norm_type: ${model.data_norm_type}
+    ROOT: ${root_data_dir}/vigor_chicago_wai
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    overfit_num_sets: null
+    variable_num_views: ${dataset.val.variable_num_views}
+    num_views: ${dataset.num_views}
+    covisibility_thres: 0.05
+    remote_ROOT: ${root_data_dir}/vigor_chicago_rs
+    remote_provider: 'Google_Satellite'
+    remote_resolution: ${dataset.resolution_val}
+    remote_transform: 'imgnorm'
+    skip_missing_remote: false
+  test:
+    dataset_str:
+      "VigorChicagoJointRSAerial(
+        split='${dataset.vigor_chicago_joint_rs_aerial.test.split}',
+        resolution=${dataset.vigor_chicago_joint_rs_aerial.test.dataset_resolution},
+        principal_point_centered=${dataset.vigor_chicago_joint_rs_aerial.test.principal_point_centered},
+        seed=${dataset.vigor_chicago_joint_rs_aerial.test.seed},
+        transform='${dataset.vigor_chicago_joint_rs_aerial.test.transform}',
+        data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.test.data_norm_type}',
+        ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.ROOT}',
+        dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.test.dataset_metadata_dir}',
+        overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.test.overfit_num_sets},
+        variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.test.variable_num_views},
+        num_views=${dataset.vigor_chicago_joint_rs_aerial.test.num_views},
+        covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.test.covisibility_thres},
+        remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.remote_ROOT}',
+        remote_provider='${dataset.vigor_chicago_joint_rs_aerial.test.remote_provider}',
+        remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.test.remote_resolution},
+        remote_transform='${dataset.vigor_chicago_joint_rs_aerial.test.remote_transform}',
+        skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.test.skip_missing_remote})"
+    split: 'test'
+    dataset_resolution: ${dataset.resolution_val}
+    principal_point_centered: ${dataset.principal_point_centered}
+    seed: 777
+    transform: 'imgnorm'
+    data_norm_type: ${model.data_norm_type}
+    ROOT: ${root_data_dir}/vigor_chicago_wai
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    overfit_num_sets: null
+    variable_num_views: ${dataset.test.variable_num_views}
+    num_views: ${dataset.num_views}
+    covisibility_thres: 0.05
+    remote_ROOT: ${root_data_dir}/vigor_chicago_rs
+    remote_provider: 'Google_Satellite'
+    remote_resolution: ${dataset.resolution_val}
+    remote_transform: 'imgnorm'
+    skip_missing_remote: false

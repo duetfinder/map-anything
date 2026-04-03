@@ -47,6 +47,32 @@ CONFLICTING_KEYS = [
 ]
 
 
+def has_joint_remote_supervision(batch):
+    return bool(batch) and 'camera_pose' in batch[0] and 'remote_image' in batch[0]
+
+
+def build_remote_supervision_view(batch):
+    remote_source = batch[0]
+    remote_view = {
+        'img': remote_source['remote_image'],
+        'data_norm_type': remote_source['data_norm_type'],
+        'dataset': remote_source.get('dataset', 'vigor_chicago_joint_rs_aerial'),
+        'label': remote_source.get('label'),
+        'instance': remote_source.get('remote_provider', 'remote'),
+        'remote_pointmap': remote_source['remote_pointmap'],
+        'remote_valid_mask': remote_source['remote_valid_mask'],
+    }
+    if 'remote_height_map' in remote_source:
+        remote_view['remote_height_map'] = remote_source['remote_height_map']
+    if 'remote_provider' in remote_source:
+        remote_view['remote_provider'] = remote_source['remote_provider']
+    if 'remote_crop_box_xyxy' in remote_source:
+        remote_view['remote_crop_box_xyxy'] = remote_source['remote_crop_box_xyxy']
+    if 'remote_aug_variant' in remote_source:
+        remote_view['remote_aug_variant'] = remote_source['remote_aug_variant']
+    return remote_view
+
+
 def loss_of_one_batch_multi_view(
     batch,
     model,
@@ -87,7 +113,10 @@ def loss_of_one_batch_multi_view(
                 "idx",
                 "true_shape",
                 "rng",
-                "data_norm_type"
+                "data_norm_type",
+                "remote_provider",
+                "remote_crop_box_xyxy",
+                "remote_aug_variant",
             ]
         )
     for view in batch:
@@ -113,13 +142,25 @@ def loss_of_one_batch_multi_view(
     else:
         amp_dtype = torch.float32
 
+    criterion_batch = batch
+    model_batch = batch
+    if has_joint_remote_supervision(batch):
+        remote_gt_view = build_remote_supervision_view(batch)
+        criterion_batch = list(batch) + [remote_gt_view]
+        model_batch = list(batch) + [
+            {
+                'img': remote_gt_view['img'],
+                'data_norm_type': remote_gt_view['data_norm_type'],
+            }
+        ]
+
     # Run model and compute loss
     with torch.autocast("cuda", enabled=bool(use_amp), dtype=amp_dtype):
-        preds = model(batch)
+        preds = model(model_batch)
         with torch.autocast("cuda", enabled=False):
-            loss = criterion(batch, preds) if criterion is not None else None
+            loss = criterion(criterion_batch, preds) if criterion is not None else None
 
-    result = {f"view{i + 1}": view for i, view in enumerate(batch)}
+    result = {f"view{i + 1}": view for i, view in enumerate(criterion_batch)}
     result.update({f"pred{i + 1}": pred for i, pred in enumerate(preds)})
     result["loss"] = loss
 

@@ -470,6 +470,69 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         return total_loss, details
 
 
+class JointAerialRSLoss(nn.Module):
+    """
+    Joint criterion for aerial multi-view supervision plus one appended RS view.
+
+    The expected input format is:
+    - gts[:-1], preds[:-1]: standard aerial multi-view training views
+    - gts[-1], preds[-1]: RS supervision view built from the remote side-channel
+    """
+
+    def __init__(
+        self,
+        aerial_criterion=None,
+        remote_criterion=None,
+        aerial_loss_weight=1.0,
+        remote_loss_weight=1.0,
+        remote_view_index=-1,
+    ):
+        super().__init__()
+        self.aerial_criterion = aerial_criterion
+        self.remote_criterion = remote_criterion or RSPointmapHeightLoss()
+        self.aerial_loss_weight = aerial_loss_weight
+        self.remote_loss_weight = remote_loss_weight
+        self.remote_view_index = remote_view_index
+
+    def forward(self, gts, preds, **kwargs):
+        if len(gts) != len(preds):
+            raise ValueError(
+                f"Expected same number of GT views and predictions, got {len(gts)} and {len(preds)}"
+            )
+        if len(gts) < 2:
+            raise ValueError(
+                'JointAerialRSLoss expects at least one aerial view and one remote view'
+            )
+
+        remote_idx = self.remote_view_index
+        aerial_gts = list(gts[:remote_idx]) if remote_idx == -1 else list(gts[:remote_idx] + gts[remote_idx + 1 :])
+        aerial_preds = list(preds[:remote_idx]) if remote_idx == -1 else list(preds[:remote_idx] + preds[remote_idx + 1 :])
+        remote_gts = [gts[remote_idx]]
+        remote_preds = [preds[remote_idx]]
+
+        total_loss = None
+        details = {}
+
+        if self.aerial_criterion is not None:
+            aerial_loss, aerial_details = self.aerial_criterion(aerial_gts, aerial_preds, **kwargs)
+            weighted_aerial_loss = self.aerial_loss_weight * aerial_loss
+            total_loss = weighted_aerial_loss if total_loss is None else total_loss + weighted_aerial_loss
+            details['aerial_loss'] = float(aerial_loss)
+            details.update(aerial_details)
+
+        if self.remote_criterion is not None:
+            remote_loss, remote_details = self.remote_criterion(remote_gts, remote_preds, **kwargs)
+            weighted_remote_loss = self.remote_loss_weight * remote_loss
+            total_loss = weighted_remote_loss if total_loss is None else total_loss + weighted_remote_loss
+            details['remote_loss'] = float(remote_loss)
+            details.update(remote_details)
+
+        if total_loss is None:
+            raise ValueError('JointAerialRSLoss received no active sub-criterion')
+
+        return total_loss, details
+
+
 class BaseCriterion(nn.Module):
     "Base Criterion to support different reduction methods"
 
