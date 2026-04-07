@@ -1,15 +1,20 @@
 #!/bin/bash
 
-NUM_GPUS=${1:-2}
+NUM_GPUS=${NUM_GPUS:-${1:-2}}
 NUM_VIEWS=${NUM_VIEWS:-2}
 BATCH_SIZE=${BATCH_SIZE:-2}
-TRAIN_SETS=${TRAIN_SETS:-16}
+TRAIN_SETS=${TRAIN_SETS:-32}
 VAL_SETS=${VAL_SETS:-8}
 TEST_SETS=${TEST_SETS:-8}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-0.1}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.01}
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_debug'}
+
+if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
+    echo "BATCH_SIZE (${BATCH_SIZE}) is train_params.max_num_of_imgs_per_gpu and must be >= NUM_VIEWS (${NUM_VIEWS}); otherwise validation batch_size becomes 0." >&2
+    exit 1
+fi
 
 MIN_REQUIRED_TRAIN_SETS=$((BATCH_SIZE * NUM_GPUS))
 if [ "${TRAIN_SETS}" -lt "${MIN_REQUIRED_TRAIN_SETS}" ]; then
@@ -30,9 +35,9 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
     dataset.vigor_chicago_joint_rs_aerial.train.overfit_num_sets=${TRAIN_SETS} \
     dataset.vigor_chicago_joint_rs_aerial.val.overfit_num_sets=${VAL_SETS} \
     dataset.vigor_chicago_joint_rs_aerial.test.overfit_num_sets=${TEST_SETS} \
-    dataset.vigor_chicago_joint_rs_aerial.train.remote_provider=${RS_PROVIDER} \
-    dataset.vigor_chicago_joint_rs_aerial.val.remote_provider=${RS_PROVIDER} \
-    dataset.vigor_chicago_joint_rs_aerial.test.remote_provider=${RS_PROVIDER} \
+    dataset.vigor_chicago_joint_rs_aerial.train.remote_providers=[${RS_PROVIDER}] \
+    dataset.vigor_chicago_joint_rs_aerial.val.remote_providers=[${RS_PROVIDER}] \
+    dataset.vigor_chicago_joint_rs_aerial.test.remote_providers=[${RS_PROVIDER}] \
     loss=pi3_loss_rs_joint \
     loss.remote_pointmap_loss_weight=${LAMBDA_REMOTE_PM} \
     loss.remote_height_loss_weight=${LAMBDA_REMOTE_H} \

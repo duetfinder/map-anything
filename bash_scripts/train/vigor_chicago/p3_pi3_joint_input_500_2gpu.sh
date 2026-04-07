@@ -1,12 +1,17 @@
 #!/bin/bash
 
-NUM_GPUS=${1:-2}
+NUM_GPUS=${NUM_GPUS:-${1:-2}}
 NUM_VIEWS=${NUM_VIEWS:-2}
 BATCH_SIZE=${BATCH_SIZE:-2}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-0.1}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.01}
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu'}
+
+if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
+    echo "BATCH_SIZE (${BATCH_SIZE}) is train_params.max_num_of_imgs_per_gpu and must be >= NUM_VIEWS (${NUM_VIEWS}); otherwise validation batch_size becomes 0." >&2
+    exit 1
+fi
 
 export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -18,19 +23,19 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
     dataset=vigor_chicago_rs_joint_518 \
     dataset.num_workers=0 \
     dataset.num_views=${NUM_VIEWS} \
-    dataset.vigor_chicago_joint_rs_aerial.train.remote_provider=${RS_PROVIDER} \
-    dataset.vigor_chicago_joint_rs_aerial.val.remote_provider=${RS_PROVIDER} \
-    dataset.vigor_chicago_joint_rs_aerial.test.remote_provider=${RS_PROVIDER} \
+    dataset.vigor_chicago_joint_rs_aerial.train.remote_providers=[${RS_PROVIDER}] \
+    dataset.vigor_chicago_joint_rs_aerial.val.remote_providers=[${RS_PROVIDER}] \
+    dataset.vigor_chicago_joint_rs_aerial.test.remote_providers=[${RS_PROVIDER}] \
     loss=pi3_loss_rs_joint \
     loss.remote_pointmap_loss_weight=${LAMBDA_REMOTE_PM} \
     loss.remote_height_loss_weight=${LAMBDA_REMOTE_H} \
     model=pi3 \
     model.model_config.load_pretrained_weights=true \
     train_params=pi3_finetune \
-    train_params.epochs=10 \
+    train_params.epochs=20 \
     train_params.warmup_epochs=1 \
     train_params.eval_freq=1 \
-    train_params.save_freq=1 \
+    train_params.save_freq=5 \
     train_params.keep_freq=5 \
     train_params.max_num_of_imgs_per_gpu=${BATCH_SIZE} \
     train_params.print_freq=20 \

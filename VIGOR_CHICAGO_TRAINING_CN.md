@@ -47,7 +47,26 @@ loss 相关的独立汇总见：[MAPANYTHING_LOSSES_CN.md](MAPANYTHING_LOSSES_CN
 - 新增的 [bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/vigor_chicago/p1_pi3_baseline_500_pretrained_2gpu.sh) 主要是把 baseline 重新命名、单独归档，并显式定义为 `P1 Baseline-Main` 实验入口。
 - 新脚本同时暴露了 `NUM_VIEWS / BATCH_SIZE / OUTPUT_DIR`，而 P0 额外暴露了 `TRAIN_SETS / VAL_SETS / TEST_SETS`，便于在不改脚本的前提下做 debug 和 baseline 内部调参。
 
-补充：`P3 Joint-Input` 的第一版工程骨架已经补齐，但截至本文档本次更新，尚未记录完整 2-GPU smoke 结果。
+补充：`P3 Joint-Input` 的第一版工程骨架已经补齐，并已完成一次 2-GPU debug smoke。
+
+本次 `P3` smoke 运行信息：
+
+- 脚本：[bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)
+- 输出目录：[`../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_debug`](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_debug)
+- 运行形态：2 GPU, `num_views=2`, `batch_size=2`, `train/val/test overfit = 16/8/8`, `epochs=1`
+- 结果：训练 1 epoch 完整跑通，验证阶段完整跑通，进程正常退出，已生成 `checkpoint-last / checkpoint-1 / checkpoint-best / checkpoint-final`
+- 训练日志中已可同时记录：`loss`、`aerial_loss`、`remote_loss`、`rs_pointmap_loss`、`rs_height_loss`
+- 本次 smoke 中实际修复了一个 joint batch 兼容问题：`loss_of_one_batch_multi_view(...)` 原先会对非 tensor side-channel 字段直接 `.to(device)`，现已改为仅对 tensor 做 device 搬运
+
+本次 smoke 的日志量级可作为后续调参起点：
+
+- 首个 train step 约为：`loss=57.18`, `aerial_loss=12.25`, `remote_loss=44.93`, `rs_pointmap_loss=419.73`, `rs_height_loss=295.38`
+- 首轮 val 尾部约为：`loss=44.40`, `aerial_loss=2.60`, `remote_loss=41.80`, `rs_pointmap_loss=417.99`
+
+从当前结果看：
+
+- `P3` 的数据、joint forward、组合 loss、DDP、checkpoint 保存链路已经贯通
+- remote 分支当前明显主导总 loss，下一阶段优先工作应是细化 `lambda_remote_*`、batch size、以及 `num_views` 的训练安排，而不是继续扩展新结构
 
 已新增的 `P3` 相关入口：
 
@@ -287,7 +306,15 @@ total_loss = aerial_multiview_loss + lambda_remote_pm * remote_pointmap_loss + l
 
 ### 6.5 benchmark / logging 层
 
-训练引入 remote 分支后，建议同步记录：
+当前 `P3` smoke 已经能在训练日志里稳定记录：
+
+- `loss`
+- `aerial_loss`
+- `remote_loss`
+- `rs_pointmap_loss`
+- `rs_height_loss`
+
+训练引入 remote 分支后，建议继续同步记录：
 
 - aerial 主 loss
 - remote pointmap loss
@@ -397,7 +424,7 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 | P1c | Baseline-LoRA | 检查参数高效微调是否值得引入 | `pi3` | aerial-only, 500 scenes | LoRA / adapter | `pi3_loss` | 当前无脚本 | 当前仓库未原生支持，优先级低于 P1 / P1a / P2 |
 | P2 | RS-Only | 先验证模型能否单独适应 RS 输入域 | `pi3` | remote image only | remote-only 几何回归 | `lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p2_pi3_rs_only_debug_2gpu.sh) | 已完成 2-GPU, 1-epoch smoke；当前是可运行的最小入口 |
 | P2a | RS-Only-Loss-Ablation | 比较 RS-only 的 remote loss 设计 | `pi3` | remote image only | 与 P2 相同 | 比较 `pointmap-only L1` / `pointmap+height L1` / `pointmap robust + height L1` | [bash_scripts/train/vigor_chicago/p2a_pi3_rs_only_loss_ablation_2gpu.sh](bash_scripts/train/vigor_chicago/p2a_pi3_rs_only_loss_ablation_2gpu.sh) | 第一版只做 loss 与权重对比，不引入新结构 |
-| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh) / [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh) | 第一版代码入口已补齐，下一步是补 2-GPU smoke 与日志核对 |
+| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh) / [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh) | 已完成 2-GPU debug smoke；下一步进入权重与资源配置细化 |
 | P4 | Model-Compare | 在稳定实验设置下比较不同模型 | `pi3` / `vggt` / `mapanything` / `da3` | 与选定任务一致 | 跟随对应 baseline / joint 设置 | 跟随模型对应主 loss | 视模型逐个补脚本 | 只有在 P1/P2/P3 跑稳后再展开 |
 
 补充解释：
@@ -407,6 +434,111 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 - `P1b` 和 `P1c` 是训练策略 ablation，不是 baseline 本身。
 - 当前新的研究主线不是“RS auxiliary supervision”，而是“先做 RS-only，再做 Joint Input”。
 - 如果你的目标是尽快推进联合训练，`P1b / P1c` 仍然可以后置。
+
+## 9.1 接下来如何细化 P3 训练
+
+在当前 `P3 debug smoke` 已跑通之后，建议把后续训练继续拆成三小段，而不是直接上大规模正式训练。
+
+### 9.1.1 P3a: Remote 权重细化
+
+目标：先把 remote 分支对总 loss 的压制程度调到可控范围。
+
+建议只扫两组权重：
+
+- `loss.remote_pointmap_loss_weight`: `0.1 -> 0.05 -> 0.02`
+- `loss.remote_height_loss_weight`: `0.01 -> 0.005 -> 0.002`
+
+当前优先推荐两组起点：
+
+- `lambda_remote_pm=0.05`, `lambda_remote_h=0.005`
+- `lambda_remote_pm=0.02`, `lambda_remote_h=0.002`
+
+判断标准：
+
+- `aerial_loss` 不要因 remote 分支明显抬高
+- `remote_loss` 仍能稳定下降
+- 总 loss 中 remote 不应长期占绝对主导
+
+### 9.1.2 P3b: 训练资源配置细化
+
+目标：在不破坏稳定性的前提下确定联合训练的主配置。
+
+建议顺序：
+
+1. 先固定 `num_views=2`, `batch_size=2`
+2. 在权重稳定后，再尝试 `batch_size=1` 与 `batch_size=2` 的速度/显存对比
+3. 只有在 `num_views=2` 跑稳后，再考虑 `num_views=4`
+
+当前不建议一开始就把 `num_views=4` 和更大 batch 叠加，因为 joint input 会把实际 forward 复杂度从 `2 views` 变成 `3 views`，再上 `4+1` 会明显抬高资源成本。
+
+### 9.1.3 P3c: 500-scene 正式训练前的中间验证
+
+目标：在正式 `P3` 训练前，先做一轮比 smoke 稍大的中间规模检查。
+
+建议使用：
+
+- `TRAIN_SETS=64`
+- `VAL_SETS=16`
+- `TEST_SETS=16`
+- `epochs=3`
+- 仍使用 [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)
+
+只有当这一层稳定后，再切到 [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh)。
+
+### 9.1.4 P3 正式训练前的记录口径
+
+在进入 500-scene 正式训练前，建议固定比较口径：
+
+- 与 `P1` 比较：看 aerial 主任务是否退化
+- 与 `P2a` 比较：看 remote 监督是否仍然有效
+- 在 `P3` 内部比较：统一用 `aerial_loss / remote_loss / rs_pointmap_loss / rs_height_loss / total loss` 作为训练日志主字段
+
+## 9.2 P3 500 正式脚本 bug 记录与修复
+
+2026-04-07 跑 `bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh` 时首次失败在 DataLoader 构建阶段，尚未进入模型训练。
+
+错误信息：
+
+```text
+ValueError: batch_size should be a positive integer value, but got batch_size=0
+```
+
+根因不是 `inference.py` 或 `JointAerialRSLoss`，而是脚本默认参数不匹配：
+
+```text
+dataset.num_views=4
+train_params.max_num_of_imgs_per_gpu=2
+```
+
+训练代码里验证 batch size 的计算方式是：
+
+```python
+test_batch_size = 2 * (max_num_of_imgs_per_gpu // dataset.num_views)
+```
+
+所以上述参数会得到 `2 * (2 // 4) = 0`，直接触发 PyTorch DataLoader 报错。
+
+已修复：
+
+- [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh)：默认 `NUM_VIEWS=2`，`NUM_GPUS` 改为支持环境变量或第 1 个参数，并新增 `BATCH_SIZE >= NUM_VIEWS` 启动前检查
+- [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)：同步默认 `NUM_VIEWS=2`，并新增同样的启动前检查
+
+重跑状态：
+
+- 输出目录：[p3_joint_input_500_pretrained_2gpu](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu)
+- 修复后已成功越过 train/test DataLoader 构建、模型初始化、`JointAerialRSLoss` 初始化，并进入训练迭代
+- 第 0 epoch 训练完成：200 iter，总耗时约 `0:06:22`，显存峰值约 `27473 MB`
+- 第 0 epoch 末训练均值：`loss≈46.55`, `aerial_loss≈2.91`, `remote_loss≈43.65`, `rs_pointmap_loss≈407.96`, `rs_height_loss≈285.09`
+- 第 1 次验证完成：10 iter，总耗时约 `0:00:11`，验证均值 `loss≈42.34`, `aerial_loss≈1.59`, `remote_loss≈40.75`, `rs_pointmap_loss≈407.51`
+- 已保存 `checkpoint-best.pth`，当前训练继续进入后续 epoch
+
+后续注意：如果需要实验 `NUM_VIEWS=4`，必须至少设置 `BATCH_SIZE>=4`，例如：
+
+```bash
+NUM_VIEWS=4 BATCH_SIZE=4 bash bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh
+```
+
+但 P3 joint 实际前向是 `num_views` 个 aerial view 再加 1 个 remote view，`NUM_VIEWS=4` 会明显增加显存压力。当前正式训练仍建议先固定 `NUM_VIEWS=2, BATCH_SIZE=2`。
 
 ## 10. 当前推荐的 loss 选择
 
