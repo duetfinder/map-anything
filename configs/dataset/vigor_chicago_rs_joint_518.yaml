@@ -28,7 +28,7 @@ vigor_chicago_joint_rs_aerial:
         num_views=${dataset.vigor_chicago_joint_rs_aerial.train.num_views},
         covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.train.covisibility_thres},
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.remote_ROOT}',
-        remote_provider='${dataset.vigor_chicago_joint_rs_aerial.train.remote_provider}',
+        remote_providers=${dataset.vigor_chicago_joint_rs_aerial.train.remote_providers},
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.train.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.train.remote_transform}',
         skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.train.skip_missing_remote})"
@@ -45,7 +45,7 @@ vigor_chicago_joint_rs_aerial:
     num_views: ${dataset.num_views}
     covisibility_thres: 0.05
     remote_ROOT: ${root_data_dir}/vigor_chicago_rs
-    remote_provider: 'Google_Satellite'
+    remote_providers: ['Google_Satellite']
     remote_resolution: ${dataset.resolution_train}
     remote_transform: 'imgnorm'
     skip_missing_remote: false
@@ -65,7 +65,7 @@ vigor_chicago_joint_rs_aerial:
         num_views=${dataset.vigor_chicago_joint_rs_aerial.val.num_views},
         covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.val.covisibility_thres},
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.remote_ROOT}',
-        remote_provider='${dataset.vigor_chicago_joint_rs_aerial.val.remote_provider}',
+        remote_providers=${dataset.vigor_chicago_joint_rs_aerial.val.remote_providers},
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.val.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.val.remote_transform}',
         skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.val.skip_missing_remote})"
@@ -82,7 +82,7 @@ vigor_chicago_joint_rs_aerial:
     num_views: ${dataset.num_views}
     covisibility_thres: 0.05
     remote_ROOT: ${root_data_dir}/vigor_chicago_rs
-    remote_provider: 'Google_Satellite'
+    remote_providers: ['Google_Satellite']
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'
     skip_missing_remote: false
@@ -102,7 +102,7 @@ vigor_chicago_joint_rs_aerial:
         num_views=${dataset.vigor_chicago_joint_rs_aerial.test.num_views},
         covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.test.covisibility_thres},
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.remote_ROOT}',
-        remote_provider='${dataset.vigor_chicago_joint_rs_aerial.test.remote_provider}',
+        remote_providers=${dataset.vigor_chicago_joint_rs_aerial.test.remote_providers},
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.test.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.test.remote_transform}',
         skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.test.skip_missing_remote})"
@@ -119,7 +119,7 @@ vigor_chicago_joint_rs_aerial:
     num_views: ${dataset.num_views}
     covisibility_thres: 0.05
     remote_ROOT: ${root_data_dir}/vigor_chicago_rs
-    remote_provider: 'Google_Satellite'
+    remote_providers: ['Google_Satellite']
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'
     skip_missing_remote: false

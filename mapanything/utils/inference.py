@@ -123,7 +123,9 @@ def loss_of_one_batch_multi_view(
         for name in view.keys():
             if name in ignore_keys:
                 continue
-            view[name] = view[name].to(device, non_blocking=True)
+            value = view[name]
+            if torch.is_tensor(value):
+                view[name] = value.to(device, non_blocking=True)
 
     # Determine the mixed precision floating point type
     if use_amp:

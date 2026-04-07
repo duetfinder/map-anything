@@ -27,7 +27,7 @@ test_dataset_remote:
   "VigorChicagoRSAerial(
     metadata_root='${mapanything_dataset_metadata_dir}/vigor_chicago_rs_aerial',
     split='val',
-    provider='${dataset.vigor_chicago_rs_aerial_benchmark.remote.provider}',
+    providers=${dataset.vigor_chicago_rs_aerial_benchmark.remote.providers},
     overfit_num_sets=${dataset.vigor_chicago_rs_aerial_benchmark.remote.overfit_num_sets},
     load_aerial_scene_meta=False,
     transform='imgnorm',
@@ -40,7 +40,7 @@ test_dataset_remote:
 
 vigor_chicago_rs_aerial_benchmark:
   remote:
-    provider: 'Google_Satellite'
+    providers: ['Google_Satellite']
     overfit_num_sets: null
     dataset_resolution: ${dataset.resolution_val}
     num_augmented_crops_per_sample: 1

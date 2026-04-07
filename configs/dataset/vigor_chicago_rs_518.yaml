@@ -22,7 +22,7 @@ vigor_chicago_rs:
         ROOT='${dataset.vigor_chicago_rs.train.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_rs.train.dataset_metadata_dir}',
         overfit_num_sets=${dataset.vigor_chicago_rs.train.overfit_num_sets},
-        provider='${dataset.vigor_chicago_rs.train.provider}',
+        providers=${dataset.vigor_chicago_rs.train.providers},
         provider_sampling_mode='${dataset.vigor_chicago_rs.train.provider_sampling_mode}',
         num_augmented_crops_per_sample=${dataset.vigor_chicago_rs.train.num_augmented_crops_per_sample},
         crop_mode='${dataset.vigor_chicago_rs.train.crop_mode}',
@@ -36,7 +36,7 @@ vigor_chicago_rs:
     ROOT: ${root_data_dir}/vigor_chicago_rs
     dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
     overfit_num_sets: null
-    provider: 'all'
+    providers: []
     provider_sampling_mode: 'expand'
     num_augmented_crops_per_sample: 1
     crop_mode: 'none'
@@ -53,7 +53,7 @@ vigor_chicago_rs:
         ROOT='${dataset.vigor_chicago_rs.val.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_rs.val.dataset_metadata_dir}',
         overfit_num_sets=${dataset.vigor_chicago_rs.val.overfit_num_sets},
-        provider='${dataset.vigor_chicago_rs.val.provider}',
+        providers=${dataset.vigor_chicago_rs.val.providers},
         provider_sampling_mode='${dataset.vigor_chicago_rs.val.provider_sampling_mode}',
         num_augmented_crops_per_sample=${dataset.vigor_chicago_rs.val.num_augmented_crops_per_sample},
         crop_mode='${dataset.vigor_chicago_rs.val.crop_mode}',
@@ -67,7 +67,7 @@ vigor_chicago_rs:
     ROOT: ${root_data_dir}/vigor_chicago_rs
     dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
     overfit_num_sets: null
-    provider: 'all'
+    providers: []
     provider_sampling_mode: 'expand'
     num_augmented_crops_per_sample: 1
     crop_mode: 'none'
@@ -84,7 +84,7 @@ vigor_chicago_rs:
         ROOT='${dataset.vigor_chicago_rs.test.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_rs.test.dataset_metadata_dir}',
         overfit_num_sets=${dataset.vigor_chicago_rs.test.overfit_num_sets},
-        provider='${dataset.vigor_chicago_rs.test.provider}',
+        providers=${dataset.vigor_chicago_rs.test.providers},
         provider_sampling_mode='${dataset.vigor_chicago_rs.test.provider_sampling_mode}',
         num_augmented_crops_per_sample=${dataset.vigor_chicago_rs.test.num_augmented_crops_per_sample},
         crop_mode='${dataset.vigor_chicago_rs.test.crop_mode}',
@@ -98,7 +98,7 @@ vigor_chicago_rs:
     ROOT: ${root_data_dir}/vigor_chicago_rs
     dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
     overfit_num_sets: null
-    provider: 'all'
+    providers: []
     provider_sampling_mode: 'expand'
     num_augmented_crops_per_sample: 1
     crop_mode: 'none'

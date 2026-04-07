@@ -141,7 +141,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago_rs_aerial"),
     )
-    parser.add_argument("--provider", default="Google_Satellite")
+    parser.add_argument("--providers", nargs="+", default=["Google_Satellite"])
     parser.add_argument(
         "--splits",
         nargs="+",
@@ -164,27 +164,36 @@ def main() -> None:
         split_dir.mkdir(parents=True, exist_ok=True)
 
         missing_scenes = []
+        per_scene_primary_manifest = {}
         for scene_name in scene_names:
-            try:
-                manifest = build_scene_manifest(
-                    scene_name=scene_name,
-                    aerial_root=args.aerial_root,
-                    remote_root=args.remote_root,
-                    satellite_maps_root=args.satellite_maps_root,
-                    provider=args.provider,
-                )
-            except FileNotFoundError as exc:
-                missing_scenes.append({"scene_name": scene_name, "reason": str(exc)})
+            scene_manifests = []
+            scene_errors = []
+            for provider in args.providers:
+                try:
+                    manifest = build_scene_manifest(
+                        scene_name=scene_name,
+                        aerial_root=args.aerial_root,
+                        remote_root=args.remote_root,
+                        satellite_maps_root=args.satellite_maps_root,
+                        provider=provider,
+                    )
+                except FileNotFoundError as exc:
+                    scene_errors.append({"provider": provider, "reason": str(exc)})
+                    continue
+                scene_manifests.append(manifest)
+                manifests.append(manifest)
+
+            if not scene_manifests:
+                missing_scenes.append({"scene_name": scene_name, "errors": scene_errors})
                 continue
 
-            manifests.append(manifest)
-
+            per_scene_primary_manifest[scene_name] = scene_manifests[0]
             manifest_path = split_dir / f"{scene_name}.json"
             with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, indent=2)
+                json.dump(scene_manifests[0], f, indent=2)
 
         scene_list_path = split_dir / f"vigor_chicago_rs_aerial_scene_list_{split}.npy"
-        np.save(scene_list_path, np.array([m["scene_name"] for m in manifests], dtype=object))
+        np.save(scene_list_path, np.array(sorted(per_scene_primary_manifest.keys()), dtype=object))
 
         aggregate_path = split_dir / f"vigor_chicago_rs_aerial_{split}.json"
         with open(aggregate_path, "w", encoding="utf-8") as f:
@@ -194,7 +203,7 @@ def main() -> None:
             "requested_num_scenes": len(scene_names),
             "num_scenes": len(manifests),
             "num_missing_scenes": len(missing_scenes),
-            "provider": args.provider,
+            "providers": args.providers,
             "scene_list_path": str(scene_list_path),
             "aggregate_manifest_path": str(aggregate_path),
         }

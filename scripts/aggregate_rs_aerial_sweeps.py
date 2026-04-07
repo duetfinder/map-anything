@@ -10,7 +10,8 @@ MODELS = {
     'vggt': 'VGGT',
     'mapanything': 'MapAnything',
     'da3': 'DA3',
-    'pi3_chicago500_finetuned_p2aL3': 'Pi3 (finetuned)',
+    'pi3_chicago500_finetuned_p2aL3': 'Pi3 (finetuned P2A L3)',
+    'pi3_chicago500_finetuned_p1': 'Pi3 (finetuned P1)',
 }
 VIEWS = [2, 4, 8, 16, 24, 32, 40]
 AERIAL_METRICS = [
@@ -111,7 +112,8 @@ def plot_metrics(rows, out_dir: Path):
         'VGGT': "#d42727",
         'MapAnything': '#2ca02c',
         'DA3': '#9467bd',
-        'Pi3 (finetuned)': "#fc7c0b",
+        'Pi3 (finetuned P2A L3)': "#fc7c0b",
+        'Pi3 (finetuned P1)': "#0c31e9",
     }
     mode_labels = {
         'aerial_only': 'Aerial-only',
@@ -160,11 +162,11 @@ def plot_metrics(rows, out_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--out-dir', type=Path, default=None)
+    parser.add_argument('--root', default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv'),type=Path)
+    parser.add_argument('--out-dir',default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/aggregated_2'), type=Path)
     args = parser.parse_args()
 
-    out_dir = args.out_dir or args.root / 'aggregated'
+    out_dir = args.out_dir or args.root / 'aggregated_2'
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = collect_rows(args.root)
