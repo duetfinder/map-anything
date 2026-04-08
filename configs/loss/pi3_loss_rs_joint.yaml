@@ -1,5 +1,5 @@
 remote_pointmap_loss_weight: 0.1
-remote_height_loss_weight: 0.01
+remote_height_loss_weight: 0.0
 test_remote_pointmap_loss_weight: ${loss.remote_pointmap_loss_weight}
 test_remote_height_loss_weight: 0.0
 
@@ -27,7 +27,8 @@ train_criterion: >
       pointmap_criterion=L1Loss(reduction='none'),
       height_criterion=L1Loss(reduction='none'),
       pointmap_loss_weight=${loss.remote_pointmap_loss_weight},
-      height_loss_weight=${loss.remote_height_loss_weight}
+      height_loss_weight=${loss.remote_height_loss_weight},
+      compare_in_view0_frame=True
     )
   )
 test_criterion: >
@@ -54,6 +55,7 @@ test_criterion: >
       pointmap_criterion=L1Loss(reduction='none'),
       height_criterion=L1Loss(reduction='none'),
       pointmap_loss_weight=${loss.test_remote_pointmap_loss_weight},
-      height_loss_weight=${loss.test_remote_height_loss_weight}
+      height_loss_weight=${loss.test_remote_height_loss_weight},
+      compare_in_view0_frame=True
     )
   )

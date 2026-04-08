@@ -8,7 +8,7 @@ VAL_SETS=${VAL_SETS:-8}
 TEST_SETS=${TEST_SETS:-8}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-0.1}
-LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.01}
+LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_debug'}
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then

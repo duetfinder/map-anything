@@ -312,12 +312,14 @@ class RSPointmapHeightLoss(nn.Module):
         height_criterion=None,
         pointmap_loss_weight=1.0,
         height_loss_weight=0.1,
+        compare_in_view0_frame=False,
     ):
         super().__init__()
         self.pointmap_criterion = pointmap_criterion or L1Loss(reduction="none")
         self.height_criterion = height_criterion or L1Loss(reduction="none")
         self.pointmap_loss_weight = pointmap_loss_weight
         self.height_loss_weight = height_loss_weight
+        self.compare_in_view0_frame = compare_in_view0_frame
 
     @staticmethod
     def _masked_mean(loss_map, mask):
@@ -327,22 +329,55 @@ class RSPointmapHeightLoss(nn.Module):
             return loss_map[mask].mean()
         return 0 * loss_map.sum()
 
+    @staticmethod
+    def _get_pred_in_view0(aerial_preds):
+        if aerial_preds is None or len(aerial_preds) == 0:
+            raise ValueError('compare_in_view0_frame=True requires aerial_preds context')
+
+        ref_pred = aerial_preds[0]
+        if 'cam_quats' not in ref_pred or 'cam_trans' not in ref_pred:
+            raise ValueError('Remote view0 alignment requires cam_quats and cam_trans in the reference aerial prediction')
+
+        batch_size = ref_pred['cam_quats'].shape[0]
+        pred_camera0 = torch.eye(4, device=ref_pred['cam_quats'].device).unsqueeze(0)
+        pred_camera0 = pred_camera0.repeat(batch_size, 1, 1)
+        pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(ref_pred['cam_quats'].clone())
+        pred_camera0[..., :3, 3] = ref_pred['cam_trans'].clone()
+        return closed_form_pose_inverse(pred_camera0)
+
+
     def forward(self, gts, preds, **kwargs):
         if len(gts) != len(preds):
             raise ValueError(f"Expected same number of GT views and predictions, got {len(gts)} and {len(preds)}")
 
         total_loss = None
         pointmap_losses = []
+        pointmap_losses_weighted = []
         height_losses = []
+        height_losses_weighted = []
+        pred_in_view0 = None
+        aerial_preds = kwargs.get('aerial_preds')
+
+        if self.compare_in_view0_frame and self.height_loss_weight > 0:
+            raise ValueError('Height supervision is not supported when compare_in_view0_frame=True. Use height_loss_weight=0.')
+
+        if self.compare_in_view0_frame:
+            pred_in_view0 = self._get_pred_in_view0(aerial_preds)
 
         for gt, pred in zip(gts, preds):
             pred_pts3d = pred['pts3d'].float()
-            gt_pointmap = gt['remote_pointmap'].float()
+            if self.compare_in_view0_frame:
+                pred_pts3d = geotrf(pred_in_view0, pred_pts3d)
+            gt_pointmap_key = 'remote_pointmap_view0' if self.compare_in_view0_frame else 'remote_pointmap'
+            if gt_pointmap_key not in gt:
+                raise ValueError(f'Missing {gt_pointmap_key} in remote supervision view')
+            gt_pointmap = gt[gt_pointmap_key].float()
             valid_mask = gt['remote_valid_mask'].bool()
 
             pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
             pointmap_loss = self._masked_mean(pointmap_loss_map, valid_mask)
             pointmap_losses.append(float(pointmap_loss))
+            pointmap_losses_weighted.append(float(self.pointmap_loss_weight * pointmap_loss))
 
             loss = self.pointmap_loss_weight * pointmap_loss
 
@@ -352,6 +387,7 @@ class RSPointmapHeightLoss(nn.Module):
                 height_loss_map = self.height_criterion(pred_height, gt_height)
                 height_loss = self._masked_mean(height_loss_map, valid_mask)
                 height_losses.append(float(height_loss))
+                height_losses_weighted.append(float(self.height_loss_weight * height_loss))
                 loss = loss + self.height_loss_weight * height_loss
 
             total_loss = loss if total_loss is None else total_loss + loss
@@ -362,8 +398,10 @@ class RSPointmapHeightLoss(nn.Module):
         details = {}
         if pointmap_losses:
             details['rs_pointmap_loss'] = sum(pointmap_losses) / len(pointmap_losses)
+            details['rs_pointmap_loss_weighted'] = sum(pointmap_losses_weighted) / len(pointmap_losses_weighted)
         if height_losses:
             details['rs_height_loss'] = sum(height_losses) / len(height_losses)
+            details['rs_height_loss_weighted'] = sum(height_losses_weighted) / len(height_losses_weighted)
 
         return total_loss, details
 
@@ -390,6 +428,7 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         self.height_criterion = height_criterion or L1Loss(reduction="none")
         self.pointmap_loss_weight = pointmap_loss_weight
         self.height_loss_weight = height_loss_weight
+        self.compare_in_view0_frame = compare_in_view0_frame
         self.top_n_percent = float(top_n_percent)
         self.bottom_n_percent = 100.0 - self.top_n_percent
         if not (0.0 <= self.top_n_percent < 100.0):
@@ -435,16 +474,32 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
 
         total_loss = None
         pointmap_losses = []
+        pointmap_losses_weighted = []
         height_losses = []
+        height_losses_weighted = []
+        pred_in_view0 = None
+        aerial_preds = kwargs.get('aerial_preds')
+
+        if self.compare_in_view0_frame and self.height_loss_weight > 0:
+            raise ValueError('Height supervision is not supported when compare_in_view0_frame=True. Use height_loss_weight=0.')
+
+        if self.compare_in_view0_frame:
+            pred_in_view0 = self._get_pred_in_view0(aerial_preds)
 
         for gt, pred in zip(gts, preds):
             pred_pts3d = pred['pts3d'].float()
-            gt_pointmap = gt['remote_pointmap'].float()
+            if self.compare_in_view0_frame:
+                pred_pts3d = geotrf(pred_in_view0, pred_pts3d)
+            gt_pointmap_key = 'remote_pointmap_view0' if self.compare_in_view0_frame else 'remote_pointmap'
+            if gt_pointmap_key not in gt:
+                raise ValueError(f'Missing {gt_pointmap_key} in remote supervision view')
+            gt_pointmap = gt[gt_pointmap_key].float()
             valid_mask = gt['remote_valid_mask'].bool()
 
             pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
             pointmap_loss = self._exclude_top_n_masked_mean(pointmap_loss_map, valid_mask)
             pointmap_losses.append(float(pointmap_loss))
+            pointmap_losses_weighted.append(float(self.pointmap_loss_weight * pointmap_loss))
 
             loss = self.pointmap_loss_weight * pointmap_loss
 
@@ -454,6 +509,7 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
                 height_loss_map = self.height_criterion(pred_height, gt_height)
                 height_loss = self._masked_mean(height_loss_map, valid_mask)
                 height_losses.append(float(height_loss))
+                height_losses_weighted.append(float(self.height_loss_weight * height_loss))
                 loss = loss + self.height_loss_weight * height_loss
 
             total_loss = loss if total_loss is None else total_loss + loss
@@ -521,7 +577,9 @@ class JointAerialRSLoss(nn.Module):
             details.update(aerial_details)
 
         if self.remote_criterion is not None:
-            remote_loss, remote_details = self.remote_criterion(remote_gts, remote_preds, **kwargs)
+            remote_loss, remote_details = self.remote_criterion(
+                remote_gts, remote_preds, aerial_gts=aerial_gts, aerial_preds=aerial_preds, **kwargs
+            )
             weighted_remote_loss = self.remote_loss_weight * remote_loss
             total_loss = weighted_remote_loss if total_loss is None else total_loss + weighted_remote_loss
             details['remote_loss'] = float(remote_loss)

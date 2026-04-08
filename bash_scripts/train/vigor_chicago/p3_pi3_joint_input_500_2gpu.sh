@@ -5,7 +5,7 @@ NUM_VIEWS=${NUM_VIEWS:-2}
 BATCH_SIZE=${BATCH_SIZE:-2}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-0.1}
-LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.01}
+LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu'}
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then

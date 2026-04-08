@@ -14,7 +14,9 @@ import numpy as np
 import torch
 
 from mapanything.utils.geometry import (
+    closed_form_pose_inverse,
     depth_edge,
+    geotrf,
     get_rays_in_camera_frame,
     normals_edge,
     points_to_normals,
@@ -51,6 +53,33 @@ def has_joint_remote_supervision(batch):
     return bool(batch) and 'camera_pose' in batch[0] and 'remote_image' in batch[0]
 
 
+def _transform_remote_pointmap_to_view0(remote_pointmap, camera_pose):
+    if torch.is_tensor(remote_pointmap):
+        if remote_pointmap.ndim == 3:
+            remote_pointmap = remote_pointmap.unsqueeze(0)
+            squeeze = True
+        else:
+            squeeze = False
+        if camera_pose.ndim == 2:
+            camera_pose = camera_pose.unsqueeze(0)
+        inv_camera_pose = closed_form_pose_inverse(camera_pose.float())
+        remote_pointmap_view0 = geotrf(inv_camera_pose, remote_pointmap.float())
+        return remote_pointmap_view0.squeeze(0) if squeeze else remote_pointmap_view0
+
+    remote_pointmap_np = np.asarray(remote_pointmap, dtype=np.float32)
+    camera_pose_np = np.asarray(camera_pose, dtype=np.float32)
+    if remote_pointmap_np.ndim == 3:
+        remote_pointmap_np = remote_pointmap_np[None]
+        squeeze = True
+    else:
+        squeeze = False
+    if camera_pose_np.ndim == 2:
+        camera_pose_np = camera_pose_np[None]
+    inv_camera_pose = closed_form_pose_inverse(camera_pose_np)
+    remote_pointmap_view0 = geotrf(inv_camera_pose, remote_pointmap_np)
+    return remote_pointmap_view0[0] if squeeze else remote_pointmap_view0
+
+
 def build_remote_supervision_view(batch):
     remote_source = batch[0]
     remote_view = {
@@ -60,6 +89,9 @@ def build_remote_supervision_view(batch):
         'label': remote_source.get('label'),
         'instance': remote_source.get('remote_provider', 'remote'),
         'remote_pointmap': remote_source['remote_pointmap'],
+        'remote_pointmap_view0': _transform_remote_pointmap_to_view0(
+            remote_source['remote_pointmap'], remote_source['camera_pose']
+        ),
         'remote_valid_mask': remote_source['remote_valid_mask'],
     }
     if 'remote_height_map' in remote_source:

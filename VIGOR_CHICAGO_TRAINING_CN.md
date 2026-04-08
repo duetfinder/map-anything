@@ -491,7 +491,8 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 
 - 与 `P1` 比较：看 aerial 主任务是否退化
 - 与 `P2a` 比较：看 remote 监督是否仍然有效
-- 在 `P3` 内部比较：统一用 `aerial_loss / remote_loss / rs_pointmap_loss / rs_height_loss / total loss` 作为训练日志主字段
+- 在 `P3` 内部比较：统一用 `aerial_loss / remote_loss / rs_pointmap_loss / rs_pointmap_loss_weighted / total loss` 作为训练日志主字段
+- 当前 `P3` 默认已关闭 joint `height` loss；只有在确认坐标系口径后才建议重新打开
 
 ## 9.2 P3 500 正式脚本 bug 记录与修复
 
@@ -539,6 +540,85 @@ NUM_VIEWS=4 BATCH_SIZE=4 bash bash_scripts/train/vigor_chicago/p3_pi3_joint_inpu
 ```
 
 但 P3 joint 实际前向是 `num_views` 个 aerial view 再加 1 个 remote view，`NUM_VIEWS=4` 会明显增加显存压力。当前正式训练仍建议先固定 `NUM_VIEWS=2, BATCH_SIZE=2`。
+
+## 9.3 P3 Joint 坐标系对齐问题与修复
+
+2026-04-08 进一步检查 `P3` 时发现，比 loss 尺度更根本的问题是 remote pointmap 与 aerial 主监督没有使用同一坐标参考系。
+
+### 9.3.1 问题根因
+
+当前 `Pi3` aerial 主 loss 会把 aerial GT 和 prediction 统一转换到 `view0` 参考系下比较；但 joint remote 分支原先直接把 `remote_pointmap` 当作全局坐标 GT，与 `pred['pts3d']` 直接做 L1。
+
+由于当前 VIGOR Chicago 的 remote pointmap 来自航空多视角重建结果，本身处于场景全局坐标系；而 aerial 主损失内部使用的是 `view0` 参考系，因此二者之间至少差一个 `view0` 外参逆变换。
+
+### 9.3.2 对齐验证脚本
+
+已新增调试脚本：
+
+- [scripts/debug_vigor_chicago_joint_alignment.py](scripts/debug_vigor_chicago_joint_alignment.py)
+
+它会对单个 scene 导出并比较：
+
+- `aerial_world`
+- `aerial_view0`
+- `remote_global`
+- `remote_view0 = inv(T_view0_world) * remote_global`
+
+首个验证 scene：`train / location_1`。输出：
+
+- [location_1_alignment_summary.json](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/vigor_chicago_joint_alignment/location_1_alignment_summary.json)
+- [location_1_global_topdown.png](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/vigor_chicago_joint_alignment/location_1_global_topdown.png)
+- [location_1_view0_topdown.png](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/vigor_chicago_joint_alignment/location_1_view0_topdown.png)
+
+关键数值：
+
+- `aerial_world vs remote_global`: `symmetric_mean_l2 ≈ 57.17`
+- `aerial_view0 vs remote_global`: `symmetric_mean_l2 ≈ 224.47`
+- `aerial_view0 vs remote_view0`: `symmetric_mean_l2 ≈ 63.04`
+
+这说明：
+
+- `remote_global` 明显更接近 `aerial_world`，而不是 `aerial_view0`
+- 将 `remote_global` 通过 `view0` 外参逆变换到 `view0` 坐标后，会重新接近 aerial 主监督使用的坐标系
+
+### 9.3.3 已实施修复
+
+已修改：
+
+- [mapanything/utils/inference.py](mapanything/utils/inference.py)
+  - joint batch 构造时新增 `remote_pointmap_view0`
+  - 做法是对 `remote_pointmap_global` 应用 `inv(camera_pose_view0)`
+- [mapanything/train/losses.py](mapanything/train/losses.py)
+  - `RSPointmapHeightLoss` 新增 `compare_in_view0_frame=True` 选项
+  - joint remote loss 在该模式下会先把 remote prediction 用预测的 `view0` 位姿变换到预测 `view0` 参考系，再与 `remote_pointmap_view0` 比较
+  - 新增 `rs_pointmap_loss_weighted` 日志字段，避免 raw / weighted 混淆
+- [configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
+  - 默认启用 `compare_in_view0_frame=True`
+  - 默认将 `remote_height_loss_weight` 调整为 `0.0`
+- [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)
+- [bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_500_2gpu.sh)
+  - 默认 `LAMBDA_REMOTE_H=0.0`
+
+### 9.3.4 为什么先关闭 joint height loss
+
+一旦把 remote pointmap 转到 `view0` 参考系，原始 `height_map` 的物理意义就不再是“全局竖直方向的高度”。因此当前修复版 `P3` 先只保留 pointmap 监督，暂时关闭 joint `height` loss，避免继续混入另一种坐标语义。
+
+### 9.3.5 修复后的最小 smoke
+
+已重新跑通最小 joint smoke：
+
+- 脚本：[bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/vigor_chicago/p3_pi3_joint_input_debug_2gpu.sh)
+- 覆写参数：`TRAIN_SETS=4 VAL_SETS=4 TEST_SETS=4 NUM_VIEWS=2 BATCH_SIZE=2 NUM_GPUS=2`
+- 输出目录：[p3_joint_input_debug_view0fix](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_debug_view0fix)
+
+运行结果：
+
+- 完整跑通 `1 epoch train + val + checkpoint-final`，`exit code = 0`
+- 训练日志已出现新的 `rs_pointmap_loss_weighted` 字段
+- 第一个 train step 量级：`loss≈32.70`, `aerial_loss≈11.86`, `remote_loss≈20.85`, `rs_pointmap_loss≈208.49`, `rs_pointmap_loss_weighted≈20.85`
+- 第一次验证起始量级：`loss≈25.83`, `aerial_loss≈1.69`, `remote_loss≈24.13`, `rs_pointmap_loss≈241.32`, `rs_pointmap_loss_weighted≈24.13`
+
+当前结论：`P3` joint remote supervision 现在已经切换到与 aerial 主损失一致的 `view0` 口径，后续再做 `lambda_remote_pm` 扫描才有意义。
 
 ## 10. 当前推荐的 loss 选择
 
