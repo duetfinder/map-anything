@@ -38,6 +38,6 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
     train_params.save_freq=5 \
     train_params.keep_freq=5 \
     train_params.max_num_of_imgs_per_gpu=${BATCH_SIZE} \
-    train_params.print_freq=20 \
+    train_params.print_freq=1 \
     train_params.resume=false \
     hydra.run.dir="${OUTPUT_DIR}"
