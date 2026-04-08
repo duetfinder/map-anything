@@ -1,6 +1,6 @@
 #!/bin/bash
 
-NUM_GPUS=${1:-2}
+NUM_GPUS=${1:-1}
 NUM_VIEWS=${NUM_VIEWS:-2}
 BATCH_SIZE=${BATCH_SIZE:-2}
 TRAIN_SETS=${TRAIN_SETS:-2}
@@ -12,7 +12,7 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=1
 
-PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
     machine=autodl_vigor \
     dataset=vigor_chicago_500_518 \
