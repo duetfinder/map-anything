@@ -10,8 +10,8 @@ MODELS = {
     'vggt': 'VGGT',
     'mapanything': 'MapAnything',
     'da3': 'DA3',
-    'pi3_chicago500_finetuned_p2aL3': 'Pi3 (finetuned P2A L3)',
     'pi3_chicago500_finetuned_p1': 'Pi3 (finetuned P1)',
+    'pi3_chicago500_finetuned_p3': 'Pi3 (finetuned P3)',
 }
 VIEWS = [2, 4, 8, 16, 24, 32, 40]
 AERIAL_METRICS = [
@@ -112,8 +112,8 @@ def plot_metrics(rows, out_dir: Path):
         'VGGT': "#d42727",
         'MapAnything': '#2ca02c',
         'DA3': '#9467bd',
-        'Pi3 (finetuned P2A L3)': "#fc7c0b",
-        'Pi3 (finetuned P1)': "#0c31e9",
+        'Pi3 (finetuned P1)': "#fc7c0b",
+        'Pi3 (finetuned P3)': "#0c31e9",
     }
     mode_labels = {
         'aerial_only': 'Aerial-only',

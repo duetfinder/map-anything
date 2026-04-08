@@ -10,6 +10,7 @@ Model Factory for MapAnything
 import importlib.util
 import logging
 import os
+import re
 import warnings
 from typing import List, Optional
 
@@ -92,12 +93,40 @@ def _init_hydra_config(config_path: str, overrides: Optional[List[str]] = None):
     hydra.initialize(version_base=None, config_path=relative_path)
 
     # Compose the config with overrides
-    if overrides is not None:
-        cfg = hydra.compose(config_name=config_name, overrides=overrides)
-    else:
+    if overrides is None:
         cfg = hydra.compose(config_name=config_name)
+        return cfg
 
-    return cfg
+    patched_overrides = list(overrides)
+    while True:
+        try:
+            cfg = hydra.compose(config_name=config_name, overrides=patched_overrides)
+            return cfg
+        except hydra.errors.ConfigCompositionException as exc:
+            match = re.search(r"Could not override '([^']+)'", str(exc))
+            if not match:
+                raise
+
+            missing_key = match.group(1)
+            updated = False
+            next_overrides = []
+            for override in patched_overrides:
+                if override.startswith(("+", "~")):
+                    next_overrides.append(override)
+                    continue
+                key, sep, value = override.partition("=")
+                if sep and key == missing_key:
+                    next_overrides.append(f"+{override}")
+                    updated = True
+                else:
+                    next_overrides.append(override)
+
+            if not updated:
+                raise
+
+            patched_overrides = next_overrides
+            hydra.core.global_hydra.GlobalHydra.instance().clear()
+            hydra.initialize(version_base=None, config_path=relative_path)
 
 
 def init_model_from_config(
