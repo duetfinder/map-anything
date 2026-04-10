@@ -69,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-points", type=int, default=20000)
     parser.add_argument("--nn-samples", type=int, default=2048)
+    parser.add_argument("--skip-plots", action="store_true")
     return parser.parse_args()
 
 
@@ -148,6 +149,74 @@ def symmetric_nn_l2(src: np.ndarray, dst: np.ndarray, num_samples: int, rng: np.
         "dst_to_src_median_l2": float(np.median(dst_to_src)),
     }
 
+
+
+def write_ply(points: np.ndarray, colors: np.ndarray, out_path: Path) -> None:
+    if points.shape[0] != colors.shape[0]:
+        raise ValueError(f"points/colors size mismatch: {points.shape[0]} vs {colors.shape[0]}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    header = """ply
+format ascii 1.0
+element vertex {num_vertices}
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+end_header
+""".format(num_vertices=points.shape[0])
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(header)
+        for (x, y, z), (r, g, b) in zip(points, colors):
+            f.write(f"{x:.6f} {y:.6f} {z:.6f} {int(r)} {int(g)} {int(b)}\n")
+
+
+def write_colored_clouds(clouds: list[tuple[str, np.ndarray, tuple[int, int, int]]], out_path: Path) -> None:
+    all_points = []
+    all_colors = []
+    for _, points, color in clouds:
+        if points.shape[0] == 0:
+            continue
+        all_points.append(points.astype(np.float32))
+        color_arr = np.tile(np.asarray(color, dtype=np.uint8)[None], (points.shape[0], 1))
+        all_colors.append(color_arr)
+    if not all_points:
+        raise ValueError(f"No valid points to write: {out_path}")
+    write_ply(np.concatenate(all_points, axis=0), np.concatenate(all_colors, axis=0), out_path)
+
+
+def export_alignment_plys(output_dir: Path, scene_name: str, aerial_world: np.ndarray, aerial_view0: np.ndarray, remote_global: np.ndarray, remote_view0: np.ndarray) -> dict:
+    paths = {
+        "aerial_world_ply": output_dir / f"{scene_name}_aerial_world.ply",
+        "aerial_view0_ply": output_dir / f"{scene_name}_aerial_view0.ply",
+        "remote_global_ply": output_dir / f"{scene_name}_remote_global.ply",
+        "remote_view0_ply": output_dir / f"{scene_name}_remote_view0.ply",
+        "global_combo_ply": output_dir / f"{scene_name}_global_combo.ply",
+        "view0_combo_ply": output_dir / f"{scene_name}_view0_combo.ply",
+    }
+
+    write_colored_clouds([
+        ("aerial_world", aerial_world, (255, 80, 80)),
+    ], paths["aerial_world_ply"])
+    write_colored_clouds([
+        ("aerial_view0", aerial_view0, (255, 80, 80)),
+    ], paths["aerial_view0_ply"])
+    write_colored_clouds([
+        ("remote_global", remote_global, (80, 170, 255)),
+    ], paths["remote_global_ply"])
+    write_colored_clouds([
+        ("remote_view0", remote_view0, (80, 170, 255)),
+    ], paths["remote_view0_ply"])
+    write_colored_clouds([
+        ("aerial_world", aerial_world, (255, 80, 80)),
+        ("remote_global", remote_global, (80, 170, 255)),
+    ], paths["global_combo_ply"])
+    write_colored_clouds([
+        ("aerial_view0", aerial_view0, (255, 80, 80)),
+        ("remote_view0", remote_view0, (80, 170, 255)),
+    ], paths["view0_combo_ply"])
+    return {k: str(v) for k, v in paths.items()}
 
 def make_topdown_plot(clouds: list[tuple[str, np.ndarray]], out_path: Path, title: str) -> None:
     fig, axes = plt.subplots(1, len(clouds), figsize=(5 * len(clouds), 5), constrained_layout=True)
@@ -238,6 +307,15 @@ def main() -> None:
         ),
     }
 
+    ply_paths = export_alignment_plys(
+        args.output_dir,
+        scene_name,
+        aerial_world,
+        aerial_view0,
+        remote_global_pts,
+        remote_view0_pts,
+    )
+
     summary = {
         "scene_name": scene_name,
         "split": args.split,
@@ -250,29 +328,31 @@ def main() -> None:
             "remote_view0": cloud_stats(remote_view0_pts),
         },
         "nn_metrics": metrics,
+        "ply_paths": ply_paths,
     }
 
     summary_path = args.output_dir / f"{scene_name}_alignment_summary.json"
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    make_topdown_plot(
-        [
-            ("aerial_world", aerial_world),
-            ("remote_global", remote_global_pts),
-        ],
-        args.output_dir / f"{scene_name}_global_topdown.png",
-        f"{scene_name}: aerial world vs remote global",
-    )
-    make_topdown_plot(
-        [
-            ("aerial_view0", aerial_view0),
-            ("remote_global", remote_global_pts),
-            ("remote_view0", remote_view0_pts),
-        ],
-        args.output_dir / f"{scene_name}_view0_topdown.png",
-        f"{scene_name}: view0-frame test",
-    )
+    if not args.skip_plots:
+        make_topdown_plot(
+            [
+                ("aerial_world", aerial_world),
+                ("remote_global", remote_global_pts),
+            ],
+            args.output_dir / f"{scene_name}_global_topdown.png",
+            f"{scene_name}: aerial world vs remote global",
+        )
+        make_topdown_plot(
+            [
+                ("aerial_view0", aerial_view0),
+                ("remote_global", remote_global_pts),
+                ("remote_view0", remote_view0_pts),
+            ],
+            args.output_dir / f"{scene_name}_view0_topdown.png",
+            f"{scene_name}: view0-frame test",
+        )
 
     print(json.dumps(summary, indent=2))
     print(f"Saved summary to: {summary_path}")
