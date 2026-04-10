@@ -313,6 +313,8 @@ class RSPointmapHeightLoss(nn.Module):
         pointmap_loss_weight=1.0,
         height_loss_weight=0.1,
         compare_in_view0_frame=False,
+        detach_pose_for_view0_align=False,
+        pointmap_norm_mode=None,
     ):
         super().__init__()
         self.pointmap_criterion = pointmap_criterion or L1Loss(reduction="none")
@@ -320,6 +322,8 @@ class RSPointmapHeightLoss(nn.Module):
         self.pointmap_loss_weight = pointmap_loss_weight
         self.height_loss_weight = height_loss_weight
         self.compare_in_view0_frame = compare_in_view0_frame
+        self.detach_pose_for_view0_align = detach_pose_for_view0_align
+        self.pointmap_norm_mode = pointmap_norm_mode
 
     @staticmethod
     def _masked_mean(loss_map, mask):
@@ -330,7 +334,7 @@ class RSPointmapHeightLoss(nn.Module):
         return 0 * loss_map.sum()
 
     @staticmethod
-    def _get_pred_in_view0(aerial_preds):
+    def _get_pred_in_view0(aerial_preds, detach_pose_for_view0_align=False):
         if aerial_preds is None or len(aerial_preds) == 0:
             raise ValueError('compare_in_view0_frame=True requires aerial_preds context')
 
@@ -341,9 +345,33 @@ class RSPointmapHeightLoss(nn.Module):
         batch_size = ref_pred['cam_quats'].shape[0]
         pred_camera0 = torch.eye(4, device=ref_pred['cam_quats'].device).unsqueeze(0)
         pred_camera0 = pred_camera0.repeat(batch_size, 1, 1)
-        pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(ref_pred['cam_quats'].clone())
-        pred_camera0[..., :3, 3] = ref_pred['cam_trans'].clone()
+        cam_quats = ref_pred['cam_quats'].clone()
+        cam_trans = ref_pred['cam_trans'].clone()
+        if detach_pose_for_view0_align:
+            cam_quats = cam_quats.detach()
+            cam_trans = cam_trans.detach()
+        pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(cam_quats)
+        pred_camera0[..., :3, 3] = cam_trans
         return closed_form_pose_inverse(pred_camera0)
+
+    @staticmethod
+    def _normalize_pair(pred_pts3d, gt_pointmap, valid_mask, norm_mode):
+        if not norm_mode:
+            return pred_pts3d, gt_pointmap, None, None
+
+        pred_norm, pred_norm_factor = normalize_multiple_pointclouds(
+            [pred_pts3d],
+            [valid_mask],
+            norm_mode,
+            ret_factor=True,
+        )
+        gt_norm, gt_norm_factor = normalize_multiple_pointclouds(
+            [gt_pointmap],
+            [valid_mask],
+            norm_mode,
+            ret_factor=True,
+        )
+        return pred_norm, gt_norm, pred_norm_factor, gt_norm_factor
 
 
     def forward(self, gts, preds, **kwargs):
@@ -353,6 +381,9 @@ class RSPointmapHeightLoss(nn.Module):
         total_loss = None
         pointmap_losses = []
         pointmap_losses_weighted = []
+        pointmap_raw_losses = []
+        pred_pointmap_norm_factors = []
+        gt_pointmap_norm_factors = []
         height_losses = []
         height_losses_weighted = []
         pred_in_view0 = None
@@ -362,7 +393,9 @@ class RSPointmapHeightLoss(nn.Module):
             raise ValueError('Height supervision is not supported when compare_in_view0_frame=True. Use height_loss_weight=0.')
 
         if self.compare_in_view0_frame:
-            pred_in_view0 = self._get_pred_in_view0(aerial_preds)
+            pred_in_view0 = self._get_pred_in_view0(
+                aerial_preds, detach_pose_for_view0_align=self.detach_pose_for_view0_align
+            )
 
         for gt, pred in zip(gts, preds):
             pred_pts3d = pred['pts3d'].float()
@@ -374,7 +407,18 @@ class RSPointmapHeightLoss(nn.Module):
             gt_pointmap = gt[gt_pointmap_key].float()
             valid_mask = gt['remote_valid_mask'].bool()
 
-            pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
+            raw_pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
+            raw_pointmap_loss = self._masked_mean(raw_pointmap_loss_map, valid_mask)
+            pointmap_raw_losses.append(float(raw_pointmap_loss))
+
+            pred_pts3d_for_loss, gt_pointmap_for_loss, pred_norm_factor, gt_norm_factor = self._normalize_pair(
+                pred_pts3d, gt_pointmap, valid_mask, self.pointmap_norm_mode
+            )
+            if pred_norm_factor is not None:
+                pred_pointmap_norm_factors.append(float(pred_norm_factor.mean()))
+                gt_pointmap_norm_factors.append(float(gt_norm_factor.mean()))
+
+            pointmap_loss_map = self.pointmap_criterion(pred_pts3d_for_loss, gt_pointmap_for_loss)
             pointmap_loss = self._masked_mean(pointmap_loss_map, valid_mask)
             pointmap_losses.append(float(pointmap_loss))
             pointmap_losses_weighted.append(float(self.pointmap_loss_weight * pointmap_loss))
@@ -399,6 +443,10 @@ class RSPointmapHeightLoss(nn.Module):
         if pointmap_losses:
             details['rs_pointmap_loss'] = sum(pointmap_losses) / len(pointmap_losses)
             details['rs_pointmap_loss_weighted'] = sum(pointmap_losses_weighted) / len(pointmap_losses_weighted)
+            details['rs_pointmap_loss_raw_metric'] = sum(pointmap_raw_losses) / len(pointmap_raw_losses)
+        if pred_pointmap_norm_factors:
+            details['rs_pointmap_pred_norm_factor'] = sum(pred_pointmap_norm_factors) / len(pred_pointmap_norm_factors)
+            details['rs_pointmap_gt_norm_factor'] = sum(gt_pointmap_norm_factors) / len(gt_pointmap_norm_factors)
         if height_losses:
             details['rs_height_loss'] = sum(height_losses) / len(height_losses)
             details['rs_height_loss_weighted'] = sum(height_losses_weighted) / len(height_losses_weighted)
@@ -422,6 +470,8 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         pointmap_loss_weight=1.0,
         height_loss_weight=0.1,
         top_n_percent=5.0,
+        compare_in_view0_frame=False,
+        detach_pose_for_view0_align=False,
     ):
         super().__init__()
         self.pointmap_criterion = pointmap_criterion or L1Loss(reduction="none")
@@ -429,10 +479,33 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         self.pointmap_loss_weight = pointmap_loss_weight
         self.height_loss_weight = height_loss_weight
         self.compare_in_view0_frame = compare_in_view0_frame
+        self.detach_pose_for_view0_align = detach_pose_for_view0_align
         self.top_n_percent = float(top_n_percent)
         self.bottom_n_percent = 100.0 - self.top_n_percent
         if not (0.0 <= self.top_n_percent < 100.0):
             raise ValueError(f"top_n_percent must be in [0, 100), got {top_n_percent}")
+
+    @staticmethod
+    def _get_pred_in_view0(aerial_preds, detach_pose_for_view0_align=False):
+        if aerial_preds is None or len(aerial_preds) == 0:
+            raise ValueError('compare_in_view0_frame=True requires aerial_preds context')
+
+        ref_pred = aerial_preds[0]
+        if 'cam_quats' not in ref_pred or 'cam_trans' not in ref_pred:
+            raise ValueError('Remote view0 alignment requires cam_quats and cam_trans in the reference aerial prediction')
+
+        batch_size = ref_pred['cam_quats'].shape[0]
+        pred_camera0 = torch.eye(4, device=ref_pred['cam_quats'].device).unsqueeze(0)
+        pred_camera0 = pred_camera0.repeat(batch_size, 1, 1)
+        cam_quats = ref_pred['cam_quats'].clone()
+        cam_trans = ref_pred['cam_trans'].clone()
+        if detach_pose_for_view0_align:
+            cam_quats = cam_quats.detach()
+            cam_trans = cam_trans.detach()
+        pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(cam_quats)
+        pred_camera0[..., :3, 3] = cam_trans
+        return closed_form_pose_inverse(pred_camera0)
+
 
     @staticmethod
     def _masked_mean(loss_map, mask):
@@ -484,7 +557,9 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
             raise ValueError('Height supervision is not supported when compare_in_view0_frame=True. Use height_loss_weight=0.')
 
         if self.compare_in_view0_frame:
-            pred_in_view0 = self._get_pred_in_view0(aerial_preds)
+            pred_in_view0 = self._get_pred_in_view0(
+                aerial_preds, detach_pose_for_view0_align=self.detach_pose_for_view0_align
+            )
 
         for gt, pred in zip(gts, preds):
             pred_pts3d = pred['pts3d'].float()

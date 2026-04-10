@@ -6,6 +6,8 @@ BATCH_SIZE=${BATCH_SIZE:-2}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-0.1}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
+REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-true}
+REMOTE_DETACH_POSE_ALIGN=${REMOTE_DETACH_POSE_ALIGN:-false}
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu'}
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
@@ -29,6 +31,8 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
     loss=pi3_loss_rs_joint \
     loss.remote_pointmap_loss_weight=${LAMBDA_REMOTE_PM} \
     loss.remote_height_loss_weight=${LAMBDA_REMOTE_H} \
+    loss.remote_compare_in_view0_frame=${REMOTE_COMPARE_IN_VIEW0} \
+    loss.remote_detach_pose_for_view0_align=${REMOTE_DETACH_POSE_ALIGN} \
     model=pi3 \
     model.model_config.load_pretrained_weights=true \
     train_params=pi3_finetune \

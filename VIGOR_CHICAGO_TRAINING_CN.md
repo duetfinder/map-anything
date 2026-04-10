@@ -877,6 +877,37 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
 
 所以，`P2` 当前已经从“纯定义阶段”推进到了“最小 debug 入口已实际跑通”的阶段。当前已验证：2 GPU、1 epoch、`Pi3 + pretrained + RSPointmapHeightLoss` 可以完成 train loop、记录 loss，并正常保存 `checkpoint-last.pth` 与 `checkpoint-final.pth`。现阶段的状态不再是“只剩骨架”，而是“有可运行的 RS-only smoke 起点”，后续主要工作转为补更正式的 P2 配置与 loss ablation。
 
+
+## 10. P3 remote pointmap loss 尺度修正
+
+2026-04-10 更新：`P3` 的 remote pointmap loss 已从绝对米制 L1 改为可选的归一化尺度 L1，默认配置为 `remote_pointmap_norm_mode: avg_dis`。
+
+背景问题：`P3` 的 aerial 分支沿用官方 Pi3 loss，即 `FactoredGeometryRegr3DPlusNormalGMLoss(..., norm_mode='avg_dis', ...)`。这意味着 aerial 几何监督本身是尺度归一化口径。此前 remote 分支直接使用 `pred_remote_pts3d` 对 `remote_pointmap` 做米制 L1，导致同一个 joint 模型同时受到两套尺度约束：remote 被拉向米制，aerial 仍可能停留在归一化尺度。实际现象是微调后 remote 输出接近米制，而 aerial 输出尺度接近归一化范围，最终 PLY 中二者严重不匹配。
+
+当前实现：
+
+- 代码入口：[mapanything/train/losses.py](mapanything/train/losses.py) 中的 `RSPointmapHeightLoss(pointmap_norm_mode=...)`
+- 配置入口：[configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
+- 默认：`remote_pointmap_norm_mode: avg_dis`
+- 归一化方式：`pred_remote` 和 `gt_remote` 分别按各自有效点的 `avg_dis` 归一化，再计算 pointmap L1。这与 Pi3 aerial loss 的非米制尺度口径保持一致。
+
+日志字段解释：
+
+- `rs_pointmap_loss`：归一化后的 remote pointmap loss，参与反传。
+- `rs_pointmap_loss_weighted`：乘以 `remote_pointmap_loss_weight` 后的 remote loss，参与 total loss。
+- `rs_pointmap_loss_raw_metric`：未归一化的米制 L1，只用于诊断，不参与反传。
+- `rs_pointmap_pred_norm_factor`：remote prediction 的归一化因子。
+- `rs_pointmap_gt_norm_factor`：remote GT 的归一化因子。
+
+验证 smoke：
+
+- 输出目录：[p3_ablation_remote_norm_smoke](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_ablation_remote_norm_smoke)
+- 运行形态：`TRAIN_SETS=4 / VAL_SETS=4 / TEST_SETS=4 / NUM_VIEWS=2 / BATCH_SIZE=2 / 2GPU / 1 epoch`
+- 首个 train step：`aerial_loss≈11.8561`, `remote_loss≈0.0211`, `rs_pointmap_loss≈0.2109`, `rs_pointmap_loss_raw_metric≈208.4891`, `pred_norm_factor≈0.7956`, `gt_norm_factor≈134.0347`
+- 验证阶段首个 step：`aerial_loss≈1.7271`, `remote_loss≈0.0257`, `rs_pointmap_loss≈0.2572`, `rs_pointmap_loss_raw_metric≈241.3215`
+
+实验含义：新的 remote loss 已经不再把米制尺度直接压进 total loss。`remote_pointmap_loss_weight=0.1` 在归一化后明显偏弱，下一步需要重新扫权重，建议从 `0.5 / 1.0 / 2.0` 开始，而不是沿用米制 L1 下的 `0.02 / 0.05 / 0.1`。
+
 ## 11. 模型选择建议
 
 当前候选模型不只是 `MapAnything`，还包括 `da3 / pi3 / vggt`。从工程角度看，它们差别是比较大的。

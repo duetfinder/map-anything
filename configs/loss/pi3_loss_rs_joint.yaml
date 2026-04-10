@@ -2,6 +2,9 @@ remote_pointmap_loss_weight: 0.1
 remote_height_loss_weight: 0.0
 test_remote_pointmap_loss_weight: ${loss.remote_pointmap_loss_weight}
 test_remote_height_loss_weight: 0.0
+remote_compare_in_view0_frame: true
+remote_detach_pose_for_view0_align: false
+remote_pointmap_norm_mode: avg_dis
 
 train_criterion: >
   JointAerialRSLoss(
@@ -28,7 +31,9 @@ train_criterion: >
       height_criterion=L1Loss(reduction='none'),
       pointmap_loss_weight=${loss.remote_pointmap_loss_weight},
       height_loss_weight=${loss.remote_height_loss_weight},
-      compare_in_view0_frame=True
+      compare_in_view0_frame=${loss.remote_compare_in_view0_frame},
+      detach_pose_for_view0_align=${loss.remote_detach_pose_for_view0_align},
+      pointmap_norm_mode='${loss.remote_pointmap_norm_mode}'
     )
   )
 test_criterion: >
@@ -56,6 +61,8 @@ test_criterion: >
       height_criterion=L1Loss(reduction='none'),
       pointmap_loss_weight=${loss.test_remote_pointmap_loss_weight},
       height_loss_weight=${loss.test_remote_height_loss_weight},
-      compare_in_view0_frame=True
+      compare_in_view0_frame=${loss.remote_compare_in_view0_frame},
+      detach_pose_for_view0_align=${loss.remote_detach_pose_for_view0_align},
+      pointmap_norm_mode='${loss.remote_pointmap_norm_mode}'
     )
   )
