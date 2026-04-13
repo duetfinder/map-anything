@@ -7,6 +7,8 @@ This script is intended to test the hypothesis:
     remote_global ~= aerial_world
 and therefore:
     geotrf(inv(view0_pose), remote_global) ~= aerial_view0
+
+PYTHONPATH=. python scripts/debug_vigor_chicago_joint_alignment.py --scene-name location_1
 """
 
 from __future__ import annotations
