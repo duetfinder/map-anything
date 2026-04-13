@@ -44,10 +44,17 @@ def required_rs_paths(provider_dir: Path) -> dict[str, Path]:
     return {
         'remote_image_path': provider_dir / 'image.png',
         'remote_pointmap_path': provider_dir / 'pixel_to_point_map.npz',
-        'remote_valid_mask_path': provider_dir / 'valid_mask.npy',
-        'remote_height_map_path': provider_dir / 'height_map.npy',
         'remote_info_path': provider_dir / 'info.json',
     }
+
+
+
+
+def load_pointmap_modalities(pointmap_path: Path):
+    pointmap = np.load(pointmap_path)['xyz'].astype(np.float32)
+    valid_mask = np.isfinite(pointmap).all(axis=-1)
+    height_map = pointmap[..., 2].astype(np.float32)
+    return pointmap, valid_mask, height_map
 
 
 def pil_resample_mode(mode: str):

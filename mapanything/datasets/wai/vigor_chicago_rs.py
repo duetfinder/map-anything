@@ -24,6 +24,7 @@ from PIL import Image
 from mapanything.datasets.base.easy_dataset import EasyDataset
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
     available_providers,
+    load_pointmap_modalities,
     load_scene_list,
     make_rng_seed,
     normalize_providers,
@@ -166,9 +167,9 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
         sample = self.base_samples[base_idx]
 
         remote_image = Image.open(sample['remote_image_path']).convert('RGB')
-        remote_pointmap = np.load(sample['remote_pointmap_path'])['xyz'].astype(np.float32)
-        remote_valid_mask = np.load(sample['remote_valid_mask_path']).astype(bool)
-        remote_height_map = np.load(sample['remote_height_map_path']).astype(np.float32)
+        remote_pointmap, remote_valid_mask, remote_height_map = load_pointmap_modalities(
+            Path(sample['remote_pointmap_path'])
+        )
 
         rng = np.random.default_rng(
             make_rng_seed(self.split, base_idx, aug_idx, self._seed_offset)

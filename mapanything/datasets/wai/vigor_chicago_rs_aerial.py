@@ -19,6 +19,7 @@ import torchvision.transforms as tvf
 from PIL import Image
 
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
+    load_pointmap_modalities,
     make_rng_seed,
     normalize_providers,
     preprocess_rs_modalities,
@@ -113,15 +114,11 @@ class VigorChicagoRSAerial(torch.utils.data.Dataset):
 
         remote_image_path = Path(manifest['remote_image_path'])
         remote_pointmap_path = Path(manifest['remote_pointmap_path'])
-        remote_valid_mask_path = Path(manifest['remote_valid_mask_path'])
-        remote_height_map_path = Path(manifest['remote_height_map_path'])
         remote_info_path = Path(manifest['remote_info_path'])
 
         required_paths = [
             remote_image_path,
             remote_pointmap_path,
-            remote_valid_mask_path,
-            remote_height_map_path,
             remote_info_path,
         ]
         missing = [str(path) for path in required_paths if not path.exists()]
@@ -131,9 +128,9 @@ class VigorChicagoRSAerial(torch.utils.data.Dataset):
             raise FileNotFoundError(f'Missing remote files for benchmark sample: {missing}')
 
         remote_image = Image.open(remote_image_path).convert('RGB')
-        remote_pointmap = np.load(remote_pointmap_path)['xyz'].astype(np.float32)
-        remote_valid_mask = np.load(remote_valid_mask_path).astype(bool)
-        remote_height_map = np.load(remote_height_map_path).astype(np.float32)
+        remote_pointmap, remote_valid_mask, remote_height_map = load_pointmap_modalities(
+            remote_pointmap_path
+        )
         with open(remote_info_path, 'r', encoding='utf-8') as f:
             remote_info = json.load(f)
 

@@ -51,11 +51,9 @@ def build_scene_manifest(
             raise FileNotFoundError(f"Missing remote image: {remote_image_path}")
 
     pointmap_path = remote_scene_dir / "pixel_to_point_map.npz"
-    valid_mask_path = remote_scene_dir / "valid_mask.npy"
-    height_map_path = remote_scene_dir / "height_map.npy"
     info_path = remote_scene_dir / "info.json"
 
-    required_paths = [pointmap_path, valid_mask_path, height_map_path, info_path]
+    required_paths = [pointmap_path, info_path]
     missing_paths = [str(path) for path in required_paths if not path.exists()]
     if missing_paths:
         raise FileNotFoundError(
@@ -66,19 +64,19 @@ def build_scene_manifest(
     if "xyz" not in pointmap_npz.files:
         raise KeyError(f"{pointmap_path} does not contain key 'xyz'")
     xyz = pointmap_npz["xyz"]
-    valid_mask = np.load(valid_mask_path)
-    height_map = np.load(height_map_path)
+    valid_mask = np.isfinite(xyz).all(axis=-1)
+    height_map = xyz[..., 2]
     remote_image = np.array(Image.open(remote_image_path))
 
     if xyz.ndim != 3 or xyz.shape[-1] != 3:
         raise ValueError(f"Unexpected pointmap shape for {pointmap_path}: {xyz.shape}")
     if valid_mask.shape != xyz.shape[:2]:
         raise ValueError(
-            f"valid_mask shape {valid_mask.shape} does not match pointmap shape {xyz.shape[:2]} for {scene_name}"
+            f"Derived valid_mask shape {valid_mask.shape} does not match pointmap shape {xyz.shape[:2]} for {scene_name}"
         )
     if height_map.shape != xyz.shape[:2]:
         raise ValueError(
-            f"height_map shape {height_map.shape} does not match pointmap shape {xyz.shape[:2]} for {scene_name}"
+            f"Derived height_map shape {height_map.shape} does not match pointmap shape {xyz.shape[:2]} for {scene_name}"
         )
     if remote_image.shape[:2] != xyz.shape[:2]:
         raise ValueError(
@@ -96,8 +94,6 @@ def build_scene_manifest(
         "remote_scene_dir": str(remote_scene_dir),
         "remote_image_path": str(remote_image_path),
         "remote_pointmap_path": str(pointmap_path),
-        "remote_valid_mask_path": str(valid_mask_path),
-        "remote_height_map_path": str(height_map_path),
         "remote_info_path": str(info_path),
         "remote_image_hw": list(remote_image.shape[:2]),
         "remote_pointmap_hw": list(xyz.shape[:2]),

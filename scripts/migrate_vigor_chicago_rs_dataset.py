@@ -15,8 +15,6 @@ SCENE_LEVEL_MAP_FILES = [
 
 CORE_PROVIDER_FILES = [
     "pixel_to_point_map.npz",
-    "valid_mask.npy",
-    "height_map.npy",
     "info.json",
 ]
 
@@ -247,8 +245,6 @@ def migrate_location(
                 "projection_type": "rs_global_projective",
                 "image_path": f"{location}/{provider}/image.png",
                 "pointmap_path": f"{location}/{provider}/pixel_to_point_map.npz",
-                "valid_mask_path": f"{location}/{provider}/valid_mask.npy",
-                "height_map_path": f"{location}/{provider}/height_map.npy",
                 "info_path": f"{location}/{provider}/info.json",
                 "meters_per_pixel": info.get("meters_per_pixel"),
                 "coverage_meters": info.get("coverage_meters"),
@@ -280,10 +276,9 @@ def build_readme() -> str:
         "Layout:",
         "- `location_x/` groups one Chicago scene.",
         "- `location_x/<provider>/image.png` stores the remote image.",
-        "- `location_x/<provider>/pixel_to_point_map.npz` stores the per-pixel global XYZ map.",
-        "- `location_x/<provider>/valid_mask.npy` stores valid geometry pixels.",
-        "- `location_x/<provider>/height_map.npy` stores per-pixel height.",
-        "- `location_x/<provider>/info.json` stores provider metadata.",
+        "- `location_x/<provider>/pixel_to_point_map.npz` stores the sparse per-pixel global XYZ map.",
+        "- `location_x/<provider>/info.json` stores provider metadata used to interpret the pointmap.",
+        "- valid mask and height are derived at load time from `pixel_to_point_map.npz`.",
         "- `dataset_meta.json` summarizes the migrated dataset.",
         "- `providers.json` lists provider-level metadata.",
         "",
@@ -344,7 +339,7 @@ def main() -> None:
         "num_provider_entries_written": stats.num_provider_entries_written,
         "num_provider_entries_skipped": stats.num_provider_entries_skipped,
         "providers": provider_names,
-        "layout_version": 1,
+        "layout_version": 2,
         "location_summaries_path": "location_manifest.json",
     }
     providers_meta = {

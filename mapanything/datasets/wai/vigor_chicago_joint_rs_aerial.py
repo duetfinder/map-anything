@@ -20,6 +20,7 @@ from PIL import Image
 from mapanything.datasets.wai.vigor_chicago import VigorChicagoWAI
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
     available_providers,
+    load_pointmap_modalities,
     normalize_providers,
     preprocess_rs_modalities,
 )
@@ -77,8 +78,6 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
                 required = [
                     remote_scene_dir / 'image.png',
                     remote_scene_dir / 'pixel_to_point_map.npz',
-                    remote_scene_dir / 'valid_mask.npy',
-                    remote_scene_dir / 'height_map.npy',
                     remote_scene_dir / 'info.json',
                 ]
                 missing = [str(path) for path in required if not path.exists()]
@@ -110,11 +109,9 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         remote_provider = remote_info['remote_provider']
 
         remote_image = Image.open(remote_scene_dir / 'image.png').convert('RGB')
-        remote_pointmap = np.load(remote_scene_dir / 'pixel_to_point_map.npz')['xyz'].astype(
-            np.float32
+        remote_pointmap, remote_valid_mask, remote_height_map = load_pointmap_modalities(
+            remote_scene_dir / 'pixel_to_point_map.npz'
         )
-        remote_valid_mask = np.load(remote_scene_dir / 'valid_mask.npy').astype(bool)
-        remote_height_map = np.load(remote_scene_dir / 'height_map.npy').astype(np.float32)
 
         with open(remote_scene_dir / 'info.json', 'r', encoding='utf-8') as f:
             info = json.load(f)
