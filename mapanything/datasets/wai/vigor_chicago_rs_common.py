@@ -2,23 +2,86 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+import re
 
 import numpy as np
 import torch
 from PIL import Image
 
 
-def scene_sort_key(name: str) -> tuple[int, str]:
+def split_scene_id(scene_name: str) -> tuple[str | None, str]:
+    scene_name = str(scene_name)
+    if '__' in scene_name:
+        city, local_name = scene_name.split('__', 1)
+        return city, local_name
+    return None, scene_name
+
+
+def build_scene_id(city: str | None, local_name: str) -> str:
+    city = None if city is None else str(city).strip()
+    local_name = str(local_name).strip()
+    if not city:
+        return local_name
+    return f'{city}__{local_name}'
+
+
+def scene_sort_key(name: str) -> tuple[str, int, str]:
+    city, local_name = split_scene_id(name)
     try:
-        return (int(name.split('_')[-1]), name)
+        index = int(local_name.split('_')[-1])
     except Exception:
-        return (10**12, name)
+        index = 10**12
+    return ('' if city is None else city, index, local_name)
 
 
 def load_scene_list(path: Path) -> list[str]:
     if not path.exists():
         raise FileNotFoundError(f"Missing scene list: {path}")
     return [str(x) for x in np.load(path, allow_pickle=True).tolist()]
+
+
+def scene_list_candidates(split: str) -> list[str]:
+    split = str(split)
+    return [
+        f'Crossview_scene_list_{split}.npy',
+    ]
+
+
+def resolve_scene_list_path(metadata_dir: Path, split: str) -> Path:
+    for filename in scene_list_candidates(split):
+        candidate = metadata_dir / split / filename
+        if candidate.exists():
+            return candidate
+    return metadata_dir / split / scene_list_candidates(split)[0]
+
+
+def normalize_cities(cities):
+    if cities is None:
+        return None
+    if isinstance(cities, str):
+        cities = cities.strip()
+        if not cities or cities.lower() == 'all':
+            return None
+        result = [city.strip() for city in re.split(r'[,:]', cities) if city.strip()]
+        return result or None
+    if isinstance(cities, Iterable):
+        result = [str(city).strip() for city in cities if str(city).strip()]
+        return result or None
+    raise TypeError(f'Unsupported cities value: {cities!r}')
+
+
+def scene_matches_cities(scene_name: str, cities) -> bool:
+    normalized_cities = normalize_cities(cities)
+    if normalized_cities is None:
+        return True
+    city, _ = split_scene_id(scene_name)
+    if city is None:
+        return 'chicago' in normalized_cities
+    return city in set(normalized_cities)
+
+
+def filter_scene_names_by_cities(scene_names, cities):
+    return [scene_name for scene_name in scene_names if scene_matches_cities(scene_name, cities)]
 
 
 def normalize_providers(providers):

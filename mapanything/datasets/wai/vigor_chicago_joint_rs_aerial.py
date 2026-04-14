@@ -35,6 +35,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         remote_providers=None,
         remote_resolution=(518, 518),
         remote_transform='imgnorm',
+        cities=None,
         skip_missing_remote=False,
         remote_crop_mode='none',
         remote_crop_scale_range=(1.0, 1.0),
@@ -48,6 +49,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             normalized_providers = normalize_providers(remote_provider)
         self.remote_providers = normalized_providers
         self.remote_resolution = tuple(remote_resolution)
+        self.cities = cities
         self.skip_missing_remote = skip_missing_remote
         self.remote_crop_mode = remote_crop_mode
         self.remote_crop_scale_range = tuple(remote_crop_scale_range)
@@ -59,7 +61,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         else:
             raise ValueError(f'Unsupported remote_transform: {remote_transform}')
 
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, cities=cities, **kwargs)
 
         available_scenes = []
         self.remote_scene_info = {}

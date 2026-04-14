@@ -23,6 +23,7 @@ vigor_chicago_joint_rs_aerial:
         data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.train.data_norm_type}',
         ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.train.dataset_metadata_dir}',
+        cities=${dataset.vigor_chicago_joint_rs_aerial.train.cities},
         overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.train.overfit_num_sets},
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.train.variable_num_views},
         num_views=${dataset.vigor_chicago_joint_rs_aerial.train.num_views},
@@ -42,13 +43,13 @@ vigor_chicago_joint_rs_aerial:
     aug_crop: 16
     transform: 'colorjitter+grayscale+gaublur'
     data_norm_type: ${model.data_norm_type}
-    ROOT: ${root_data_dir}/vigor_chicago_wai
-    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    ROOT: ${root_data_dir}/Crossview_wai
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
     overfit_num_sets: null
     variable_num_views: ${dataset.train.variable_num_views}
     num_views: ${dataset.num_views}
     covisibility_thres: 0.05
-    remote_ROOT: ${root_data_dir}/vigor_chicago_rs
+    remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
     remote_resolution: ${dataset.resolution_train}
     remote_transform: 'imgnorm'
@@ -57,6 +58,7 @@ vigor_chicago_joint_rs_aerial:
     remote_crop_scale_range: [1.0, 1.0]
     remote_image_resize_mode: 'nearest'
     remote_label_resize_mode: 'nearest'
+    cities: []
   val:
     dataset_str:
       "VigorChicagoJointRSAerial(
@@ -68,6 +70,7 @@ vigor_chicago_joint_rs_aerial:
         data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.val.data_norm_type}',
         ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.val.dataset_metadata_dir}',
+        cities=${dataset.vigor_chicago_joint_rs_aerial.val.cities},
         overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.val.overfit_num_sets},
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.val.variable_num_views},
         num_views=${dataset.vigor_chicago_joint_rs_aerial.val.num_views},
@@ -87,13 +90,13 @@ vigor_chicago_joint_rs_aerial:
     seed: 777
     transform: 'imgnorm'
     data_norm_type: ${model.data_norm_type}
-    ROOT: ${root_data_dir}/vigor_chicago_wai
-    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    ROOT: ${root_data_dir}/Crossview_wai
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
     overfit_num_sets: null
     variable_num_views: ${dataset.val.variable_num_views}
     num_views: ${dataset.num_views}
     covisibility_thres: 0.05
-    remote_ROOT: ${root_data_dir}/vigor_chicago_rs
+    remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'
@@ -102,6 +105,7 @@ vigor_chicago_joint_rs_aerial:
     remote_crop_scale_range: [1.0, 1.0]
     remote_image_resize_mode: 'nearest'
     remote_label_resize_mode: 'nearest'
+    cities: []
   test:
     dataset_str:
       "VigorChicagoJointRSAerial(
@@ -113,6 +117,7 @@ vigor_chicago_joint_rs_aerial:
         data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.test.data_norm_type}',
         ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.test.dataset_metadata_dir}',
+        cities=${dataset.vigor_chicago_joint_rs_aerial.test.cities},
         overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.test.overfit_num_sets},
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.test.variable_num_views},
         num_views=${dataset.vigor_chicago_joint_rs_aerial.test.num_views},
@@ -132,13 +137,13 @@ vigor_chicago_joint_rs_aerial:
     seed: 777
     transform: 'imgnorm'
     data_norm_type: ${model.data_norm_type}
-    ROOT: ${root_data_dir}/vigor_chicago_wai
-    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+    ROOT: ${root_data_dir}/Crossview_wai
+    dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
     overfit_num_sets: null
     variable_num_views: ${dataset.test.variable_num_views}
     num_views: ${dataset.num_views}
     covisibility_thres: 0.05
-    remote_ROOT: ${root_data_dir}/vigor_chicago_rs
+    remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'
@@ -147,3 +152,4 @@ vigor_chicago_joint_rs_aerial:
     remote_crop_scale_range: [1.0, 1.0]
     remote_image_resize_mode: 'nearest'
     remote_label_resize_mode: 'nearest'
+    cities: []

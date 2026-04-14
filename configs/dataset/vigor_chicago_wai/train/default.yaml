@@ -8,6 +8,7 @@ dataset_str:
     data_norm_type='${dataset.vigor_chicago_wai.train.data_norm_type}',
     ROOT='${dataset.vigor_chicago_wai.train.ROOT}',
     dataset_metadata_dir='${dataset.vigor_chicago_wai.train.dataset_metadata_dir}',
+    cities=${dataset.vigor_chicago_wai.train.cities},
     overfit_num_sets=${dataset.vigor_chicago_wai.train.overfit_num_sets},
     variable_num_views=${dataset.vigor_chicago_wai.train.variable_num_views},
     num_views=${dataset.vigor_chicago_wai.train.num_views},
@@ -18,9 +19,10 @@ principal_point_centered: ${dataset.principal_point_centered}
 aug_crop: 16
 transform: 'colorjitter+grayscale+gaublur'
 data_norm_type: ${model.data_norm_type}
-ROOT: ${root_data_dir}/vigor_chicago_wai
-dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/vigor_chicago
+ROOT: ${root_data_dir}/Crossview_wai
+dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
 overfit_num_sets: null
 variable_num_views: ${dataset.train.variable_num_views}
 num_views: ${dataset.num_views}
 covisibility_thres: 0.05
+cities: []

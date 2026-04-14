@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Convert VIGOR Chicago reconstruction outputs into a minimal WAI dataset.
+Convert VIGOR reconstruction outputs into a minimal WAI dataset.
 
 Each source scene is expected to look like:
     location_x/
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shutil
 from pathlib import Path
@@ -33,17 +32,16 @@ def natural_key(name: str) -> list[object]:
 
 
 def copy_file(src: Path, dst: Path) -> None:
-    """Copy a file from source to destination, creating parent directories if needed."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         dst.unlink()
-    shutil.copy2(src, dst)  # copy2 preserves metadata
+    shutil.copy2(src, dst)
 
 
 def build_scene_meta(scene_name: str, frames: list[dict], scene_modalities: dict | None = None) -> dict:
     return {
         "scene_name": scene_name,
-        "dataset_name": "vigor_chicago",
+        "dataset_name": "vigor",
         "version": "0.1",
         "shared_intrinsics": False,
         "camera_model": "PINHOLE",
@@ -58,15 +56,13 @@ def build_scene_meta(scene_name: str, frames: list[dict], scene_modalities: dict
     }
 
 
-def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool) -> dict[str, int]:
-    scene_name = scene_dir.name
+def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool, city: str | None = None) -> dict[str, int | str | None]:
+    local_scene_name = scene_dir.name
+    scene_name = f"{city}__{local_scene_name}" if city else local_scene_name
     target_scene_root = target_root / scene_name
     target_scene_root.mkdir(parents=True, exist_ok=True)
 
-    frame_stems = sorted(
-        {path.stem for path in scene_dir.glob("*.jpg")},
-        key=natural_key,
-    )
+    frame_stems = sorted({path.stem for path in scene_dir.glob("*.jpg")}, key=natural_key)
     if not frame_stems:
         raise ValueError(f"No JPG frames found in {scene_dir}")
 
@@ -78,7 +74,7 @@ def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool) -> dict[s
 
         if not image_src.exists() or not depth_src.exists() or not camera_src.exists():
             raise FileNotFoundError(
-                f"Missing modality for frame {frame_stem} in scene {scene_name}"
+                f"Missing modality for frame {frame_stem} in scene {local_scene_name}"
             )
 
         camera_data = np.load(camera_src)
@@ -123,7 +119,12 @@ def convert_scene(scene_dir: Path, target_root: Path, overwrite: bool) -> dict[s
     with open(target_scene_root / "scene_meta.json", "w", encoding="utf-8") as f:
         json.dump(scene_meta, f, indent=2)
 
-    return {"scene_name": scene_name, "num_frames": len(wai_frames)}
+    return {
+        "scene_name": scene_name,
+        "local_scene_name": local_scene_name,
+        "city": city,
+        "num_frames": len(wai_frames),
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,14 +132,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source_root",
         type=Path,
-        default=Path(
-            "/root/autodl-tmp/outputs/experiments/exp_001_reconstrc/vigor_chicago_processed"
-        ),
+        default=Path("/root/autodl-tmp/outputs/experiments/exp_001_reconstrc/vigor_chicago_processed"),
     )
+    parser.add_argument(
+        "--source_parent",
+        type=Path,
+        default=Path("/root/autodl-tmp/outputs/experiments/exp_001_reconstrc"),
+    )
+    parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument(
         "--target_root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_wai"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_wai"),
     )
     parser.add_argument(
         "--max_locations",
@@ -156,20 +161,32 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    scene_dirs = sorted(
-        [path for path in args.source_root.iterdir() if path.is_dir()],
-        key=lambda path: natural_key(path.name),
-    )
-    if args.max_locations is not None:
-        scene_dirs = scene_dirs[: args.max_locations]
+    if args.cities:
+        source_sets = []
+        for city in args.cities:
+            city = str(city).strip()
+            if not city:
+                continue
+            source_sets.append((city, args.source_parent / f"vigor_{city}_processed"))
+    else:
+        source_sets = [(None, args.source_root)]
 
     args.target_root.mkdir(parents=True, exist_ok=True)
     stats = []
-    for scene_dir in scene_dirs:
-        stats.append(convert_scene(scene_dir, args.target_root, args.overwrite))
+    for city, source_root in source_sets:
+        scene_dirs = sorted(
+            [path for path in source_root.iterdir() if path.is_dir()],
+            key=lambda path: natural_key(path.name),
+        )
+        if args.max_locations is not None:
+            scene_dirs = scene_dirs[: args.max_locations]
+        for scene_dir in scene_dirs:
+            stats.append(convert_scene(scene_dir, args.target_root, args.overwrite, city=city))
 
     summary = {
         "source_root": str(args.source_root),
+        "source_parent": str(args.source_parent),
+        "cities": args.cities,
         "target_root": str(args.target_root),
         "num_scenes": len(stats),
         "num_frames_total": int(sum(item["num_frames"] for item in stats)),

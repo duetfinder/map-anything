@@ -1,5 +1,8 @@
 # VIGOR Chicago 训练说明
 
+说明：本文档保留历史训练记录。当前四城正式数据集组织、默认目录命名、split/benchmark metadata、covisibility 生成流程请优先查看：[VIGOR_MULTICITY_DATASET_CN.md](VIGOR_MULTICITY_DATASET_CN.md)。
+补充：当前 `Crossview` split 在多城市模式下使用“每城市配额”规则，例如四城市配置 `train_scenes=40, val_scenes=5, test_scenes=5` 表示每个城市各取 `40/5/5`。
+
 说明：本文档中的文件链接统一使用相对于当前 Markdown 文件的相对路径，不使用绝对路径。
 
 本文档只记录 `VIGOR Chicago` 在 `Models/map-anything` 中的训练相关内容，与 benchmark 设计、RS-Aerial 指标定义等内容拆开维护。

@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_wai"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_wai"),
     )
     parser.add_argument(
         "--scene",

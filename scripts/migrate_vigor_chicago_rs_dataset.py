@@ -41,26 +41,39 @@ class MigrationStats:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Migrate VIGOR Chicago remote-sensing data into a unified dataset root."
+        description="Migrate VIGOR remote-sensing data into a unified dataset root."
     )
     parser.add_argument(
         "--geometry-root",
         type=Path,
         default=Path("/root/autodl-tmp/outputs/experiments/exp_005_map_points_generate/vigor/chicago"),
-        help="Source root containing per-location/provider geometry products.",
+        help="Single-city source root containing per-location/provider geometry products.",
+    )
+    parser.add_argument(
+        "--geometry-parent",
+        type=Path,
+        default=Path("/root/autodl-tmp/outputs/experiments/exp_005_map_points_generate/vigor"),
+        help="Parent directory containing one geometry root per city.",
     )
     parser.add_argument(
         "--map-root",
         type=Path,
         default=Path("/root/autodl-tmp/dataset/Vigor/map/chicago_subset_2000"),
-        help="Source root containing per-location satellite map images.",
+        help="Single-city source root containing per-location satellite map images.",
+    )
+    parser.add_argument(
+        "--map-parent",
+        type=Path,
+        default=Path("/root/autodl-tmp/dataset/Vigor/map"),
+        help="Parent directory containing one map root per city.",
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_rs"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_rs"),
         help="Target unified dataset root.",
     )
+    parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument(
         "--mode",
         choices=["symlink", "hardlink", "copy"],
@@ -71,19 +84,19 @@ def parse_args() -> argparse.Namespace:
         "--providers",
         nargs="*",
         default=None,
-        help="Optional provider allowlist. Default: all providers found under geometry-root.",
+        help="Optional provider allowlist. Default: all providers found under geometry roots.",
     )
     parser.add_argument(
         "--locations",
         nargs="*",
         default=None,
-        help="Optional explicit location names. Default: all locations under geometry-root.",
+        help="Optional explicit location names. Default: all locations under each geometry root.",
     )
     parser.add_argument(
         "--max-locations",
         type=int,
         default=None,
-        help="Optional cap after sorting locations numerically.",
+        help="Optional cap after sorting locations numerically within each city.",
     )
     parser.add_argument(
         "--overwrite",
@@ -172,6 +185,9 @@ def build_optional_provider_sources(geom_provider_dir: Path) -> list[tuple[Path,
 
 
 def migrate_location(
+    *,
+    city: str | None,
+    scene_name: str,
     location: str,
     geometry_root: Path,
     map_root: Path,
@@ -185,7 +201,7 @@ def migrate_location(
 ) -> dict:
     map_location_dir = map_root / location
     geom_location_dir = geometry_root / location
-    target_location_dir = output_root / location
+    target_location_dir = output_root / scene_name
 
     if not geom_location_dir.exists() or not map_location_dir.exists():
         missing = []
@@ -196,12 +212,14 @@ def migrate_location(
         if skip_missing:
             stats.num_locations_skipped += 1
             return {
+                "city": city,
                 "location": location,
+                "scene_name": scene_name,
                 "status": "skipped_missing_location",
                 "missing": missing,
                 "providers": [],
             }
-        raise FileNotFoundError(f"Missing location inputs for {location}: {missing}")
+        raise FileNotFoundError(f"Missing location inputs for {scene_name}: {missing}")
 
     if not dry_run:
         target_location_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +243,7 @@ def migrate_location(
                     {"provider": provider, "status": "skipped_missing", "missing": missing}
                 )
                 continue
-            raise FileNotFoundError(f"Missing required files for {location}/{provider}: {missing}")
+            raise FileNotFoundError(f"Missing required files for {scene_name}/{provider}: {missing}")
 
         if not dry_run:
             target_provider_dir.mkdir(parents=True, exist_ok=True)
@@ -243,9 +261,11 @@ def migrate_location(
                 "provider": provider,
                 "status": "ok",
                 "projection_type": "rs_global_projective",
-                "image_path": f"{location}/{provider}/image.png",
-                "pointmap_path": f"{location}/{provider}/pixel_to_point_map.npz",
-                "info_path": f"{location}/{provider}/info.json",
+                "scene_name": scene_name,
+                "city": city,
+                "image_path": f"{scene_name}/{provider}/image.png",
+                "pointmap_path": f"{scene_name}/{provider}/pixel_to_point_map.npz",
+                "info_path": f"{scene_name}/{provider}/info.json",
                 "meters_per_pixel": info.get("meters_per_pixel"),
                 "coverage_meters": info.get("coverage_meters"),
                 "ground_z_approx": info.get("ground_z_approx"),
@@ -253,7 +273,12 @@ def migrate_location(
         )
         stats.num_provider_entries_written += 1
 
-    return {"location": location, "providers": providers_summary}
+    return {
+        "city": city,
+        "location": location,
+        "scene_name": scene_name,
+        "providers": providers_summary,
+    }
 
 
 def write_text(path: Path, text: str, dry_run: bool) -> None:
@@ -269,22 +294,22 @@ def write_json(path: Path, payload: dict, dry_run: bool) -> None:
 
 def build_readme() -> str:
     lines = [
-        "# VIGOR Chicago RS Dataset",
+        "# VIGOR RS Dataset",
         "",
-        "This directory stores the unified remote-sensing dataset for VIGOR Chicago.",
+        "This directory stores the unified remote-sensing dataset for VIGOR.",
         "",
         "Layout:",
-        "- `location_x/` groups one Chicago scene.",
-        "- `location_x/<provider>/image.png` stores the remote image.",
-        "- `location_x/<provider>/pixel_to_point_map.npz` stores the sparse per-pixel global XYZ map.",
-        "- `location_x/<provider>/info.json` stores provider metadata used to interpret the pointmap.",
+        "- `<city>__location_x/` groups one VIGOR scene with a city prefix to avoid collisions.",
+        "- `<city>__location_x/<provider>/image.png` stores the remote image.",
+        "- `<city>__location_x/<provider>/pixel_to_point_map.npz` stores the sparse per-pixel global XYZ map.",
+        "- `<city>__location_x/<provider>/info.json` stores provider metadata used to interpret the pointmap.",
         "- valid mask and height are derived at load time from `pixel_to_point_map.npz`.",
         "- `dataset_meta.json` summarizes the migrated dataset.",
         "- `providers.json` lists provider-level metadata.",
         "",
         "This dataset root is designed to replace direct training-time dependencies on:",
-        "- `outputs/experiments/exp_005_map_points_generate/vigor/chicago`",
-        "- `dataset/Vigor/map/chicago_subset_2000`",
+        "- `outputs/experiments/exp_005_map_points_generate/vigor/<city>`",
+        "- `dataset/Vigor/map/<city>_subset_2000`",
         "",
     ]
     return "\n".join(lines)
@@ -293,19 +318,35 @@ def build_readme() -> str:
 def main() -> None:
     args = parse_args()
     output_root = args.output_root
-    locations = args.locations if args.locations else list_locations(args.geometry_root)
-    if args.max_locations is not None:
-        locations = locations[: args.max_locations]
-
-    stats = MigrationStats(num_locations_requested=len(locations))
     provider_allowlist = set(args.providers) if args.providers else None
 
+    if args.cities:
+        city_roots = [
+            (city, args.geometry_parent / city, args.map_parent / f"{city}_subset_2000")
+            for city in args.cities
+        ]
+    else:
+        inferred_city = args.geometry_root.name.replace("_subset_2000", "")
+        city_roots = [(inferred_city, args.geometry_root, args.map_root)]
+
+    requested_pairs = []
+    for city, geometry_root, map_root in city_roots:
+        locations = args.locations if args.locations else list_locations(geometry_root)
+        if args.max_locations is not None:
+            locations = locations[: args.max_locations]
+        requested_pairs.extend((city, geometry_root, map_root, location) for location in locations)
+
+    stats = MigrationStats(num_locations_requested=len(requested_pairs))
+
     location_summaries = []
-    for location in locations:
+    for city, geometry_root, map_root, location in requested_pairs:
+        scene_name = f"{city}__{location}" if args.cities else location
         location_summary = migrate_location(
+            city=city if args.cities else None,
+            scene_name=scene_name,
             location=location,
-            geometry_root=args.geometry_root,
-            map_root=args.map_root,
+            geometry_root=geometry_root,
+            map_root=map_root,
             output_root=output_root,
             mode=args.mode,
             overwrite=args.overwrite,
@@ -328,9 +369,12 @@ def main() -> None:
     )
 
     dataset_meta = {
-        "name": "vigor_chicago_rs",
+        "name": "vigor_rs",
         "geometry_root_source": str(args.geometry_root),
+        "geometry_parent_source": str(args.geometry_parent),
         "map_root_source": str(args.map_root),
+        "map_parent_source": str(args.map_parent),
+        "cities": args.cities,
         "output_root": str(output_root),
         "materialization_mode": args.mode,
         "num_locations_requested": stats.num_locations_requested,
@@ -339,7 +383,7 @@ def main() -> None:
         "num_provider_entries_written": stats.num_provider_entries_written,
         "num_provider_entries_skipped": stats.num_provider_entries_skipped,
         "providers": provider_names,
-        "layout_version": 2,
+        "layout_version": 3,
         "location_summaries_path": "location_manifest.json",
     }
     providers_meta = {

@@ -24,12 +24,15 @@ from PIL import Image
 from mapanything.datasets.base.easy_dataset import EasyDataset
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
     available_providers,
+    filter_scene_names_by_cities,
     load_pointmap_modalities,
     load_scene_list,
     make_rng_seed,
+    normalize_cities,
     normalize_providers,
     preprocess_rs_modalities,
     required_rs_paths,
+    resolve_scene_list_path,
     scene_sort_key,
 )
 
@@ -50,6 +53,7 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
         skip_missing=False,
         provider_sampling_mode='expand',
         num_augmented_crops_per_sample=1,
+        cities=None,
         crop_mode='none',
         crop_scale_range=(1.0, 1.0),
         image_resize_mode='nearest',
@@ -70,6 +74,7 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
         self._seed_offset = 0
         self.provider_sampling_mode = provider_sampling_mode
         self.num_augmented_crops_per_sample = max(1, int(num_augmented_crops_per_sample))
+        self.cities = normalize_cities(cities)
         self.crop_mode = crop_mode
         self.crop_scale_range = tuple(crop_scale_range)
         self.image_resize_mode = image_resize_mode
@@ -93,11 +98,7 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
         if self.scene_list_path is not None:
             scene_names = load_scene_list(self.scene_list_path)
         elif self.split is not None and self.dataset_metadata_dir is not None:
-            split_path = (
-                self.dataset_metadata_dir
-                / self.split
-                / f'vigor_chicago_scene_list_{self.split}.npy'
-            )
+            split_path = resolve_scene_list_path(self.dataset_metadata_dir, self.split)
             scene_names = load_scene_list(split_path)
         else:
             scene_names = sorted(
@@ -108,6 +109,8 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
                 ],
                 key=scene_sort_key,
             )
+
+        scene_names = filter_scene_names_by_cities(scene_names, self.cities)
 
         base_samples = []
         for scene_name in scene_names:

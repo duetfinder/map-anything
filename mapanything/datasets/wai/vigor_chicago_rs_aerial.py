@@ -21,8 +21,10 @@ from PIL import Image
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
     load_pointmap_modalities,
     make_rng_seed,
+    normalize_cities,
     normalize_providers,
     preprocess_rs_modalities,
+    scene_matches_cities,
 )
 from mapanything.utils.wai.core import load_data
 
@@ -35,6 +37,7 @@ class VigorChicagoRSAerial(torch.utils.data.Dataset):
         provider='Google_Satellite',
         providers=None,
         overfit_num_sets=None,
+        cities=None,
         load_aerial_scene_meta=True,
         transform='imgnorm',
         resolution=(518, 518),
@@ -61,9 +64,18 @@ class VigorChicagoRSAerial(torch.utils.data.Dataset):
         if normalized_providers is None and provider is not None:
             normalized_providers = normalize_providers(provider)
         self.providers = normalized_providers
+        self.cities = normalize_cities(cities)
 
         split_dir = self.metadata_root / split
-        aggregate_manifest_path = split_dir / f'vigor_chicago_rs_aerial_{split}.json'
+        aggregate_candidates = [
+            split_dir / f'Crossview_rs_aerial_{split}.json',
+            split_dir / f'vigor_rs_aerial_{split}.json',
+            split_dir / f'vigor_chicago_rs_aerial_{split}.json',
+        ]
+        aggregate_manifest_path = next(
+            (path for path in aggregate_candidates if path.exists()),
+            aggregate_candidates[0],
+        )
         if not aggregate_manifest_path.exists():
             raise FileNotFoundError(f'Missing aggregate manifest: {aggregate_manifest_path}')
 
@@ -81,6 +93,8 @@ class VigorChicagoRSAerial(torch.utils.data.Dataset):
             raise ValueError(f'Unsupported transform: {transform}')
 
     def _filter_manifests(self, manifests):
+        manifests = [m for m in manifests if scene_matches_cities(m['scene_name'], self.cities)]
+
         if not self.providers:
             best_by_scene = {}
             for manifest in manifests:

@@ -8,17 +8,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-def load_scene_list(split_dir: Path, split: str) -> list[str]:
-    split_file = split_dir / split / f"vigor_chicago_scene_list_{split}.npy"
+from mapanything.datasets.wai.vigor_chicago_rs_common import (
+    filter_scene_names_by_cities,
+    load_scene_list,
+    normalize_cities,
+    resolve_scene_list_path,
+)
+
+
+def load_scene_names(split_dir: Path, split: str) -> list[str]:
+    split_file = resolve_scene_list_path(split_dir, split)
     if not split_file.exists():
         raise FileNotFoundError(f"Missing split file: {split_file}")
-    return [str(x) for x in np.load(split_file, allow_pickle=True).tolist()]
+    return load_scene_list(split_file)
 
 
 def build_scene_manifest(
@@ -56,9 +68,7 @@ def build_scene_manifest(
     required_paths = [pointmap_path, info_path]
     missing_paths = [str(path) for path in required_paths if not path.exists()]
     if missing_paths:
-        raise FileNotFoundError(
-            f"Missing remote modalities for {scene_name}: {missing_paths}"
-        )
+        raise FileNotFoundError(f"Missing remote modalities for {scene_name}: {missing_paths}")
 
     pointmap_npz = np.load(pointmap_path)
     if "xyz" not in pointmap_npz.files:
@@ -114,17 +124,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aerial-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_wai"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_wai"),
     )
     parser.add_argument(
         "--aerial-split-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago"),
+        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/Crossview"),
     )
     parser.add_argument(
         "--remote-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_rs"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_rs"),
     )
     parser.add_argument(
         "--satellite-maps-root",
@@ -135,9 +145,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago_rs_aerial"),
+        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/Crossview_rs_aerial"),
     )
     parser.add_argument("--providers", nargs="+", default=["Google_Satellite"])
+    parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument(
         "--splits",
         nargs="+",
@@ -152,9 +163,13 @@ def main() -> None:
     args.output_root.mkdir(parents=True, exist_ok=True)
 
     summary: dict[str, dict] = {}
+    normalized_cities = normalize_cities(args.cities)
 
     for split in args.splits:
-        scene_names = load_scene_list(args.aerial_split_root, split)
+        scene_names = filter_scene_names_by_cities(
+            load_scene_names(args.aerial_split_root, split),
+            normalized_cities,
+        )
         manifests = []
         split_dir = args.output_root / split
         split_dir.mkdir(parents=True, exist_ok=True)
@@ -184,15 +199,22 @@ def main() -> None:
                 continue
 
             per_scene_primary_manifest[scene_name] = scene_manifests[0]
-            manifest_path = split_dir / f"{scene_name}.json"
+            manifest_path = split_dir / f"{scene_name.replace('/', '__')}.json"
             with open(manifest_path, "w", encoding="utf-8") as f:
                 json.dump(scene_manifests[0], f, indent=2)
 
-        scene_list_path = split_dir / f"vigor_chicago_rs_aerial_scene_list_{split}.npy"
-        np.save(scene_list_path, np.array(sorted(per_scene_primary_manifest.keys()), dtype=object))
+        scene_names_payload = np.array(sorted(per_scene_primary_manifest.keys()), dtype=object)
+        scene_list_path = split_dir / f"Crossview_rs_aerial_scene_list_{split}.npy"
+        np.save(scene_list_path, scene_names_payload)
+        np.save(split_dir / f"vigor_rs_aerial_scene_list_{split}.npy", scene_names_payload)
+        np.save(split_dir / f"vigor_chicago_rs_aerial_scene_list_{split}.npy", scene_names_payload)
 
-        aggregate_path = split_dir / f"vigor_chicago_rs_aerial_{split}.json"
+        aggregate_path = split_dir / f"Crossview_rs_aerial_{split}.json"
         with open(aggregate_path, "w", encoding="utf-8") as f:
+            json.dump(manifests, f, indent=2)
+        with open(split_dir / f"vigor_rs_aerial_{split}.json", "w", encoding="utf-8") as f:
+            json.dump(manifests, f, indent=2)
+        with open(split_dir / f"vigor_chicago_rs_aerial_{split}.json", "w", encoding="utf-8") as f:
             json.dump(manifests, f, indent=2)
 
         summary[split] = {
@@ -200,12 +222,15 @@ def main() -> None:
             "num_scenes": len(manifests),
             "num_missing_scenes": len(missing_scenes),
             "providers": args.providers,
+            "cities": normalized_cities,
             "scene_list_path": str(scene_list_path),
             "aggregate_manifest_path": str(aggregate_path),
         }
         if missing_scenes:
-            missing_path = split_dir / f"vigor_chicago_rs_aerial_missing_{split}.json"
+            missing_path = split_dir / f"Crossview_rs_aerial_missing_{split}.json"
             with open(missing_path, "w", encoding="utf-8") as f:
+                json.dump(missing_scenes, f, indent=2)
+            with open(split_dir / f"vigor_chicago_rs_aerial_missing_{split}.json", "w", encoding="utf-8") as f:
                 json.dump(missing_scenes, f, indent=2)
             summary[split]["missing_manifest_path"] = str(missing_path)
 

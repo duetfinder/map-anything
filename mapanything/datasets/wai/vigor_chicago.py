@@ -8,10 +8,16 @@ VIGOR Chicago dataset using WAI format data.
 """
 
 import os
+from pathlib import Path
 
 import numpy as np
 
 from mapanything.datasets.base.base_dataset import BaseDataset
+from mapanything.datasets.wai.vigor_chicago_rs_common import (
+    filter_scene_names_by_cities,
+    load_scene_list,
+    resolve_scene_list_path,
+)
 from mapanything.utils.wai.core import load_data, load_frame
 
 
@@ -30,6 +36,7 @@ class VigorChicagoWAI(BaseDataset):
         scene_list_path: str | None = None,
         sample_specific_scene: bool = False,
         specific_scene_name: str | None = None,
+        cities=None,
         **kwargs,
     ):
         super().__init__(*args, split=split, **kwargs)
@@ -39,27 +46,29 @@ class VigorChicagoWAI(BaseDataset):
         self.scene_list_path = scene_list_path
         self.sample_specific_scene = sample_specific_scene
         self.specific_scene_name = specific_scene_name
+        self.cities = cities
         self._load_data()
 
         self.is_metric_scale = True
         self.is_synthetic = False
 
     def _load_data(self):
-        split_metadata_path = os.path.join(
-            self.dataset_metadata_dir,
+        split_metadata_path = resolve_scene_list_path(
+            Path(self.dataset_metadata_dir),
             self.split,
-            f"vigor_chicago_scene_list_{self.split}.npy",
         )
-        split_scene_list = np.load(split_metadata_path, allow_pickle=True)
+        split_scene_list = load_scene_list(split_metadata_path)
 
         if not self.sample_specific_scene:
             self.scenes = list(split_scene_list)
         else:
             self.scenes = [self.specific_scene_name]
 
+        self.scenes = filter_scene_names_by_cities(self.scenes, self.cities)
+
         if self.scene_list_path is not None:
-            filtered_scene_list = np.load(self.scene_list_path, allow_pickle=True)
-            allowed_scene_set = set(filtered_scene_list.tolist())
+            filtered_scene_list = load_scene_list(Path(self.scene_list_path))
+            allowed_scene_set = set(filtered_scene_list)
             self.scenes = [scene for scene in self.scenes if scene in allowed_scene_set]
 
         if self.overfit_num_sets is not None:
