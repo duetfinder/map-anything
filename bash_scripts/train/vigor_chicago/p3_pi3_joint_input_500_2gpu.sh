@@ -1,8 +1,8 @@
 #!/bin/bash
 
 NUM_GPUS=${NUM_GPUS:-${1:-2}}
-NUM_VIEWS=${NUM_VIEWS:-2}
-BATCH_SIZE=${BATCH_SIZE:-2}
+NUM_VIEWS=${NUM_VIEWS:-4}
+BATCH_SIZE=${BATCH_SIZE:-4}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
 REMOTE_TRAIN_CROP_MODE=${REMOTE_TRAIN_CROP_MODE:-random_scale_offset}
 REMOTE_VAL_CROP_MODE=${REMOTE_VAL_CROP_MODE:-random_scale_offset}
@@ -15,7 +15,7 @@ LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-1.0}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-true}
 REMOTE_DETACH_POSE_ALIGN=${REMOTE_DETACH_POSE_ALIGN:-false}
-OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu_chicago'}
+OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu_chicago_1'}
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
     echo "BATCH_SIZE (${BATCH_SIZE}) is train_params.max_num_of_imgs_per_gpu and must be >= NUM_VIEWS (${NUM_VIEWS}); otherwise validation batch_size becomes 0." >&2
@@ -32,6 +32,9 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
     dataset=vigor_chicago_rs_joint_518 \
     dataset.num_workers=0 \
     dataset.num_views=${NUM_VIEWS} \
+    dataset.vigor_chicago_joint_rs_aerial.train.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.val.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.test.cities=[chicago] \
     dataset.vigor_chicago_joint_rs_aerial.train.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.val.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.test.remote_providers=[${RS_PROVIDER}] \
