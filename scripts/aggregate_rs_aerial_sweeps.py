@@ -162,11 +162,11 @@ def plot_metrics(rows, out_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv'),type=Path)
-    parser.add_argument('--out-dir',default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/aggregated_2'), type=Path)
+    parser.add_argument('--root', default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork'),type=Path)
+    parser.add_argument('--out-dir',default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/aggregated'), type=Path)
     args = parser.parse_args()
 
-    out_dir = args.out_dir or args.root / 'aggregated_2'
+    out_dir = args.out_dir or args.root / 'aggregated'
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = collect_rows(args.root)

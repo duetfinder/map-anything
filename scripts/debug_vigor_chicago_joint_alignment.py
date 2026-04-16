@@ -49,24 +49,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aerial-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_wai"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_wai"),
     )
     parser.add_argument(
         "--metadata-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/vigor_chicago"),
+        default=Path("/root/autodl-tmp/traindata/mapanything_metadata/Crossview"),
     )
     parser.add_argument(
         "--remote-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/vigor_chicago_rs"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_rs"),
     )
     parser.add_argument("--remote-provider", default="Google_Satellite")
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path(
-            "/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/vigor_chicago_joint_alignment"
+            "/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/Crossview_joint_alignment"
         ),
     )
     parser.add_argument("--max-points", type=int, default=20000)
