@@ -11,11 +11,11 @@ REMOTE_CROP_SCALE_MIN=${REMOTE_CROP_SCALE_MIN:-0.6}
 REMOTE_CROP_SCALE_MAX=${REMOTE_CROP_SCALE_MAX:-1.0}
 REMOTE_IMAGE_RESIZE_MODE=${REMOTE_IMAGE_RESIZE_MODE:-nearest}
 REMOTE_LABEL_RESIZE_MODE=${REMOTE_LABEL_RESIZE_MODE:-nearest}
-LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-1.0}
+LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-4.0}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-true}
 REMOTE_DETACH_POSE_ALIGN=${REMOTE_DETACH_POSE_ALIGN:-false}
-OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu_chicago_1'}
+OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_joint_input_500_pretrained_2gpu_chicago_4.0'}
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
     echo "BATCH_SIZE (${BATCH_SIZE}) is train_params.max_num_of_imgs_per_gpu and must be >= NUM_VIEWS (${NUM_VIEWS}); otherwise validation batch_size becomes 0." >&2
@@ -58,7 +58,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node "${NUM_GPUS}" \
     model=pi3 \
     model.model_config.load_pretrained_weights=true \
     train_params=pi3_finetune \
-    train_params.epochs=20 \
+    train_params.epochs=50 \
     train_params.warmup_epochs=1 \
     train_params.eval_freq=1 \
     train_params.save_freq=5 \

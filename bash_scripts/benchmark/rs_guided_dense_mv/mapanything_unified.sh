@@ -7,7 +7,7 @@ OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/benchmarking/rs_gu
 
 if [ -z "$MAPANYTHING_CKPT" ]; then
     echo "Please set MAPANYTHING_CKPT to a MapAnything checkpoint path."
-    echo "Example: export MAPANYTHING_CKPT=/path/to/checkpoint-last.pth"
+    echo "Example: export MAPANYTHING_CKPT=/root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth"
     exit 1
 fi
 
@@ -16,7 +16,7 @@ if [ -f /etc/profile.d/clash.sh ]; then
     proxy_on >/dev/null 2>&1 || true
 fi
 
-PYTHONPATH=. python3 \
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=1 python3 \
     benchmarking/rs_guided_dense_mv/benchmark_unified.py \
     machine=autodl_vigor \
     dataset=benchmark_vigor_chicago_rs_aerial \
@@ -27,4 +27,6 @@ PYTHONPATH=. python3 \
     model/task=images_only \
     model.encoder.uses_torch_hub=false \
     model.pretrained="$MAPANYTHING_CKPT" \
-    hydra.run.dir="$OUTPUT_DIR"
+    hydra.run.dir="$OUTPUT_DIR" \
+    dataset.vigor_chicago_wai.val.cities=[newyork] \
+    dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[newyork]

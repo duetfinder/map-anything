@@ -10,7 +10,7 @@ if [ -f /etc/profile.d/clash.sh ]; then
     proxy_on >/dev/null 2>&1 || true
 fi
 
-PYTHONPATH=/root/autodl-tmp/Models/Depth-Anything-3/src:. python3 \
+PYTHONPATH=/root/autodl-tmp/Models/Depth-Anything-3/src:. CUDA_VISIBLE_DEVICES=0 python3 \
     benchmarking/rs_guided_dense_mv/benchmark_unified.py \
     machine=autodl_vigor \
     dataset=benchmark_vigor_chicago_rs_aerial \
@@ -18,4 +18,6 @@ PYTHONPATH=/root/autodl-tmp/Models/Depth-Anything-3/src:. python3 \
     dataset.num_workers=0 \
     batch_size=$BATCH_SIZE \
     model=da3 \
-    hydra.run.dir="$OUTPUT_DIR"
+    hydra.run.dir="$OUTPUT_DIR" \
+    dataset.vigor_chicago_wai.val.cities=[newyork] \
+    dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[newyork]

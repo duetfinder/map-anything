@@ -7,6 +7,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from tqdm import tqdm  # 添加tqdm库用于进度条显示
 
 SCENE_LEVEL_MAP_FILES = [
     "map_metadata.json",
@@ -339,7 +340,14 @@ def main() -> None:
     stats = MigrationStats(num_locations_requested=len(requested_pairs))
 
     location_summaries = []
-    for city, geometry_root, map_root, location in requested_pairs:
+    # 添加进度条，显示处理location的进度
+    for city, geometry_root, map_root, location in tqdm(
+        requested_pairs, 
+        desc="Processing locations", 
+        unit="location",
+        ncols=100,  # 设置进度条宽度
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+    ):
         scene_name = f"{city}__{location}" if args.cities else location
         location_summary = migrate_location(
             city=city if args.cities else None,
