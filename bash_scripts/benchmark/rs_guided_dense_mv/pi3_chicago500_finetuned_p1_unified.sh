@@ -4,7 +4,7 @@ export HYDRA_FULL_ERROR=1
 NUM_VIEWS=${NUM_VIEWS:-2}
 BATCH_SIZE=${BATCH_SIZE:-1}
 CKPT_PATH=${CKPT_PATH:-/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/baselines/p1_pi3_baseline_500_pretrained_2gpu/checkpoint-best.pth}
-OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/pi3_unified_vigor500_finetuned'}
+OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/newyork/pi3_unified_vigor500_finetuned'}
 
 if [ -f /etc/profile.d/clash.sh ]; then
     source /etc/profile.d/clash.sh
@@ -20,4 +20,6 @@ PYTHONPATH=. python3 \
     batch_size=$BATCH_SIZE \
     model=pi3 \
     model.pretrained="$CKPT_PATH" \
-    hydra.run.dir="$OUTPUT_DIR"
+    hydra.run.dir="$OUTPUT_DIR" \
+    dataset.vigor_chicago_wai.val.cities=[newyork] \
+    dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[newyork]

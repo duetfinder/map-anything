@@ -1,16 +1,18 @@
 #!/bin/bash
 
 export HYDRA_FULL_ERROR=1
+BENCHMARK_SCRIPT=${BENCHMARK_SCRIPT:-/root/autodl-tmp/Models/map-anything/bash_scripts/benchmark/rs_guided_dense_mv/pi3_unified.sh}
+OUTPUT_PREFIX=${OUTPUT_PREFIX:-pi3_unified}
 
 # Format: "batch_size num_views"
 run_configs=(
-    "10 2"
-    "10 4"
-    "10 8"
+    "40 2"
+    "40 4"
+    "20 8"
     "10 16"
     "8 24"
-    "4 32"
-    "1 40"
+    "8 32"
+    "2 40"
 )
 
 if [ -f /etc/profile.d/clash.sh ]; then
@@ -20,11 +22,11 @@ fi
 
 for cfg in "${run_configs[@]}"; do
     read -r batch_size num_views <<< "$cfg"
-    echo "Running Pi3 unified benchmark with batch_size=$batch_size num_views=$num_views"
+    echo "Running Pi3 unified benchmark with batch_size=$batch_size num_views=$num_views script=$BENCHMARK_SCRIPT"
     NUM_VIEWS=$num_views \
     BATCH_SIZE=$batch_size \
-    OUTPUT_DIR='${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/pi3_chicago500_finetuned_p3_unified_'"${num_views}"'v' \
-    bash /root/autodl-tmp/Models/map-anything/bash_scripts/benchmark/rs_guided_dense_mv/pi3_chicago500_finetuned_p3_unified.sh
+    OUTPUT_DIR='${root_experiments_dir}/mapanything/benchmarking/rs_guided_dense_mv/newyork/'"${OUTPUT_PREFIX}"'_'"${num_views}"'v' \
+    bash "$BENCHMARK_SCRIPT"
 done
 
 
