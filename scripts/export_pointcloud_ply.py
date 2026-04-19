@@ -17,38 +17,38 @@ Examples:
 
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --image_folder /root/autodl-tmp/test/448 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/base \
+    --image_folder /root/autodl-tmp/test/467_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/467_2/base \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_4gpu_all_20260414_114403_lambda2.0/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/448 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/all_2 \
+    --image_folder /root/autodl-tmp/test/467_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/467_2/all_2 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_all_6/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/448 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/all_6 \
+    --image_folder /root/autodl-tmp/test/467_2\
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/467_2/all_6 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_4gpu_chicago_20260414_1837_lambda2.0/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/448 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/chicago_2 \
+    --image_folder /root/autodl-tmp/test/467_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/467_2/chicago_2 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_2gpu_chicago/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/448 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/chicago_6
+    --image_folder /root/autodl-tmp/test/467_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/467_2/chicago_6
 && \
 python scripts/export_pointcloud_ply.py \
     --model mapanything \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/448 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/mapanything
+    --image_folder /root/autodl-tmp/test/467_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/467_2/mapanything
 """
 
 import argparse
