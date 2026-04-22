@@ -33,6 +33,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         remote_ROOT,
         remote_provider='Google_Satellite',
         remote_providers=None,
+        remote_provider_sampling_mode='first_available',
         remote_resolution=(518, 518),
         remote_transform='imgnorm',
         cities=None,
@@ -48,6 +49,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         if normalized_providers is None and remote_provider is not None:
             normalized_providers = normalize_providers(remote_provider)
         self.remote_providers = normalized_providers
+        self.remote_provider_sampling_mode = str(remote_provider_sampling_mode).lower()
         self.remote_resolution = tuple(remote_resolution)
         self.cities = cities
         self.skip_missing_remote = skip_missing_remote
@@ -55,6 +57,16 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         self.remote_crop_scale_range = tuple(remote_crop_scale_range)
         self.remote_image_resize_mode = remote_image_resize_mode
         self.remote_label_resize_mode = remote_label_resize_mode
+
+        if self.remote_provider_sampling_mode not in {
+            'first_available',
+            'random',
+            'expand',
+        }:
+            raise ValueError(
+                'Unsupported remote_provider_sampling_mode: '
+                f'{remote_provider_sampling_mode}'
+            )
 
         if remote_transform == 'imgnorm':
             self.remote_transform = tvf.ToTensor()
@@ -64,7 +76,8 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         super().__init__(*args, cities=cities, **kwargs)
 
         available_scenes = []
-        self.remote_scene_info = {}
+        self.remote_scene_candidates = {}
+        self._expanded_scene_entries = []
         for scene_name in self.scenes:
             scene_root = self.remote_ROOT / scene_name
             candidate_providers = self.remote_providers or available_providers(scene_root)
@@ -73,7 +86,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
                     continue
                 raise FileNotFoundError(f'No provider directories found under: {scene_root}')
 
-            selected = None
+            available_remote_entries = []
             last_missing = None
             for provider_name in candidate_providers:
                 remote_scene_dir = scene_root / provider_name
@@ -86,27 +99,46 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
                 if missing:
                     last_missing = missing
                     continue
-                selected = {
+                available_remote_entries.append({
                     'remote_scene_dir': remote_scene_dir,
                     'remote_provider': provider_name,
-                }
-                break
+                })
 
-            if selected is None:
+            if not available_remote_entries:
                 if skip_missing_remote:
                     continue
                 raise FileNotFoundError(
                     f'Missing RS files for {scene_name} under providers {candidate_providers}: {last_missing}'
                 )
 
-            self.remote_scene_info[scene_name] = selected
+            self.remote_scene_candidates[scene_name] = available_remote_entries
             available_scenes.append(scene_name)
+            if self.remote_provider_sampling_mode == 'expand':
+                for remote_entry in available_remote_entries:
+                    self._expanded_scene_entries.append((scene_name, remote_entry))
 
         self.scenes = available_scenes
-        self.num_of_scenes = len(self.scenes)
+        self._scene_name_to_idx = {
+            scene_name: scene_idx for scene_idx, scene_name in enumerate(self.scenes)
+        }
+        if self.remote_provider_sampling_mode == 'expand':
+            self.num_of_scenes = len(self._expanded_scene_entries)
+        else:
+            self.num_of_scenes = len(self.scenes)
 
-    def _load_remote_sample(self, scene_name: str) -> dict:
-        remote_info = self.remote_scene_info[scene_name]
+    def _resolve_scene_name_and_remote_info(self, sampled_idx: int) -> tuple[str, dict]:
+        if self.remote_provider_sampling_mode == 'expand':
+            return self._expanded_scene_entries[sampled_idx]
+
+        scene_name = self.scenes[sampled_idx]
+        remote_candidates = self.remote_scene_candidates[scene_name]
+        if self.remote_provider_sampling_mode == 'random':
+            remote_info = remote_candidates[self._rng.integers(0, len(remote_candidates))]
+        else:
+            remote_info = remote_candidates[0]
+        return scene_name, remote_info
+
+    def _load_remote_sample(self, remote_info: dict) -> dict:
         remote_scene_dir = remote_info['remote_scene_dir']
         remote_provider = remote_info['remote_provider']
 
@@ -153,9 +185,14 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         }
 
     def _get_views(self, sampled_idx, num_views_to_sample, resolution):
-        views = super()._get_views(sampled_idx, num_views_to_sample, resolution)
-        scene_name = views[0]['label']
-        remote_sample = self._load_remote_sample(scene_name)
+        if self.remote_provider_sampling_mode == 'expand':
+            scene_name, remote_info = self._resolve_scene_name_and_remote_info(sampled_idx)
+            scene_base_idx = self._scene_name_to_idx[scene_name]
+            views = super()._get_views(scene_base_idx, num_views_to_sample, resolution)
+        else:
+            _, remote_info = self._resolve_scene_name_and_remote_info(sampled_idx)
+            views = super()._get_views(sampled_idx, num_views_to_sample, resolution)
+        remote_sample = self._load_remote_sample(remote_info)
 
         for view in views:
             view.update(remote_sample)
