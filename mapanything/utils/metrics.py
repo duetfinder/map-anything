@@ -175,7 +175,7 @@ def align(model, data):
     W = np.zeros((3, 3))
     for column in range(model.shape[1]):
         W += np.outer(model_zerocentered[:, column], data_zerocentered[:, column])
-    U, d, Vh = np.linalg.linalg.svd(W.transpose())
+    U, d, Vh = np.linalg.svd(W.transpose())
     S = np.matrix(np.identity(3))
     if np.linalg.det(U) * np.linalg.det(Vh) < 0:
         S[2, 2] = -1
