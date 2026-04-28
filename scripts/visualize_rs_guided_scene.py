@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 
 try:
     import rerun as rr
+    import rerun.blueprint as rrb
 except Exception as exc:
     raise ImportError(
         "Failed to import the Rerun SDK. Install the correct package with "
@@ -33,9 +34,9 @@ from mapanything.utils.viz import script_add_rerun_args
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Visualize a saved rs-guided scene bundle in Rerun."
+        description="Visualize one scene bundle or a directory of scene bundles in Rerun."
     )
-    parser.add_argument("bundle_path", type=Path)
+    parser.add_argument("bundle_path", type=Path, help="Path to scene_bundle.pt or a directory containing multiple scene_bundle.pt files.")
     parser.add_argument(
         "--frames",
         type=str,
@@ -111,7 +112,6 @@ def build_overview_markdown(metadata, metrics):
         ("Aerial pose_auc_5", fmt(aerial.get("pose_auc_5"))),
         ("Joint pointmaps_abs_rel", fmt(joint.get("pointmaps_abs_rel"))),
         ("Joint pose_ate_rmse", fmt(joint.get("pose_ate_rmse"))),
-        ("Joint global_point_l1", fmt(joint.get("joint_global_point_l1"))),
         ("Joint global_pointmaps_abs_rel", fmt(joint.get("joint_global_pointmaps_abs_rel"))),
         ("RS height_mae", fmt(rs_only.get("rs_height_mae"))),
         ("RS height_rmse", fmt(rs_only.get("rs_height_rmse"))),
@@ -133,8 +133,7 @@ def build_overview_markdown(metadata, metrics):
             "",
             "说明：",
             "- `modes/remote_metric`：`view0` 参考系 + 遥感分辨率恢复尺度",
-            "- `modes/benchmark`：与 benchmark 几何定义一致的归一化结果",
-            "- `debug/raw`：最原始的全局点云导出结果",
+            "- `modes/benchmark`：与 benchmark 几何定义一致的归一化结果（joint remote 已按 `view0 + avg_dis` 对齐）",
         ]
     )
     return "\n".join(lines)
@@ -228,7 +227,20 @@ def log_points(path, points, colors=None, valid_mask=None):
     if selected_points.size == 0:
         return
     if colors is not None:
-        selected_colors = colors[mask]
+        colors = np.asarray(colors)
+        if colors.shape[: mask.ndim] == mask.shape:
+            selected_colors = colors[mask]
+        elif colors.ndim == 2 and colors.shape[0] == selected_points.shape[0]:
+            selected_colors = colors
+        else:
+            flat_colors = colors.reshape(-1, colors.shape[-1])
+            flat_mask = mask.reshape(-1)
+            if flat_colors.shape[0] == flat_mask.shape[0]:
+                selected_colors = flat_colors[flat_mask]
+            else:
+                raise ValueError(
+                    f"Color shape {colors.shape} is incompatible with point shape {points.shape}"
+                )
         rr.log(path, rr.Points3D(positions=selected_points, colors=selected_colors), static=True)
     else:
         rr.log(path, rr.Points3D(positions=selected_points), static=True)
@@ -244,21 +256,59 @@ def resolve_metric_view(view):
     return aligned.get("remote_metric_joint")
 
 
-def main():
-    args = parse_args()
-    bundle = torch.load(args.bundle_path, map_location="cpu", weights_only=False)
-    selected_frames = parse_frame_filter(args.frames)
+def normalize_root_prefix(root_prefix):
+    if not root_prefix:
+        return ""
+    root_prefix = str(root_prefix).strip("/")
+    return f"/{root_prefix}"
 
-    init_rerun(args, args.bundle_path)
-    rr.log("/", rr.ViewCoordinates.RIGHT_HAND_Y_DOWN, static=True)
 
+def scene_path(root_prefix, relative_path):
+    base = normalize_root_prefix(root_prefix)
+    rel = str(relative_path).strip("/")
+    if not base:
+        return f"/{rel}" if rel else "/"
+    if not rel:
+        return base
+    return f"{base}/{rel}"
+
+
+def build_scene_blueprint(root_prefix, scene_name):
+    root = normalize_root_prefix(root_prefix) or "/"
+    return rrb.Tabs(
+        rrb.TextDocumentView(origin=scene_path(root, "overview"), name="Overview"),
+        rrb.Spatial3DView(origin=scene_path(root, "modes/benchmark"), name="Benchmark 3D"),
+        rrb.Spatial3DView(origin=scene_path(root, "modes/remote_metric"), name="RemoteMetric 3D"),
+        rrb.Spatial2DView(origin=scene_path(root, "remote"), name="Remote 2D"),
+        active_tab=0,
+        name=scene_name,
+    )
+
+
+def build_blueprint(scene_specs):
+    if len(scene_specs) == 1:
+        _, scene_name = scene_specs[0]
+        root_prefix = scene_specs[0][0]
+        return rrb.Blueprint(
+            build_scene_blueprint(root_prefix, scene_name),
+            collapse_panels=True,
+        )
+
+    scene_tabs = [build_scene_blueprint(root_prefix, scene_name) for root_prefix, scene_name in scene_specs]
+    return rrb.Blueprint(
+        rrb.Tabs(*scene_tabs, active_tab=0, name="Scenes"),
+        collapse_panels=True,
+    )
+
+
+def log_scene_bundle(bundle, selected_frames=None, root_prefix=""):
     metadata = bundle["metadata"]
     metrics_flat = {}
     flatten_dict("", bundle["metrics"], metrics_flat)
-    rr.log("metrics", rr.AnyValues(**sanitize_anyvalues(metrics_flat)), static=True)
-    rr.log("scene_info", rr.AnyValues(**sanitize_anyvalues(metadata)), static=True)
+    rr.log(scene_path(root_prefix, "metrics"), rr.AnyValues(**sanitize_anyvalues(metrics_flat)), static=True)
+    rr.log(scene_path(root_prefix, "scene_info"), rr.AnyValues(**sanitize_anyvalues(metadata)), static=True)
     rr.log(
-        "overview",
+        scene_path(root_prefix, "overview"),
         rr.TextDocument(build_overview_markdown(metadata, bundle["metrics"])),
         static=True,
     )
@@ -267,7 +317,7 @@ def main():
     aligned_global = global_clouds.get("benchmark_aligned", {})
     if "remote_metric_joint" in aligned_global:
         rr.log(
-            "modes/remote_metric/global/gt",
+            scene_path(root_prefix, "modes/remote_metric/global/gt"),
             rr.Points3D(
                 positions=aligned_global["remote_metric_joint"]["gt_points"],
                 colors=aligned_global["remote_metric_joint"].get("gt_colors"),
@@ -275,7 +325,7 @@ def main():
             static=True,
         )
         rr.log(
-            "modes/remote_metric/global/pred",
+            scene_path(root_prefix, "modes/remote_metric/global/pred"),
             rr.Points3D(
                 positions=aligned_global["remote_metric_joint"]["pred_points"],
                 colors=aligned_global["remote_metric_joint"].get("pred_colors"),
@@ -283,13 +333,13 @@ def main():
             static=True,
         )
         rr.log(
-            "modes/remote_metric/scale",
+            scene_path(root_prefix, "modes/remote_metric/scale"),
             rr.AnyValues(**sanitize_anyvalues(aligned_global["remote_metric_joint"]["scale_info"])),
             static=True,
         )
     if "aerial_only" in aligned_global:
         rr.log(
-            "modes/benchmark/aerial_only/global/gt",
+            scene_path(root_prefix, "modes/benchmark/aerial_only/global/gt"),
             rr.Points3D(
                 positions=aligned_global["aerial_only"]["gt_points"],
                 colors=aligned_global["aerial_only"].get("gt_colors"),
@@ -297,25 +347,16 @@ def main():
             static=True,
         )
         rr.log(
-            "modes/benchmark/aerial_only/global/pred",
+            scene_path(root_prefix, "modes/benchmark/aerial_only/global/pred"),
             rr.Points3D(
                 positions=aligned_global["aerial_only"]["pred_points"],
                 colors=aligned_global["aerial_only"].get("pred_colors"),
             ),
             static=True,
         )
-    if "aerial_only" in global_clouds:
-        rr.log(
-            "debug/raw/global/aerial_only_pred",
-            rr.Points3D(
-                positions=global_clouds["aerial_only"]["points"],
-                colors=global_clouds["aerial_only"]["colors"],
-            ),
-            static=True,
-        )
     if "joint" in aligned_global:
         rr.log(
-            "modes/benchmark/joint/global/gt",
+            scene_path(root_prefix, "modes/benchmark/joint/global/gt"),
             rr.Points3D(
                 positions=aligned_global["joint"]["gt_points"],
                 colors=aligned_global["joint"].get("gt_colors"),
@@ -323,28 +364,10 @@ def main():
             static=True,
         )
         rr.log(
-            "modes/benchmark/joint/global/pred",
+            scene_path(root_prefix, "modes/benchmark/joint/global/pred"),
             rr.Points3D(
                 positions=aligned_global["joint"]["pred_points"],
                 colors=aligned_global["joint"].get("pred_colors"),
-            ),
-            static=True,
-        )
-    if "joint" in global_clouds:
-        rr.log(
-            "debug/raw/global/joint_pred",
-            rr.Points3D(
-                positions=global_clouds["joint"]["points"],
-                colors=global_clouds["joint"]["colors"],
-            ),
-            static=True,
-        )
-    if "gt" in global_clouds:
-        rr.log(
-            "debug/raw/global/gt",
-            rr.Points3D(
-                positions=global_clouds["gt"]["points"],
-                colors=global_clouds["gt"]["colors"],
             ),
             static=True,
         )
@@ -359,125 +382,136 @@ def main():
         intrinsics = view["camera_intrinsics"]
         aerial_aligned = resolve_aligned_view(view, "aerial_only")
         joint_aligned = resolve_aligned_view(view, "joint")
-        joint_global_aligned = resolve_aligned_view(view, "joint_global")
         metric_aligned = resolve_metric_view(view)
 
         if aerial_aligned is not None:
-            log_camera(f"modes/benchmark/aerial_only/views/gt/{suffix}", aerial_aligned["gt_pose"], intrinsics, image_rgb)
-            log_camera(f"modes/benchmark/aerial_only/views/pred/{suffix}", aerial_aligned["pred_pose"], intrinsics, image_rgb)
+            log_camera(scene_path(root_prefix, f"modes/benchmark/aerial_only/views/gt/{suffix}"), aerial_aligned["gt_pose"], intrinsics, image_rgb)
+            log_camera(scene_path(root_prefix, f"modes/benchmark/aerial_only/views/pred/{suffix}"), aerial_aligned["pred_pose"], intrinsics, image_rgb)
             log_points(
-                f"modes/benchmark/aerial_only/points/gt/{suffix}",
+                scene_path(root_prefix, f"modes/benchmark/aerial_only/points/gt/{suffix}"),
                 aerial_aligned["gt_points"],
                 colors=image_rgb,
                 valid_mask=aerial_aligned.get("valid_mask"),
             )
             log_points(
-                f"modes/benchmark/aerial_only/points/pred/{suffix}",
+                scene_path(root_prefix, f"modes/benchmark/aerial_only/points/pred/{suffix}"),
                 aerial_aligned["pred_points"],
                 colors=image_rgb,
                 valid_mask=aerial_aligned.get("valid_mask"),
             )
         if joint_aligned is not None:
-            log_camera(f"modes/benchmark/joint/views/gt/{suffix}", joint_aligned["gt_pose"], intrinsics, image_rgb)
-            log_camera(f"modes/benchmark/joint/views/pred/{suffix}", joint_aligned["pred_pose"], intrinsics, image_rgb)
+            log_camera(scene_path(root_prefix, f"modes/benchmark/joint/views/gt/{suffix}"), joint_aligned["gt_pose"], intrinsics, image_rgb)
+            log_camera(scene_path(root_prefix, f"modes/benchmark/joint/views/pred/{suffix}"), joint_aligned["pred_pose"], intrinsics, image_rgb)
             log_points(
-                f"modes/benchmark/joint/points/gt/{suffix}",
+                scene_path(root_prefix, f"modes/benchmark/joint/points/gt/{suffix}"),
                 joint_aligned["gt_points"],
                 colors=image_rgb,
                 valid_mask=joint_aligned.get("valid_mask"),
             )
             log_points(
-                f"modes/benchmark/joint/points/pred/{suffix}",
+                scene_path(root_prefix, f"modes/benchmark/joint/points/pred/{suffix}"),
                 joint_aligned["pred_points"],
                 colors=image_rgb,
                 valid_mask=joint_aligned.get("valid_mask"),
             )
-        if joint_global_aligned is not None:
-            log_points(
-                f"modes/benchmark/joint_global/points/gt/{suffix}",
-                joint_global_aligned["gt_points"],
-                colors=image_rgb,
-                valid_mask=joint_global_aligned.get("valid_mask"),
-            )
-            log_points(
-                f"modes/benchmark/joint_global/points/pred/{suffix}",
-                joint_global_aligned["pred_points"],
-                colors=image_rgb,
-                valid_mask=joint_global_aligned.get("valid_mask"),
-            )
 
         if metric_aligned is not None:
-            log_camera(f"modes/remote_metric/views/gt/{suffix}", metric_aligned["gt_pose"], intrinsics, image_rgb)
-            log_camera(f"modes/remote_metric/views/pred/{suffix}", metric_aligned["pred_pose"], intrinsics, image_rgb)
+            log_camera(scene_path(root_prefix, f"modes/remote_metric/views/gt/{suffix}"), metric_aligned["gt_pose"], intrinsics, image_rgb)
+            log_camera(scene_path(root_prefix, f"modes/remote_metric/views/pred/{suffix}"), metric_aligned["pred_pose"], intrinsics, image_rgb)
             log_points(
-                f"modes/remote_metric/points/gt/{suffix}",
+                scene_path(root_prefix, f"modes/remote_metric/points/gt/{suffix}"),
                 metric_aligned["gt_points"],
                 colors=image_rgb,
                 valid_mask=metric_aligned.get("valid_mask"),
             )
             log_points(
-                f"modes/remote_metric/points/pred/{suffix}",
+                scene_path(root_prefix, f"modes/remote_metric/points/pred/{suffix}"),
                 metric_aligned["pred_points"],
                 colors=image_rgb,
                 valid_mask=metric_aligned.get("valid_mask"),
             )
 
     remote = bundle["remote"]
-    rr.log("remote/image", rr.Image(remote["image_rgb"]), static=True)
+    rr.log(scene_path(root_prefix, "remote/image"), rr.Image(remote["image_rgb"]), static=True)
     joint_remote_aligned = remote.get("benchmark_aligned", {}).get("joint")
-    remote_aligned = remote.get("benchmark_aligned", {}).get("joint_global")
     remote_metric_aligned = remote.get("remote_metric_aligned")
     if joint_remote_aligned is not None:
         log_points(
-            "modes/benchmark/joint/remote/gt",
+            scene_path(root_prefix, "modes/benchmark/joint/remote/gt"),
             joint_remote_aligned["gt_points"],
-            colors=remote["image_rgb"],
+            colors=joint_remote_aligned.get("colors", remote["image_rgb"]),
             valid_mask=joint_remote_aligned.get("valid_mask"),
         )
         log_points(
-            "modes/benchmark/joint/remote/pred",
+            scene_path(root_prefix, "modes/benchmark/joint/remote/pred"),
             joint_remote_aligned["pred_points"],
-            colors=remote["image_rgb"],
+            colors=joint_remote_aligned.get("colors", remote["image_rgb"]),
             valid_mask=joint_remote_aligned.get("valid_mask"),
-        )
-    if remote_aligned is not None:
-        log_points(
-            "modes/benchmark/joint_global/remote/gt",
-            remote_aligned["gt_points"],
-            colors=remote["image_rgb"],
-            valid_mask=remote_aligned.get("valid_mask"),
-        )
-        log_points(
-            "modes/benchmark/joint_global/remote/pred",
-            remote_aligned["pred_points"],
-            colors=remote["image_rgb"],
-            valid_mask=remote_aligned.get("valid_mask"),
         )
     if remote_metric_aligned is not None:
+        if "gt_pose" in remote_metric_aligned and "camera_intrinsics" in remote_metric_aligned:
+            log_camera(
+                scene_path(root_prefix, "modes/remote_metric/remote/camera/gt"),
+                remote_metric_aligned["gt_pose"],
+                remote_metric_aligned["camera_intrinsics"],
+                remote["image_rgb"],
+            )
+        if "pred_pose" in remote_metric_aligned and "camera_intrinsics" in remote_metric_aligned:
+            log_camera(
+                scene_path(root_prefix, "modes/remote_metric/remote/camera/pred"),
+                remote_metric_aligned["pred_pose"],
+                remote_metric_aligned["camera_intrinsics"],
+                remote["image_rgb"],
+            )
         log_points(
-            "modes/remote_metric/remote/gt",
+            scene_path(root_prefix, "modes/remote_metric/remote/gt"),
             remote_metric_aligned["gt_points"],
             colors=remote["image_rgb"],
             valid_mask=remote_metric_aligned.get("valid_mask"),
         )
         log_points(
-            "modes/remote_metric/remote/pred",
+            scene_path(root_prefix, "modes/remote_metric/remote/pred"),
             remote_metric_aligned["pred_points"],
             colors=remote["image_rgb"],
             valid_mask=remote_metric_aligned.get("valid_mask"),
         )
         if remote.get("meters_per_pixel") is not None:
             rr.log(
-                "modes/remote_metric/remote/info",
+                scene_path(root_prefix, "modes/remote_metric/remote/info"),
                 rr.AnyValues(meters_per_pixel=float(remote["meters_per_pixel"])),
                 static=True,
             )
-    elif remote_aligned is None:
-        pass
 
-    print(f"Loaded scene bundle: {args.bundle_path}")
-    print(f"Scene: {metadata['scene_name']}")
-    print(f"Frames: {metadata['frame_indices']}")
+    return metadata
+
+
+def main():
+    args = parse_args()
+    selected_frames = parse_frame_filter(args.frames)
+
+    init_rerun(args, args.bundle_path)
+    rr.log("/", rr.ViewCoordinates.RIGHT_HAND_Y_DOWN, static=True)
+    scene_specs = []
+    if args.bundle_path.is_dir():
+        bundle_paths = sorted(args.bundle_path.rglob("scene_bundle.pt"))
+        if not bundle_paths:
+            raise FileNotFoundError(f"No scene_bundle.pt found under directory: {args.bundle_path}")
+        for bundle_path in bundle_paths:
+            bundle = torch.load(bundle_path, map_location="cpu", weights_only=False)
+            metadata = log_scene_bundle(bundle, selected_frames=selected_frames, root_prefix=f"scenes/{bundle['metadata']['scene_name']}")
+            scene_specs.append((f"scenes/{metadata['scene_name']}", metadata["scene_name"]))
+            print(f"Loaded scene bundle: {bundle_path}")
+            print(f"Scene: {metadata['scene_name']}")
+            print(f"Frames: {metadata['frame_indices']}")
+    else:
+        bundle = torch.load(args.bundle_path, map_location="cpu", weights_only=False)
+        metadata = log_scene_bundle(bundle, selected_frames=selected_frames, root_prefix="")
+        scene_specs.append(("", metadata["scene_name"]))
+        print(f"Loaded scene bundle: {args.bundle_path}")
+        print(f"Scene: {metadata['scene_name']}")
+        print(f"Frames: {metadata['frame_indices']}")
+
+    rr.send_blueprint(build_blueprint(scene_specs))
 
 
 if __name__ == "__main__":
