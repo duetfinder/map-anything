@@ -12,8 +12,8 @@
     - `rs_only`：遥感高度指标
     - `joint`：空中视图 + 遥感视图联合前向后的两类任务指标
     - `improvement`：`joint` 相对 `aerial_only` / `rs_only` 的提升量
-  - 当前已实现：
-    - `joint_global_point_l1`
+  - 当前 joint 全局几何指标：
+    - `joint_global_pointmaps_abs_rel`
 
 ## 当前正式指标
 
@@ -34,9 +34,38 @@
 
 ### Joint
 
-- 当前只保留结果结构占位
-- 正式目标指标：`joint_global_point_l1`
-- 当前不再把 `crossview_pointmap_gap_abs` 作为正式主指标
+- `pointmaps_abs_rel`
+- `z_depth_abs_rel`
+- `pose_ate_rmse`
+- `pose_auc_5`
+- `ray_dirs_err_deg`
+- `metric_scale_abs_rel`
+- `metric_point_l1`
+- `rs_height_mae`
+- `rs_height_rmse`
+- `joint_global_pointmaps_abs_rel`
+
+其中：
+
+- `joint_global_pointmaps_abs_rel` 现在表示“`joint` 的 `pointmaps_abs_rel` 扩展版”
+- 做法是把 aerial 多视图和 remote 点图都先分别切到各自的 `view0` 参考系
+- 再对 GT / Pred 各自做联合 `avg_dis` normalization
+- 最后在这个统一相对几何空间里统计所有 aerial + remote 点的相对误差
+
+## 已修正的历史错误
+
+旧版 unified benchmark 里：
+
+- `joint_global_point_l1`
+- `joint_global_pointmaps_abs_rel`
+
+都没有沿用 `pointmaps_abs_rel` 的 `view0` 相对对齐逻辑，而是直接在全局系或直接 joint normalization 后比较。这和 aerial benchmark 的指标定义不一致，也会让可视化结果和指标语义脱节。
+
+当前修正后：
+
+- 删除 `joint_global_point_l1`
+- 保留并重定义 `joint_global_pointmaps_abs_rel`
+- 将其作为 `pointmaps_abs_rel + remote` 的唯一正式 joint 全局几何指标
 
 ## 配置与脚本
 

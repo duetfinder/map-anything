@@ -101,11 +101,10 @@ newyork__location_471,"0,2,4,6"
 
 ## Viewer 顶层分组
 
-网页里主要分成三组：
+网页里主要分成两组：
 
 - `modes/remote_metric`
 - `modes/benchmark`
-- `debug/raw`
 
 含义分别如下。
 
@@ -119,7 +118,7 @@ newyork__location_471,"0,2,4,6"
 - GT 和预测分别转到各自的 `view0` 参考系
 - 点云使用 benchmark 相同的 `avg_dis` joint normalization
 - pose translation 使用同一个归一化因子缩放
-- `joint_global` 使用和 `joint_global_pointmaps_abs_rel` 相同的 joint normalization 思路
+- `joint/remote` 使用和 `joint_global_pointmaps_abs_rel` 相同的 `view0 + avg_dis` 处理逻辑
 
 这个模式的用途是：
 
@@ -142,15 +141,16 @@ newyork__location_471,"0,2,4,6"
 - 坐标系仍然切到 `view0`
 - 不改 rotation，只恢复 translation / pointmap 的尺度
 - 尺度信息来自遥感图的 `meters_per_pixel`
-- 使用预测 remote pointmap 在水平面 `xy` 上的相邻像素距离估计一个全局 `scale_factor`
+- 使用预测 remote pointmap 的主平面邻接距离估计一个全局 `scale_factor`
 
 当前做法：
 
 1. 先把 `joint` 预测结果转到预测的 `view0` 坐标系
 2. 对 remote prediction：
    - 取有效像素
-   - 计算横向/纵向相邻像素的 `xy` 距离
-   - 取中位数作为预测像素间距
+   - 对有效点做平面拟合
+   - 把横向/纵向相邻像素位移投影到这个平面
+   - 取投影后距离的中位数作为预测像素间距
 3. 用
    - `scale_factor = meters_per_pixel / predicted_spacing_xy`
 4. 把这个 `scale_factor` 统一乘到：
@@ -164,23 +164,6 @@ newyork__location_471,"0,2,4,6"
 - 直观判断全局点云大小是否合理
 
 这个模式不用于 benchmark 打分，它是 visualization mode。
-
-### `debug/raw`
-
-这是原始调试模式，保留未对齐的输出，主要用于排错。
-
-包含：
-
-- raw aerial-only fused 点云
-- raw joint fused 点云
-- raw 每帧 GT / prediction 点图
-- raw remote GT / `rs_only` / `joint` 点图
-
-这个分组主要用于确认：
-
-- 模型原始输出坐标系
-- exporter 是否正确
-- 对齐前后的差别
 
 ## 两种对齐方式的区别
 
@@ -252,8 +235,22 @@ rerun /path/to/scene_bundle.rrd --web-viewer
    - 用来判断全局点云尺度和整体结构
 2. 再看 `modes/benchmark`
    - 用来和 benchmark 指标对应
-3. 最后才看 `debug/raw`
-   - 只用于排查模型输出或 exporter 问题
+3. 如果要排查 exporter，再直接检查导出的 `.ply` 或 `scene_bundle.pt`
+
+## 关于 `joint_global` 的历史错误
+
+旧版 benchmark / viewer 中的 `joint_global` 及其相关指标存在一个定义问题：
+
+- `joint_global_point_l1`
+- 旧版 `joint_global_pointmaps_abs_rel`
+
+都没有像 `pointmaps_abs_rel` 一样先把 aerial / remote 切到各自的 `view0` 相对参考系，再做误差比较。这样会把“全局刚体是否正好重合”和“相对几何是否正确”混在一起，和 aerial 指标的语义不一致。
+
+当前修正后：
+
+- viewer 不再单独显示 `joint_global`
+- benchmark 只保留一个修正后的 `joint_global_pointmaps_abs_rel`
+- 其定义是 `pointmaps_abs_rel` 的 remote 扩展版，而不是独立的一套“全局绝对对齐”指标
 
 ## 注意事项
 

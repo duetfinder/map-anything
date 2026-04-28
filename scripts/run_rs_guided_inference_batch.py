@@ -20,11 +20,11 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 from benchmarking.rs_guided_dense_mv.benchmark_unified import (
     compute_aerial_scene_metrics,
-    compute_joint_global_point_l1,
     compute_joint_global_pointmaps_abs_rel,
     compute_remote_height_metrics,
     compute_remote_height_metrics_affine,
     diff_metric_dict,
+    get_joint_remote_metric_space_pointmaps,
     model_supports_metric_outputs,
 )
 from benchmarking.dense_n_view.benchmark import get_all_info_for_metric_computation
@@ -482,146 +482,33 @@ def build_benchmark_aligned_aerial(batch, preds):
 
 
 def build_benchmark_aligned_joint(batch, joint_preds, remote_sample):
-    aerial_gt_pts_list = [view["pts3d"].detach().cpu() for view in batch]
-    aerial_pr_pts_list = []
-    aerial_valid_masks = []
-    for view_idx, view in enumerate(batch):
-        gt_pts = view["pts3d"].detach().cpu()
-        pred_pts = joint_preds[view_idx]["pts3d"].detach().cpu()
-        if "metric_scaling_factor" in joint_preds[view_idx]:
-            pred_pts = pred_pts / joint_preds[view_idx]["metric_scaling_factor"].detach().cpu().view(-1, 1, 1, 1)
-        aerial_pr_pts_list.append(pred_pts)
-        aerial_valid_masks.append(
-            (
-                torch.isfinite(gt_pts).all(dim=-1)
-                & torch.isfinite(pred_pts).all(dim=-1)
-            ).detach().cpu()
-        )
-
-    gt_pts_list = [view["pts3d"].detach().cpu() for view in batch]
-    pr_pts_list = [joint_preds[view_idx]["pts3d"].detach().cpu() for view_idx in range(len(batch))]
-    valid_masks = [
-        (
-            torch.isfinite(gt_pts_list[view_idx]).all(dim=-1)
-            & torch.isfinite(pr_pts_list[view_idx]).all(dim=-1)
-        ).detach().cpu()
-        for view_idx, view in enumerate(batch)
-    ]
-
-    gt_remote_pts = torch.from_numpy(remote_sample["remote_pointmap"]).unsqueeze(0).float()
-    pr_remote_pts = joint_preds[len(batch)]["pts3d"].detach().cpu()
-    remote_valid_mask = (
-        torch.from_numpy(remote_sample["remote_valid_mask"])
-        .unsqueeze(0)
-        .bool()
+    gt_pts_list, pr_pts_list, valid_masks = get_joint_remote_metric_space_pointmaps(
+        batch=batch,
+        joint_preds=joint_preds,
+        remote_sample=remote_sample,
     )
-    remote_valid_mask = (
-        remote_valid_mask
-        & torch.isfinite(gt_remote_pts).all(dim=-1)
-        & torch.isfinite(pr_remote_pts).all(dim=-1)
-    )
-
-    gt_pts_list.append(gt_remote_pts)
-    pr_pts_list.append(pr_remote_pts)
-    valid_masks.append(remote_valid_mask)
-
     gt_pts_norm = normalize_multiple_pointclouds(
         gt_pts_list, valid_masks=valid_masks, norm_mode="avg_dis"
     )
     pr_pts_norm = normalize_multiple_pointclouds(
         pr_pts_list, valid_masks=valid_masks, norm_mode="avg_dis"
     )
-
-    aerial_views = []
-    aerial_gt_colors = []
-    aerial_pred_colors = []
-    for view_idx in range(len(batch)):
-        image_rgb = tensor_image_to_uint8(batch[view_idx])
-        valid_mask_np = valid_masks[view_idx][0].numpy().astype(bool)
-        aerial_views.append(
-            {
-                "gt_points": gt_pts_norm[view_idx][0].numpy().astype(np.float32),
-                "pred_points": pr_pts_norm[view_idx][0].numpy().astype(np.float32),
-                "valid_mask": valid_mask_np,
-            }
-        )
-        aerial_gt_colors.append(image_rgb[valid_mask_np])
-        aerial_pred_colors.append(image_rgb[valid_mask_np])
-
     remote_image_rgb = np.clip(
         remote_sample["remote_image"].permute(1, 2, 0).cpu().numpy() * 255.0,
         0,
         255,
     ).astype(np.uint8)
-    remote_valid_mask_np = valid_masks[-1][0].numpy().astype(bool)
-
-    pred_camera0 = torch.eye(4, device=joint_preds[0]["cam_quats"].device).unsqueeze(0)
-    pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(joint_preds[0]["cam_quats"].clone())
-    pred_camera0[..., :3, 3] = joint_preds[0]["cam_trans"].clone()
-    pred_in_camera0 = inv(pred_camera0)
-    gt_in_camera0 = inv(batch[0]["camera_pose"])
-
-    gt_aerial_norm = normalize_multiple_pointclouds(
-        aerial_gt_pts_list,
-        valid_masks=aerial_valid_masks,
-        norm_mode="avg_dis",
-        ret_factor=True,
-    )
-    gt_norm_factor = gt_aerial_norm[-1]
-    pr_aerial_norm = normalize_multiple_pointclouds(
-        aerial_pr_pts_list,
-        valid_masks=aerial_valid_masks,
-        norm_mode="avg_dis",
-        ret_factor=True,
-    )
-    pr_norm_factor = pr_aerial_norm[-1]
-
-    raw_gt_remote = gt_remote_pts[0].detach().cpu().numpy().astype(np.float32)
-    raw_pred_remote = pr_remote_pts[0].detach().cpu().numpy().astype(np.float32)
     remote_pose_gt = np.eye(4, dtype=np.float32)
     remote_pose_pred = np.eye(4, dtype=np.float32)
 
     return {
-        "aerial_views": aerial_views,
-        "global_gt_colors": np.concatenate(
-            aerial_gt_colors + [remote_image_rgb[remote_valid_mask_np]], axis=0
-        ).astype(np.uint8),
-        "global_pred_colors": np.concatenate(
-            aerial_pred_colors + [remote_image_rgb[remote_valid_mask_np]], axis=0
-        ).astype(np.uint8),
         "remote": {
             "gt_points": gt_pts_norm[-1][0].numpy().astype(np.float32),
             "pred_points": pr_pts_norm[-1][0].numpy().astype(np.float32),
             "valid_mask": valid_masks[-1][0].numpy().astype(bool),
-            "raw_gt_points": raw_gt_remote,
-            "raw_pred_points": raw_pred_remote,
             "gt_pose": remote_pose_gt,
             "pred_pose": remote_pose_pred,
-            "gt_in_view0_raw": geotrf(
-                gt_in_camera0,
-                gt_remote_pts.to(gt_in_camera0.device),
-            )[0].detach().cpu().numpy().astype(np.float32),
-            "pred_in_view0_raw": geotrf(
-                pred_in_camera0,
-                pr_remote_pts.to(pred_in_camera0.device),
-            )[0].detach().cpu().numpy().astype(np.float32),
-            "joint_view0_gt_points": (
-                geotrf(
-                    gt_in_camera0,
-                    gt_remote_pts.to(gt_in_camera0.device),
-                ).detach().cpu() / gt_norm_factor.detach().cpu()
-            )[0].numpy().astype(np.float32),
-            "joint_view0_pred_points": (
-                geotrf(
-                    pred_in_camera0,
-                    (
-                        pr_remote_pts.to(pred_in_camera0.device)
-                        / joint_preds[len(batch)]["metric_scaling_factor"].detach().to(pred_in_camera0.device).view(-1, 1, 1, 1)
-                    )
-                    if "metric_scaling_factor" in joint_preds[len(batch)]
-                    else pr_remote_pts.to(pred_in_camera0.device),
-                ).detach().cpu() / pr_norm_factor.detach().cpu()
-            )[0].numpy().astype(np.float32),
+            "colors": remote_image_rgb.astype(np.uint8),
         },
     }
 
@@ -814,6 +701,32 @@ def build_remote_metric_aligned_joint(batch, joint_preds, remote_sample):
         0,
         255,
     ).astype(np.uint8)
+    remote_height, remote_width = remote_image_rgb.shape[:2]
+    remote_intrinsics = np.array(
+        [
+            [1e6, 0.0, (remote_width - 1) * 0.5],
+            [0.0, 1e6, (remote_height - 1) * 0.5],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+    remote_gt_pose = gt_in_camera0[0].detach().cpu().numpy().astype(np.float32)
+    remote_pred_quat, remote_pred_trans = transform_pose_using_quats_and_trans_2_to_1(
+        joint_preds[0]["cam_quats"],
+        joint_preds[0]["cam_trans"],
+        joint_preds[len(batch)]["cam_quats"],
+        joint_preds[len(batch)]["cam_trans"],
+    )
+    remote_pred_trans_np = remote_pred_trans[0].detach().cpu().numpy().astype(np.float32)
+    if "metric_scaling_factor" in joint_preds[len(batch)]:
+        remote_pred_trans_np = remote_pred_trans_np / remote_raw_scale
+    remote_pred_pose = np.eye(4, dtype=np.float32)
+    remote_pred_pose[:3, :3] = quaternion_to_rotation_matrix(
+        remote_pred_quat
+    ).detach().cpu().numpy()[0].astype(np.float32)
+    remote_pred_pose[:3, 3] = (remote_pred_trans_np * scale_factor).astype(np.float32)
+
     global_gt_points.append(gt_remote_in_view0[remote_valid_mask])
     global_pred_points.append((pred_remote_in_view0 * scale_factor)[remote_valid_mask])
     global_gt_colors.append(remote_image_rgb[remote_valid_mask])
@@ -826,6 +739,9 @@ def build_remote_metric_aligned_joint(batch, joint_preds, remote_sample):
             "gt_points": gt_remote_in_view0.astype(np.float32),
             "pred_points": (pred_remote_in_view0 * scale_factor).astype(np.float32),
             "valid_mask": remote_valid_mask,
+            "gt_pose": remote_gt_pose,
+            "pred_pose": remote_pred_pose,
+            "camera_intrinsics": remote_intrinsics,
         },
         "global": {
             "gt_points": np.concatenate(global_gt_points, axis=0).astype(np.float32),
@@ -929,7 +845,7 @@ def scene_bundle_from_outputs(scene_name, frame_indices, provider_name, batch, r
     joint_points, joint_colors = collect_world_space_point_cloud(joint_preds[: len(batch)], batch)
     aerial_aligned = build_benchmark_aligned_aerial(batch, aerial_preds)
     joint_aligned = build_benchmark_aligned_aerial(batch, joint_preds[: len(batch)])
-    joint_global_aligned = build_benchmark_aligned_joint(batch, joint_preds, remote_sample)
+    joint_remote_aligned = build_benchmark_aligned_joint(batch, joint_preds, remote_sample)
     joint_remote_metric = build_remote_metric_aligned_joint(batch, joint_preds, remote_sample)
 
     views_payload = []
@@ -966,11 +882,6 @@ def scene_bundle_from_outputs(scene_name, frame_indices, provider_name, batch, r
                         "pred_points": joint_aligned["views"][view_idx]["pred_points"],
                         "valid_mask": joint_aligned["views"][view_idx]["valid_mask"],
                     },
-                    "joint_global": {
-                        "gt_points": joint_global_aligned["aerial_views"][view_idx]["gt_points"],
-                        "pred_points": joint_global_aligned["aerial_views"][view_idx]["pred_points"],
-                        "valid_mask": joint_global_aligned["aerial_views"][view_idx]["valid_mask"],
-                    },
                     "remote_metric_joint": {
                         "gt_pose": joint_remote_metric["views"][view_idx]["gt_pose"],
                         "pred_pose": joint_remote_metric["views"][view_idx]["pred_pose"],
@@ -1006,11 +917,11 @@ def scene_bundle_from_outputs(scene_name, frame_indices, provider_name, batch, r
             "remote_crop_box_xyxy": remote_sample["remote_crop_box_xyxy"].astype(np.int32),
             "benchmark_aligned": {
                 "joint": {
-                    "gt_points": joint_global_aligned["remote"]["joint_view0_gt_points"],
-                    "pred_points": joint_global_aligned["remote"]["joint_view0_pred_points"],
-                    "valid_mask": joint_global_aligned["remote"]["valid_mask"],
-                },
-                "joint_global": joint_global_aligned["remote"],
+                    "gt_points": joint_remote_aligned["remote"]["gt_points"],
+                    "pred_points": joint_remote_aligned["remote"]["pred_points"],
+                    "valid_mask": joint_remote_aligned["remote"]["valid_mask"],
+                    "colors": joint_remote_aligned["remote"]["colors"],
+                }
             },
             "remote_metric_aligned": joint_remote_metric["remote"],
             "meters_per_pixel": (
@@ -1119,11 +1030,6 @@ def run_scene(model, device, args, row, available_scenes):
     joint_metrics = {
         **joint_aerial_metrics,
         **joint_rs_metrics,
-        "joint_global_point_l1": (
-            compute_joint_global_point_l1(batch=batch, joint_preds=joint_preds, remote_sample=remote_sample)
-            if joint_supports_metric_outputs
-            else float("nan")
-        ),
         "joint_global_pointmaps_abs_rel": compute_joint_global_pointmaps_abs_rel(
             batch=batch,
             joint_preds=joint_preds,

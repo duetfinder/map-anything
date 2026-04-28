@@ -32,7 +32,6 @@ RS_NONMETRIC_METRICS = [
     'rs_height_rmse_affine',
 ]
 JOINT_METRICS = [
-    'joint_global_point_l1',
     'joint_global_pointmaps_abs_rel',
 ]
 ALL_METRICS = AERIAL_METRICS + RS_METRIC_METRICS + RS_NONMETRIC_METRICS + JOINT_METRICS
@@ -69,14 +68,12 @@ def collect_rows(root: Path):
                     row['metric_point_l1'] = None
 
                 if mode_key == 'joint':
-                    row['joint_global_point_l1'] = result['joint']['average'].get('joint_global_point_l1') if model_name == 'MapAnything' else None
                     row['joint_global_pointmaps_abs_rel'] = result['joint']['average'].get('joint_global_pointmaps_abs_rel')
                     row['rs_height_mae'] = result['joint']['average'].get('rs_height_mae') if model_name == 'MapAnything' else None
                     row['rs_height_rmse'] = result['joint']['average'].get('rs_height_rmse') if model_name == 'MapAnything' else None
                     row['rs_height_mae_affine'] = result['joint']['average'].get('rs_height_mae_affine')
                     row['rs_height_rmse_affine'] = result['joint']['average'].get('rs_height_rmse_affine')
                 else:
-                    row['joint_global_point_l1'] = None
                     row['joint_global_pointmaps_abs_rel'] = None
                     row['rs_height_mae'] = None
                     row['rs_height_rmse'] = None

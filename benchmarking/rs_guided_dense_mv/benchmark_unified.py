@@ -10,7 +10,7 @@ Current executable scope:
 - Aerial-only metrics on paired scenes
 - RS-only height metrics on paired scenes
 - Joint aerial+RS forward inference on paired scenes
-- joint_global_point_l1
+- joint_global_pointmaps_abs_rel
 """
 
 import ast
@@ -245,50 +245,42 @@ def compute_remote_height_metrics_affine(gt_height, pred_pts, valid_mask):
     }
 
 
-def compute_joint_global_point_l1(batch, joint_preds, remote_sample):
-    total_error = 0.0
-    total_count = 0
+def get_joint_remote_metric_space_pointmaps(batch, joint_preds, remote_sample):
+    pred_camera0 = torch.eye(4, device=joint_preds[0]["cam_quats"].device).unsqueeze(0)
+    pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(joint_preds[0]["cam_quats"].clone())
+    pred_camera0[..., :3, 3] = joint_preds[0]["cam_trans"].clone()
+    pred_in_camera0 = inv(pred_camera0)
+    gt_in_camera0 = inv(batch[0]["camera_pose"])
+
+    gt_pts_list = []
+    pr_pts_list = []
+    valid_masks = []
 
     for view_idx, view in enumerate(batch):
-        gt_pts = view["pts3d"][0].detach().cpu().numpy()
-        pr_pts = joint_preds[view_idx]["pts3d"][0].detach().cpu().numpy()
-        valid_mask = np.isfinite(gt_pts).all(axis=-1) & np.isfinite(pr_pts).all(axis=-1)
-        if valid_mask.any():
-            diff = np.abs(pr_pts - gt_pts).sum(axis=-1)
-            total_error += float(diff[valid_mask].sum())
-            total_count += int(valid_mask.sum())
+        gt_pts = geotrf(gt_in_camera0, view["pts3d"]).detach().cpu()
+        pr_pts = geotrf(pred_in_camera0, joint_preds[view_idx]["pts3d"]).detach().cpu()
+        if "metric_scaling_factor" in joint_preds[view_idx]:
+            pr_pts = pr_pts / joint_preds[view_idx]["metric_scaling_factor"].detach().cpu().view(-1, 1, 1, 1)
 
-    gt_remote_pts = remote_sample["remote_pointmap"]
-    pr_remote_pts = joint_preds[len(batch)]["pts3d"][0].detach().cpu().numpy()
-    remote_valid_mask = remote_sample["remote_valid_mask"].astype(bool)
-    valid_mask = (
-        remote_valid_mask
-        & np.isfinite(gt_remote_pts).all(axis=-1)
-        & np.isfinite(pr_remote_pts).all(axis=-1)
-    )
-    if valid_mask.any():
-        diff = np.abs(pr_remote_pts - gt_remote_pts).sum(axis=-1)
-        total_error += float(diff[valid_mask].sum())
-        total_count += int(valid_mask.sum())
-
-    if total_count == 0:
-        return float("nan")
-    return float(total_error / total_count)
-
-
-def compute_joint_global_pointmaps_abs_rel(batch, joint_preds, remote_sample):
-    gt_pts_list = [view["pts3d"].detach().cpu() for view in batch]
-    pr_pts_list = [joint_preds[view_idx]["pts3d"].detach().cpu() for view_idx in range(len(batch))]
-    valid_masks = [
-        (
-            torch.isfinite(view["pts3d"]).all(dim=-1)
-            & torch.isfinite(joint_preds[view_idx]["pts3d"]).all(dim=-1)
-        ).detach().cpu()
-        for view_idx, view in enumerate(batch)
-    ]
+        gt_mask = view["valid_mask"].detach().cpu().bool()
+        valid_mask = (
+            gt_mask
+            & torch.isfinite(gt_pts).all(dim=-1)
+            & torch.isfinite(pr_pts).all(dim=-1)
+        )
+        gt_pts_list.append(gt_pts)
+        pr_pts_list.append(pr_pts)
+        valid_masks.append(valid_mask)
 
     gt_remote_pts = torch.from_numpy(remote_sample["remote_pointmap"]).unsqueeze(0).float()
     pr_remote_pts = joint_preds[len(batch)]["pts3d"].detach().cpu()
+    if "metric_scaling_factor" in joint_preds[len(batch)]:
+        pr_remote_pts = (
+            pr_remote_pts
+            / joint_preds[len(batch)]["metric_scaling_factor"].detach().cpu().view(-1, 1, 1, 1)
+        )
+    gt_remote_pts = geotrf(gt_in_camera0.detach().cpu(), gt_remote_pts)
+    pr_remote_pts = geotrf(pred_in_camera0.detach().cpu(), pr_remote_pts)
     remote_valid_mask = torch.from_numpy(remote_sample["remote_valid_mask"]).unsqueeze(0).bool()
     remote_valid_mask = (
         remote_valid_mask
@@ -299,6 +291,15 @@ def compute_joint_global_pointmaps_abs_rel(batch, joint_preds, remote_sample):
     gt_pts_list.append(gt_remote_pts)
     pr_pts_list.append(pr_remote_pts)
     valid_masks.append(remote_valid_mask)
+    return gt_pts_list, pr_pts_list, valid_masks
+
+
+def compute_joint_global_pointmaps_abs_rel(batch, joint_preds, remote_sample):
+    gt_pts_list, pr_pts_list, valid_masks = get_joint_remote_metric_space_pointmaps(
+        batch=batch,
+        joint_preds=joint_preds,
+        remote_sample=remote_sample,
+    )
 
     gt_pts_norm = normalize_multiple_pointclouds(
         gt_pts_list, valid_masks=valid_masks, norm_mode="avg_dis"
@@ -545,15 +546,6 @@ def benchmark(args):
             joint_per_scene[scene] = {
                 **joint_aerial_metrics,
                 **joint_rs_metrics,
-                "joint_global_point_l1": (
-                    compute_joint_global_point_l1(
-                        batch=single_batch,
-                        joint_preds=single_joint_preds,
-                        remote_sample=remote_sample,
-                    )
-                    if joint_supports_metric_outputs
-                    else float("nan")
-                ),
                 "joint_global_pointmaps_abs_rel": compute_joint_global_pointmaps_abs_rel(
                     batch=single_batch,
                     joint_preds=single_joint_preds,
@@ -587,7 +579,6 @@ def benchmark(args):
             "joint_forward_implemented": True,
             "joint_metrics_implemented": True,
             "joint_metric_names": [
-                "joint_global_point_l1",
                 "joint_global_pointmaps_abs_rel",
             ],
         },

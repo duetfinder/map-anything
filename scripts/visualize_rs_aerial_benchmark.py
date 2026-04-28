@@ -81,7 +81,7 @@ def main():
             'rs_height_mae': scene_data['rs_only'].get('rs_height_mae'),
             'joint_rs_height_mae': scene_data['joint'].get('rs_height_mae'),
             'rs_gain_height_mae': scene_data['improvement']['rs_vs_rs_only'].get('rs_height_mae'),
-            'joint_global_point_l1': scene_data['joint'].get('joint_global_point_l1'),
+            'joint_global_pointmaps_abs_rel': scene_data['joint'].get('joint_global_pointmaps_abs_rel'),
         })
     ranking_rows.sort(key=lambda x: (float('inf') if x['aerial_gain_pointmaps_abs_rel'] != x['aerial_gain_pointmaps_abs_rel'] else x['aerial_gain_pointmaps_abs_rel']))
 
