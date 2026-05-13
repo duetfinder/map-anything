@@ -9,6 +9,7 @@ Joint VIGOR Chicago dataset that augments aerial multi-view samples with per-sce
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -33,6 +34,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         remote_ROOT,
         remote_provider='Google_Satellite',
         remote_providers=None,
+        remote_provider_map_csv=None,
         remote_provider_sampling_mode='first_available',
         remote_resolution=(518, 518),
         remote_transform='imgnorm',
@@ -49,6 +51,11 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         if normalized_providers is None and remote_provider is not None:
             normalized_providers = normalize_providers(remote_provider)
         self.remote_providers = normalized_providers
+        self.remote_provider_map_csv = (
+            Path(remote_provider_map_csv)
+            if remote_provider_map_csv not in (None, "None", "")
+            else None
+        )
         self.remote_provider_sampling_mode = str(remote_provider_sampling_mode).lower()
         self.remote_resolution = tuple(remote_resolution)
         self.cities = cities
@@ -75,12 +82,33 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
 
         super().__init__(*args, cities=cities, **kwargs)
 
+        self.remote_provider_map = {}
+        if self.remote_provider_map_csv is not None:
+            with self.remote_provider_map_csv.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                if reader.fieldnames is None:
+                    raise ValueError(
+                        f"CSV file has no header: {self.remote_provider_map_csv}"
+                    )
+                if "scene_name" not in reader.fieldnames or "remote_provider" not in reader.fieldnames:
+                    raise ValueError(
+                        "remote_provider_map_csv must contain scene_name and remote_provider columns"
+                    )
+                for row in reader:
+                    scene_name = str(row["scene_name"]).strip()
+                    remote_provider = str(row["remote_provider"]).strip()
+                    if scene_name and remote_provider:
+                        self.remote_provider_map[scene_name] = remote_provider
+
         available_scenes = []
         self.remote_scene_candidates = {}
         self._expanded_scene_entries = []
         for scene_name in self.scenes:
             scene_root = self.remote_ROOT / scene_name
-            candidate_providers = self.remote_providers or available_providers(scene_root)
+            if scene_name in self.remote_provider_map:
+                candidate_providers = [self.remote_provider_map[scene_name]]
+            else:
+                candidate_providers = self.remote_providers or available_providers(scene_root)
             if not candidate_providers:
                 if skip_missing_remote:
                     continue

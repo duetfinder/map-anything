@@ -5,6 +5,7 @@ test_remote_height_loss_weight: 0.0
 remote_compare_in_view0_frame: true
 remote_detach_pose_for_view0_align: false
 remote_pointmap_norm_mode: avg_dis
+scale_remote_loss_by_num_aerial_views: false
 
 train_criterion: >
   JointAerialRSLoss(
@@ -34,7 +35,8 @@ train_criterion: >
       compare_in_view0_frame=${loss.remote_compare_in_view0_frame},
       detach_pose_for_view0_align=${loss.remote_detach_pose_for_view0_align},
       pointmap_norm_mode='${loss.remote_pointmap_norm_mode}'
-    )
+    ),
+    scale_remote_loss_by_num_aerial_views=${loss.scale_remote_loss_by_num_aerial_views}
   )
 test_criterion: >
   JointAerialRSLoss(
@@ -64,5 +66,6 @@ test_criterion: >
       compare_in_view0_frame=${loss.remote_compare_in_view0_frame},
       detach_pose_for_view0_align=${loss.remote_detach_pose_for_view0_align},
       pointmap_norm_mode='${loss.remote_pointmap_norm_mode}'
-    )
+    ),
+    scale_remote_loss_by_num_aerial_views=${loss.scale_remote_loss_by_num_aerial_views}
   )
