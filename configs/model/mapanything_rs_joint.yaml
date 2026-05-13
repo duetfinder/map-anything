@@ -1,0 +1,18 @@
+defaults:
+  - default
+  - encoder: dinov2_giant_24_layers
+  - info_sharing: aat_ifr_16_layers_vitg_dim
+  - pred_head: dpt_pose_scale
+  - task: images_only
+
+model_str: "mapanything_rs_joint"
+model_config:
+  name: "mapanything_rs_joint"
+  encoder_config: ${model.encoder}
+  info_sharing_config: ${model.info_sharing}
+  pred_head_config: ${model.pred_head}
+  geometric_input_config: ${model.task}
+  use_register_tokens_from_encoder: True
+  info_sharing_mlp_layer_str: "swiglufused"
+  use_view_type_bias: True
+data_norm_type: ${model.encoder.data_norm_type}

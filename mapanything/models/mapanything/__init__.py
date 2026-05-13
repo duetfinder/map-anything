@@ -6,9 +6,11 @@
 from mapanything.models.mapanything.ablations import MapAnythingAblations
 from mapanything.models.mapanything.model import MapAnything
 from mapanything.models.mapanything.modular_dust3r import ModularDUSt3R
+from mapanything.models.mapanything.rs_joint import MapAnythingRSJoint
 
 __all__ = [
     "MapAnything",
     "MapAnythingAblations",
+    "MapAnythingRSJoint",
     "ModularDUSt3R",
 ]

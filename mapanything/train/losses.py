@@ -617,6 +617,7 @@ class JointAerialRSLoss(nn.Module):
         aerial_loss_weight=1.0,
         remote_loss_weight=1.0,
         remote_view_index=-1,
+        scale_remote_loss_by_num_aerial_views=False,
     ):
         super().__init__()
         self.aerial_criterion = aerial_criterion
@@ -624,6 +625,7 @@ class JointAerialRSLoss(nn.Module):
         self.aerial_loss_weight = aerial_loss_weight
         self.remote_loss_weight = remote_loss_weight
         self.remote_view_index = remote_view_index
+        self.scale_remote_loss_by_num_aerial_views = scale_remote_loss_by_num_aerial_views
 
     def forward(self, gts, preds, **kwargs):
         if len(gts) != len(preds):
@@ -655,9 +657,13 @@ class JointAerialRSLoss(nn.Module):
             remote_loss, remote_details = self.remote_criterion(
                 remote_gts, remote_preds, aerial_gts=aerial_gts, aerial_preds=aerial_preds, **kwargs
             )
-            weighted_remote_loss = self.remote_loss_weight * remote_loss
+            effective_remote_weight = self.remote_loss_weight
+            if self.scale_remote_loss_by_num_aerial_views:
+                effective_remote_weight = effective_remote_weight * len(aerial_gts)
+            weighted_remote_loss = effective_remote_weight * remote_loss
             total_loss = weighted_remote_loss if total_loss is None else total_loss + weighted_remote_loss
             details['remote_loss'] = float(remote_loss)
+            details['remote_loss_weight_effective'] = float(effective_remote_weight)
             details.update(remote_details)
 
         if total_loss is None:

@@ -23,6 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 from mapanything.models.mapanything import (
     MapAnything,
     MapAnythingAblations,
+    MapAnythingRSJoint,
     ModularDUSt3R,
 )
 
@@ -177,6 +178,9 @@ MODEL_CONFIGS = {
     },
     "mapanything_ablations": {
         "class": MapAnythingAblations,
+    },
+    "mapanything_rs_joint": {
+        "class": MapAnythingRSJoint,
     },
     "modular_dust3r": {
         "class": ModularDUSt3R,

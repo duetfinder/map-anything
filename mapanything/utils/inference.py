@@ -185,6 +185,7 @@ def loss_of_one_batch_multi_view(
             {
                 'img': remote_gt_view['img'],
                 'data_norm_type': remote_gt_view['data_norm_type'],
+                'instance': 'remote',
             }
         ]
 

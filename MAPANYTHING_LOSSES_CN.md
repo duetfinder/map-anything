@@ -243,6 +243,44 @@
 - 作用：`DisentangledFactoredGeometryScaleRegr3D` + `NormalGMLoss`
 - 相机依赖：非常强
 
+### 2.4 原始 MapAnything 默认训练在监督什么
+
+这一点对后续 `RS-joint` 设计很关键：原始 `MapAnything` 并不是只监督一种“点云误差”，而是同时监督一组分解几何量。
+
+以主训练配方 [overall_loss_highpm_plus_rel_pose.yaml](configs/loss/overall_loss_highpm_plus_rel_pose.yaml) 为例，内层使用的是：
+
+- `FactoredGeometryScaleRegr3DPlusNormalGMLoss(...)`
+
+它同时监督：
+
+- 世界系点图 `pts3d`
+- 相机系点图 `pts3d_cam`
+- `depth_along_ray`
+- `ray_directions`
+- `cam_quats`
+- `cam_trans`
+- `metric_scaling_factor`
+- 基于 `pts3d_cam` / `depth_z` 计算出的 `normal` 和 `gradient matching`
+
+而且这些项的权重并不相同。这个 canonical 配方里：
+
+- `world_frame_points_loss_weight=1`
+- `cam_frame_points_loss_weight=0.1`
+- `depth_loss_weight=0.1`
+- `ray_directions_loss_weight=0.1`
+- `pose_quats_loss_weight=0.1`
+- `pose_trans_loss_weight=0.1`
+- `scale_loss_weight=0.1`
+- `normal_loss_weight=0.3`
+- `gm_loss_weight=0.3`
+
+这意味着原始 `MapAnything` 的主监督重点其实是：
+
+1. 世界系点图 `pts3d`
+2. 其余 factorized 几何量作为辅助约束
+
+所以如果后续做 `RS-joint`，只保留 remote 的 `world-frame pts3d` loss，在训练哲学上并不违背 `MapAnything` 原始设计；只是把那些依赖相机模型的辅助项去掉了。
+
 ## 3. 哪些 loss 相对不依赖相机，哪些强依赖相机
 
 ### 3.1 相对独立 / 容易改造成 RS-only 的
@@ -426,6 +464,18 @@
 - 在 `overall_loss` 基础上启用：
   - `compute_absolute_pose_loss=True`
   - `compute_pairwise_relative_pose_loss=True`
+- 这是当前最接近原始 `MapAnything` 主训练的 canonical 配方之一
+- 其内层实际上是“世界点图主监督 + 其余 factorized geometry 辅助监督”
+- 关键权重关系：
+  - `world_frame_points_loss_weight=1`
+  - `cam_frame_points_loss_weight=0.1`
+  - `depth_loss_weight=0.1`
+  - `ray_directions_loss_weight=0.1`
+  - `pose_quats_loss_weight=0.1`
+  - `pose_trans_loss_weight=0.1`
+  - `scale_loss_weight=0.1`
+  - `normal_loss_weight=0.3`
+  - `gm_loss_weight=0.3`
 - 相机依赖：非常强
 
 #### [overall_loss_highpm_plus_rel_pose_no_conf.yaml](configs/loss/overall_loss_highpm_plus_rel_pose_no_conf.yaml)
@@ -484,6 +534,36 @@
 - 不直接用 `vggt_loss`
 - 不直接用 `overall_loss`
 - 新建一个 `RS-only` 专用 loss
+
+如果把这个判断再往前推进一步，对未来的 `MapAnything RS-joint` 也同样成立：
+
+- remote 分支更适合直接监督 `pred['pts3d']`
+- 不适合把 `pred['pts3d_cam']` 当作主监督目标
+
+原因不是 `pts3d_cam` 不重要，而是它的语义前提是“存在一个可解释的相机坐标系”。
+
+对普通 `MapAnything` 图像分支：
+
+- `pts3d_cam` 可以由 `ray_directions * depth_along_ray` 恢复
+- `ray_directions` / `depth_along_ray` 又都有明确的 perspective camera 几何含义
+
+但对当前遥感 / 卫星图像分支：
+
+- 没有可靠的相机内参 / 外参定义
+- 也不希望把 remote head 强行约束成 `ray + depth + pose` 这种 perspective factorization
+
+因此如果 remote head 直接输出世界系 pointmap，那么只做 `world-frame pts3d loss` 是合理的，而且比伪造一个 `pts3d_cam` 监督更干净。
+
+这里只要保证一件事：
+
+- remote GT pointmap 与 remote 预测 pointmap 必须定义在同一个坐标系下
+
+这个坐标系可以是：
+
+- 遥感数据自己的世界 / 地图坐标系
+- 或者在 joint 训练中先转换后的 `aerial view0` 坐标系
+
+但无论是哪一种，都应避免在没有可靠 camera model 的情况下构造“伪 camera-frame GT”。
 
 ### 5.2 对 Pi3 而言，P2 最该保留和最该避开的是什么
 
@@ -627,3 +707,34 @@ total_loss = robust_pointmap_loss + 0.1 * masked_L1(pred_height, gt_height)
 
 - `P2` 的核心不是复用 MapAnything 现有强几何 loss
 - 而是为没有可靠相机模型的 RS 数据，单独设计一个“最小、稳定、尽量不伤原模型能力”的几何回归目标
+
+## 7. P4 RS-joint 的 loss 补充
+
+当前 `P4` 的 `MapAnything RS-joint` 变体继续复用 joint loss 容器 [configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)，但有两个实现补充需要单独记下：
+
+1. `remote` 侧当前主监督仍然是 `RSPointmapHeightLoss`
+   第一版推荐只把 `pointmap` 当主项，`height` 先关掉或保持很小权重。
+
+2. `JointAerialRSLoss` 新增了 `scale_remote_loss_by_num_aerial_views`
+   开关位置：
+   - 配置：[configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
+   - 实现：[mapanything/train/losses.py](mapanything/train/losses.py)
+
+它的语义是：
+
+```text
+effective_remote_weight = remote_loss_weight * num_aerial_views
+```
+
+使用原因：
+
+- aerial 分支通常会随着输入 view 数增加而累积更多监督量
+- remote 分支通常只有 1 个 satellite / map view
+- 如果外层权重固定，随着 aerial view 数增加，remote loss 的相对贡献会被压缩
+
+因此在 `RS-joint` 微调里，更推荐：
+
+- 保持 remote 内部仍然做 masked mean
+- 再在 joint loss 外层按 `num_aerial_views` 缩放 remote 权重
+
+这不是改变 remote 点云误差本身的定义，而是修正多 view aerial 与单 view remote 在联合训练里的相对量级。

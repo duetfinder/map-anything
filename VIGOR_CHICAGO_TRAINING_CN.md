@@ -990,3 +990,112 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
   - 记录全局进展、数据产物、benchmark 状态
 - `VIGOR_CHICAGO_TRAINING_CN.md`
   - 记录训练设计、训练假设、loss、联合训练策略、实验表
+
+## 13. P4 MapAnything RS-joint 记录
+
+这一步不再延续 `pi3` 主体，而是切到 `MapAnything` 主体做结构化微调：
+
+- aerial 分支保留原始 `MapAnything`
+- remote 分支新增独立 `remote_encoder + remote pointmap+confidence+mask DPT head`
+- 中间 `info_sharing` transformer 继续共享
+- 初始化方式是“当前训练好的 `MapAnything` checkpoint + remote 分支镜像初始化”，不是从 `pi3` checkpoint 直接迁结构
+
+本次新增的实现与配置：
+
+- 模型实现：[mapanything/models/mapanything/rs_joint.py](mapanything/models/mapanything/rs_joint.py)
+- 模型注册：[mapanything/models/mapanything/__init__.py](mapanything/models/mapanything/__init__.py)、[mapanything/models/__init__.py](mapanything/models/__init__.py)
+- 模型配置：[configs/model/mapanything_rs_joint.yaml](configs/model/mapanything_rs_joint.yaml)
+- 微调参数：[configs/train_params/mapanything_rs_joint_finetune.yaml](configs/train_params/mapanything_rs_joint_finetune.yaml)
+- 4 GPU 正式脚本：[bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_500_4gpu_all.sh](bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_500_4gpu_all.sh)
+- 1 GPU smoke 脚本：[bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh](bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh)
+
+当前正式脚本已经按长期训练入口整理，默认支持直接通过环境变量覆盖这些关键项：
+
+- 设备与吞吐：`CUDA_DEVICES`、`NUM_GPUS`、`NUM_WORKERS`、`NUM_VIEWS`、`BATCH_SIZE`
+- 训练日程：`EPOCHS`、`WARMUP_EPOCHS`、`EVAL_FREQ`、`SAVE_FREQ`、`KEEP_FREQ`、`PRINT_FREQ`
+- 优化器：`LR`、`MIN_LR`、`WEIGHT_DECAY`
+- remote loss：`LAMBDA_REMOTE_PM`、`LAMBDA_REMOTE_H`、`SCALE_REMOTE_BY_NUM_VIEWS`
+- 断点控制：`PRETRAINED_CKPT`、`RESUME`、`OUTPUT_DIR`
+
+### 13.1 结构与初始化策略
+
+当前 `P4` 的工程设定是：
+
+- `aerial` 继续输出原始 `raydirs + depth + pose + confidence + mask`
+- `remote` 改为直接输出 `world-frame pointmap + confidence + mask`
+- `remote_encoder` 从 `aerial encoder` 全量镜像初始化
+- `remote_dpt_feature_head` 从 `aerial dense head` 的通用 DPT 部分镜像初始化
+- `remote_dpt_regressor_head` 只拷贝能对齐的中间层；最终 `5-channel` 几何输出层保持新初始化
+- `aerial_view_type_embedding / remote_view_type_embedding` 作为轻量 domain bias 注入 shared transformer 之前的 token 特征
+
+训练时默认冻结：
+
+- `aerial encoder`
+- 原几何输入 encoder
+- 原 `dpt_feature_head / dpt_regressor_head`
+- `pose_head`
+- `scale_head`
+
+训练时默认放开：
+
+- `remote_encoder`
+- `remote_dpt_feature_head`
+- `remote_dpt_regressor_head`
+- `info_sharing`
+- `aerial_view_type_embedding`
+- `remote_view_type_embedding`
+
+### 13.2 当前 loss 设计
+
+当前 `P4` 继续沿用 joint loss 容器 [configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)，但实际语义变成：
+
+- aerial：保持原始 `MapAnything` 的 `FactoredGeometryRegr3DPlusNormalGMLoss`
+- remote：只做 `RSPointmapHeightLoss`，当前主项是 `pointmap`
+
+本次还新增了一个外层缩放开关：
+
+- `loss.scale_remote_loss_by_num_aerial_views`
+
+它的作用是当 aerial 输入 view 数增加时，用 `num_aerial_views` 成比例放大 remote loss，避免 remote supervision 因为只有单个 view 而被相对稀释。
+
+### 13.3 本次 smoke 结果
+
+本次 smoke 运行：
+
+- 脚本：[bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh](bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh)
+- 预训练权重：[`../../outputs/checkpoints/mapanything/map-anything_benchmark.pth`](../../outputs/checkpoints/mapanything/map-anything_benchmark.pth)
+- 输出目录：[`../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu`](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu)
+- 运行形态：1 GPU, `num_views=2`, `batch_size=2`, `train/val/test overfit = 8/4/4`, `epochs=1`
+
+结果：
+
+- 训练 1 epoch 完整跑通
+- val/test 评估链路完整跑通
+- checkpoint 保存正常，已生成 `checkpoint-last / checkpoint-1 / checkpoint-best / checkpoint-final`
+- TensorBoard 事件文件和 `train.log / log.txt` 已写出
+
+本次 smoke 的首个 train step 可作为后续调参参考：
+
+- `loss=23.67`
+- `aerial_loss=23.07`
+- `remote_loss=0.30`
+- `remote_loss_weight_effective=2.00`
+- `rs_pointmap_loss=1.50`
+
+这说明：
+
+- `mapanything_rs_joint` 的 forward 已贯通
+- remote direct pointmap 分支已能参与 joint backward
+- `scale_remote_loss_by_num_aerial_views=true` 已按预期生效
+
+### 13.4 本次 debug 修复
+
+本轮为跑通 smoke 还做了两个小修复：
+
+1. 修正了新训练脚本的工作目录问题  
+   两个 `P4` 脚本现在都会先自动 `cd` 到仓库根目录，再调用 `scripts/train.py`，避免从外部目录执行时找不到训练入口。
+
+2. 修正了当前 torchvision/Pillow 组合下的 hue 抖动溢出问题  
+   文件：[mapanything/datasets/base/base_dataset.py](mapanything/datasets/base/base_dataset.py)  
+   处理方式：保留 `brightness / contrast / saturation`，将 `ColorJitter(..., hue=0.1)` 调整为 `hue=0.0`。  
+   原因：当前环境里负 hue 偏移会在 `uint8` 路径触发 `OverflowError`，导致 dataloader 中断。这个问题与 `RS-joint` 结构本身无关，但会阻塞 smoke。
