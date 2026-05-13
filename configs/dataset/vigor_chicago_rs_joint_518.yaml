@@ -28,8 +28,10 @@ vigor_chicago_joint_rs_aerial:
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.train.variable_num_views},
         num_views=${dataset.vigor_chicago_joint_rs_aerial.train.num_views},
         covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.train.covisibility_thres},
+        view_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.train.view_sampling_mode}',
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.remote_ROOT}',
         remote_providers=${dataset.vigor_chicago_joint_rs_aerial.train.remote_providers},
+        remote_provider_map_csv='${dataset.vigor_chicago_joint_rs_aerial.train.remote_provider_map_csv}',
         remote_provider_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.train.remote_provider_sampling_mode}',
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.train.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.train.remote_transform}',
@@ -49,9 +51,11 @@ vigor_chicago_joint_rs_aerial:
     overfit_num_sets: null
     variable_num_views: ${dataset.train.variable_num_views}
     num_views: ${dataset.num_views}
-    covisibility_thres: 0.05
+    covisibility_thres: 0.0
+    view_sampling_mode: connected
     remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
+    remote_provider_map_csv: null
     remote_provider_sampling_mode: 'first_available'
     remote_resolution: ${dataset.resolution_train}
     remote_transform: 'imgnorm'
@@ -77,8 +81,10 @@ vigor_chicago_joint_rs_aerial:
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.val.variable_num_views},
         num_views=${dataset.vigor_chicago_joint_rs_aerial.val.num_views},
         covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.val.covisibility_thres},
+        view_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.val.view_sampling_mode}',
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.remote_ROOT}',
         remote_providers=${dataset.vigor_chicago_joint_rs_aerial.val.remote_providers},
+        remote_provider_map_csv='${dataset.vigor_chicago_joint_rs_aerial.val.remote_provider_map_csv}',
         remote_provider_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.val.remote_provider_sampling_mode}',
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.val.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.val.remote_transform}',
@@ -98,9 +104,11 @@ vigor_chicago_joint_rs_aerial:
     overfit_num_sets: null
     variable_num_views: ${dataset.val.variable_num_views}
     num_views: ${dataset.num_views}
-    covisibility_thres: 0.05
+    covisibility_thres: 0.0
+    view_sampling_mode: connected
     remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
+    remote_provider_map_csv: null
     remote_provider_sampling_mode: 'first_available'
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'
@@ -126,8 +134,10 @@ vigor_chicago_joint_rs_aerial:
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.test.variable_num_views},
         num_views=${dataset.vigor_chicago_joint_rs_aerial.test.num_views},
         covisibility_thres=${dataset.vigor_chicago_joint_rs_aerial.test.covisibility_thres},
+        view_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.test.view_sampling_mode}',
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.remote_ROOT}',
         remote_providers=${dataset.vigor_chicago_joint_rs_aerial.test.remote_providers},
+        remote_provider_map_csv='${dataset.vigor_chicago_joint_rs_aerial.test.remote_provider_map_csv}',
         remote_provider_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.test.remote_provider_sampling_mode}',
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.test.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.test.remote_transform}',
@@ -147,9 +157,11 @@ vigor_chicago_joint_rs_aerial:
     overfit_num_sets: null
     variable_num_views: ${dataset.test.variable_num_views}
     num_views: ${dataset.num_views}
-    covisibility_thres: 0.05
+    covisibility_thres: 0.0
+    view_sampling_mode: connected
     remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
+    remote_provider_map_csv: null
     remote_provider_sampling_mode: 'first_available'
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'

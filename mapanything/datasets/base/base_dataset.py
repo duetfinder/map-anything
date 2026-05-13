@@ -47,6 +47,7 @@ class BaseDataset(EasyDataset):
         variable_num_views: bool = False,
         split: str = None,
         covisibility_thres: float = None,
+        view_sampling_mode: str = "connected",
         resolution: Union[int, Tuple[int, int], List[Tuple[int, int]]] = None,
         principal_point_centered: bool = False,
         transform: str = None,
@@ -64,6 +65,11 @@ class BaseDataset(EasyDataset):
                                        On by default for N-view train dataloader (hydra config).
             split (str): 'train', 'val', 'test', etc.
             covisibility_thres (float): Covisibility (%) threshold to determine if another image is a neighbor or not
+            view_sampling_mode (str): Multi-view sampling strategy. Options:
+                - "connected": existing random walk over the covisibility graph.
+                - "random_any": ignore covisibility and sample any frames.
+                - "low_covis": prefer low-overlap frames across the sampled set.
+                - "zero_covis": prefer zero-overlap frames; if insufficient, fall back to low-overlap.
             resolution (int or tuple or list of tuples): Resolution of the images
             principal_point_centered (bool): If True, the principal point is centered in the image.
             transform (str): Transform to apply to the images. Options:
@@ -86,6 +92,7 @@ class BaseDataset(EasyDataset):
         self.num_views_min = 2
         self.split = split
         self.covisibility_thres = covisibility_thres
+        self.view_sampling_mode = str(view_sampling_mode).lower()
         self._set_resolutions(resolution)
         self.principal_point_centered = principal_point_centered
 
@@ -115,11 +122,13 @@ class BaseDataset(EasyDataset):
         if transform == "imgnorm":
             self.transform = ImgNorm
         elif transform == "colorjitter":
-            self.transform = tvf.Compose([tvf.ColorJitter(0.5, 0.5, 0.5, 0.1), ImgNorm])
+            # Torchvision/Pillow can overflow on negative hue shifts for uint8 PIL images.
+            # Keep the rest of the augmentation and disable hue jitter for stability.
+            self.transform = tvf.Compose([tvf.ColorJitter(0.5, 0.5, 0.5, 0.0), ImgNorm])
         elif transform == "colorjitter+grayscale+gaublur":
             self.transform = tvf.Compose(
                 [
-                    tvf.RandomApply([tvf.ColorJitter(0.3, 0.4, 0.2, 0.1)], p=0.75),
+                    tvf.RandomApply([tvf.ColorJitter(0.3, 0.4, 0.2, 0.0)], p=0.75),
                     tvf.RandomGrayscale(p=0.05),
                     tvf.RandomApply([tvf.GaussianBlur(5, sigma=(0.1, 1.0))], p=0.05),
                     ImgNorm,
@@ -143,6 +152,16 @@ class BaseDataset(EasyDataset):
         # Initialize the dataset type flags
         self.is_metric_scale = False  # by default a dataset is not metric scale, subclasses can overwrite this
         self.is_synthetic = False  # by default a dataset is not synthetic, subclasses can overwrite this
+
+    def _compute_bidirectional_covisibility(
+        self, scene_pairwise_covisibility, indices: np.ndarray, current: int
+    ) -> np.ndarray:
+        pairwise_covisibility = (
+            scene_pairwise_covisibility[current, indices]
+            + scene_pairwise_covisibility[indices, current].T
+        ) / 2
+        norm = scene_pairwise_covisibility[current, current] + 1e-8
+        return np.asarray(pairwise_covisibility / norm, dtype=np.float32)
 
     def _load_data(self):
         self.scenes = []
@@ -437,16 +456,69 @@ class BaseDataset(EasyDataset):
                 num_views_in_scene, size=num_views_to_sample, replace=True
             )
         else:
-            # Select a subset of single component connected views in the scene using random walk sampling
-            view_indices = self._random_walk_sampling(
-                scene_pairwise_covisibility,
-                num_views_to_sample,
-                use_bidirectional_covis=use_bidirectional_covis,
-            )
-            # If the required num of views can't be obtained even with 4 retries, repeat existing indices to get the desired number of views
-            if len(view_indices) < num_views_to_sample:
+            if self.view_sampling_mode == "connected":
+                # Select a subset of single component connected views in the scene using random walk sampling
+                view_indices = self._random_walk_sampling(
+                    scene_pairwise_covisibility,
+                    num_views_to_sample,
+                    use_bidirectional_covis=use_bidirectional_covis,
+                )
+                # If the required num of views can't be obtained even with 4 retries, repeat existing indices to get the desired number of views
+                if len(view_indices) < num_views_to_sample:
+                    view_indices = self._rng.choice(
+                        view_indices, size=num_views_to_sample, replace=True
+                    )
+            elif self.view_sampling_mode == "random_any":
                 view_indices = self._rng.choice(
-                    view_indices, size=num_views_to_sample, replace=True
+                    num_views_in_scene, size=num_views_to_sample, replace=False
+                )
+            elif self.view_sampling_mode in {"low_covis", "zero_covis"}:
+                selected = [int(self._rng.integers(0, num_views_in_scene))]
+                while len(selected) < num_views_to_sample:
+                    unselected = np.array(
+                        [idx for idx in range(num_views_in_scene) if idx not in selected],
+                        dtype=np.int64,
+                    )
+                    if len(unselected) == 0:
+                        break
+
+                    scores = []
+                    for candidate in unselected:
+                        rel_covis = [
+                            float(
+                                self._compute_bidirectional_covisibility(
+                                    scene_pairwise_covisibility,
+                                    np.array([candidate], dtype=np.int64),
+                                    selected_idx,
+                                )[0]
+                            )
+                            for selected_idx in selected
+                        ]
+                        scores.append(max(rel_covis))
+                    scores = np.asarray(scores, dtype=np.float32)
+
+                    if self.view_sampling_mode == "zero_covis":
+                        zero_mask = scores <= 1e-8
+                        if np.any(zero_mask):
+                            candidate_pool = unselected[zero_mask]
+                        else:
+                            min_score = float(scores.min())
+                            candidate_pool = unselected[np.isclose(scores, min_score)]
+                    else:
+                        min_score = float(scores.min())
+                        candidate_pool = unselected[np.isclose(scores, min_score)]
+
+                    next_node = int(self._rng.choice(candidate_pool))
+                    selected.append(next_node)
+
+                view_indices = np.asarray(selected, dtype=np.int64)
+                if len(view_indices) < num_views_to_sample:
+                    view_indices = self._rng.choice(
+                        view_indices, size=num_views_to_sample, replace=True
+                    )
+            else:
+                raise ValueError(
+                    f"Unsupported view_sampling_mode: {self.view_sampling_mode}"
                 )
 
         return view_indices
