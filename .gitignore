@@ -174,3 +174,4 @@ cython_debug/
 
 # VSCode
 .vscode
+scripts/serve_rs_guided_scene.sh
