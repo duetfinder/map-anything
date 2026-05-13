@@ -7,6 +7,7 @@ per-pixel pointmap labels.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -31,6 +32,38 @@ def load_scene_names(split_dir: Path, split: str) -> list[str]:
     if not split_file.exists():
         raise FileNotFoundError(f"Missing split file: {split_file}")
     return load_scene_list(split_file)
+
+
+def load_split_provider_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, str]]:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing split/provider csv: {path}")
+
+    split_to_scenes = {"train": [], "val": [], "test": []}
+    provider_map: dict[str, str] = {}
+    with path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError(f"CSV file has no header: {path}")
+        required_columns = {"scene_name", "split"}
+        missing_columns = sorted(required_columns - set(reader.fieldnames))
+        if missing_columns:
+            raise ValueError(
+                f"CSV file {path} is missing required columns: {missing_columns}"
+            )
+        for row_idx, row in enumerate(reader, start=2):
+            scene_name = str(row["scene_name"]).strip()
+            split = str(row["split"]).strip().lower()
+            if not scene_name:
+                continue
+            if split not in split_to_scenes:
+                raise ValueError(
+                    f"Unsupported split {split!r} at line {row_idx} in {path}"
+                )
+            split_to_scenes[split].append(scene_name)
+            remote_provider = str(row.get("remote_provider", "")).strip()
+            if remote_provider:
+                provider_map[scene_name] = remote_provider
+    return split_to_scenes, provider_map
 
 
 def build_scene_manifest(
@@ -148,6 +181,12 @@ def parse_args() -> argparse.Namespace:
         default=Path("/root/autodl-tmp/traindata/mapanything_metadata/Crossview_rs_aerial"),
     )
     parser.add_argument("--providers", nargs="+", default=["Google_Satellite"])
+    parser.add_argument(
+        "--split_provider_csv",
+        type=Path,
+        default=None,
+        help="Optional CSV with columns scene_name,split[,city,remote_provider]. If provided, split membership and per-scene provider come from this file.",
+    )
     parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument(
         "--splits",
@@ -164,12 +203,17 @@ def main() -> None:
 
     summary: dict[str, dict] = {}
     normalized_cities = normalize_cities(args.cities)
+    split_provider_spec = None
+    provider_map: dict[str, str] = {}
+    if args.split_provider_csv is not None:
+        split_provider_spec, provider_map = load_split_provider_csv(args.split_provider_csv)
 
     for split in args.splits:
-        scene_names = filter_scene_names_by_cities(
-            load_scene_names(args.aerial_split_root, split),
-            normalized_cities,
-        )
+        if split_provider_spec is not None:
+            split_scene_names = split_provider_spec[split]
+        else:
+            split_scene_names = load_scene_names(args.aerial_split_root, split)
+        scene_names = filter_scene_names_by_cities(split_scene_names, normalized_cities)
         manifests = []
         split_dir = args.output_root / split
         split_dir.mkdir(parents=True, exist_ok=True)
@@ -179,7 +223,8 @@ def main() -> None:
         for scene_name in scene_names:
             scene_manifests = []
             scene_errors = []
-            for provider in args.providers:
+            scene_providers = [provider_map[scene_name]] if scene_name in provider_map else args.providers
+            for provider in scene_providers:
                 try:
                     manifest = build_scene_manifest(
                         scene_name=scene_name,
@@ -222,6 +267,7 @@ def main() -> None:
             "num_scenes": len(manifests),
             "num_missing_scenes": len(missing_scenes),
             "providers": args.providers,
+            "split_provider_csv": str(args.split_provider_csv) if args.split_provider_csv is not None else None,
             "cities": normalized_cities,
             "scene_list_path": str(scene_list_path),
             "aggregate_manifest_path": str(aggregate_path),

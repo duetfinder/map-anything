@@ -1,0 +1,20 @@
+# Manual split specification template for `prepare_vigor_chicago_splits.py`
+#
+# Rules:
+# - Use exactly these three sections: [train], [val], [test]
+# - One scene name per line
+# - Empty lines and lines starting with # are ignored
+# - Scene names must match directory names under the WAI dataset root
+# - A scene may appear in only one split
+
+[train]
+# chicago__location_001
+# chicago__location_002
+
+[val]
+# chicago__location_451
+# chicago__location_452
+
+[test]
+# chicago__location_476
+# chicago__location_477
