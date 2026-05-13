@@ -487,6 +487,7 @@ def benchmark(args):
         remote_view = {
             "img": remote_image,
             "data_norm_type": [args.model.data_norm_type] * len(remote_samples),
+            "instance": "remote",
         }
 
         with torch.autocast("cuda", enabled=bool(args.amp), dtype=amp_dtype):

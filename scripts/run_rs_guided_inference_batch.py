@@ -419,6 +419,7 @@ def create_remote_view(remote_sample, data_norm_type, device):
     return {
         "img": remote_image,
         "data_norm_type": [data_norm_type],
+        "instance": "remote",
     }
 
 
