@@ -19,6 +19,23 @@ from pathlib import Path
 import numpy as np
 
 
+PROVIDER_COLUMN_PREFIX = "provider__"
+
+
+def parse_bool_like(value) -> bool:
+    if value is None:
+        return False
+    value = str(value).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def provider_columns_from_fieldnames(fieldnames) -> list[str]:
+    return [
+        name for name in fieldnames
+        if str(name).startswith(PROVIDER_COLUMN_PREFIX)
+    ]
+
+
 def natural_key(name: str) -> list[object]:
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", name)]
 
@@ -73,20 +90,20 @@ def load_manual_split_spec(path: Path) -> dict[str, list[str]]:
     return sections
 
 
-def load_manual_split_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, str]]:
+def load_manual_split_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Load a manual split/provider spec from CSV.
 
     Required columns:
         scene_name, split
 
     Optional columns:
-        city, remote_provider
+        city, provider__<ProviderName>
     """
     if not path.exists():
         raise FileNotFoundError(f"Missing split spec csv: {path}")
 
     sections = {"train": [], "val": [], "test": []}
-    provider_map: dict[str, str] = {}
+    provider_map: dict[str, list[str]] = {}
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
@@ -97,6 +114,7 @@ def load_manual_split_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, s
             raise ValueError(
                 f"CSV file {path} is missing required columns: {missing_columns}"
             )
+        provider_columns = provider_columns_from_fieldnames(reader.fieldnames)
         for row_idx, row in enumerate(reader, start=2):
             scene_name = str(row["scene_name"]).strip()
             split = str(row["split"]).strip().lower()
@@ -107,9 +125,13 @@ def load_manual_split_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, s
                     f"Unsupported split {split!r} at line {row_idx} in {path}"
                 )
             sections[split].append(scene_name)
-            remote_provider = str(row.get("remote_provider", "")).strip()
-            if remote_provider:
-                provider_map[scene_name] = remote_provider
+            providers: list[str] = []
+            for column in provider_columns:
+                if parse_bool_like(row.get(column)):
+                    providers.append(column[len(PROVIDER_COLUMN_PREFIX):])
+            providers = list(dict.fromkeys(providers))
+            if providers:
+                provider_map[scene_name] = providers
 
     return sections, provider_map
 
@@ -118,25 +140,31 @@ def write_split_csv(
     path: Path,
     split_scene_names: dict[str, list[str]],
     default_remote_provider: str,
+    provider_names: list[str] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    provider_names = [] if provider_names is None else list(provider_names)
+    provider_columns = [f"{PROVIDER_COLUMN_PREFIX}{name}" for name in provider_names]
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(
             f,
-            fieldnames=["scene_name", "city", "split", "remote_provider"],
+            fieldnames=["scene_name", "city", "split", *provider_columns],
         )
         writer.writeheader()
         for split_name in ("train", "val", "test"):
             for scene_name in split_scene_names[split_name]:
                 city, _ = split_scene_id(scene_name)
-                writer.writerow(
-                    {
-                        "scene_name": scene_name,
-                        "city": city or "chicago",
-                        "split": split_name,
-                        "remote_provider": default_remote_provider,
-                    }
-                )
+                row = {
+                    "scene_name": scene_name,
+                    "city": city or "chicago",
+                    "split": split_name,
+                }
+                for column in provider_columns:
+                    row[column] = "0"
+                default_column = f"{PROVIDER_COLUMN_PREFIX}{default_remote_provider}"
+                if default_column in row:
+                    row[default_column] = "1"
+                writer.writerow(row)
 
 
 def parse_args() -> argparse.Namespace:
@@ -153,9 +181,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument("--split_spec_txt", type=Path, default=None, help="Optional manual split spec txt with [train]/[val]/[test] sections. If provided, automatic sequential splitting is skipped.")
-    parser.add_argument("--split_spec_csv", type=Path, default=None, help="Optional manual split/provider CSV with columns scene_name,split[,city,remote_provider]. If provided, automatic sequential splitting is skipped.")
-    parser.add_argument("--draft_csv_out", type=Path, default=None, help="Optional output CSV path. Writes the resolved split draft with columns scene_name,city,split,remote_provider.")
+    parser.add_argument("--split_spec_csv", type=Path, default=None, help="Optional manual split/provider CSV with columns scene_name,split[,city,provider__<ProviderName>...]. If provided, automatic sequential splitting is skipped.")
+    parser.add_argument("--draft_csv_out", type=Path, default=None, help="Optional output CSV path. Writes the resolved split draft with columns scene_name,city,split,provider__<ProviderName>....")
     parser.add_argument("--default_remote_provider", type=str, default="Google_Satellite")
+    parser.add_argument(
+        "--provider_names",
+        nargs="*",
+        default=["Google_Satellite", "Bing_Satellite", "ESRI_Satellite", "OSM_Standard", "Yandex_Satellite"],
+        help="Provider columns to include when writing a draft CSV.",
+    )
     parser.add_argument("--train_scenes", type=int, default=40)
     parser.add_argument("--val_scenes", type=int, default=5)
     parser.add_argument("--test_scenes", type=int, default=5)
@@ -203,7 +237,7 @@ def main() -> None:
     train_names: list[str] = []
     val_names: list[str] = []
     test_names: list[str] = []
-    provider_map: dict[str, str] = {}
+    provider_map: dict[str, list[str]] = {}
 
     if args.split_spec_csv is not None:
         split_spec, provider_map = load_manual_split_csv(args.split_spec_csv)
@@ -281,6 +315,7 @@ def main() -> None:
             path=args.draft_csv_out,
             split_scene_names=split_scene_names,
             default_remote_provider=args.default_remote_provider,
+            provider_names=args.provider_names,
         )
 
     summary = {

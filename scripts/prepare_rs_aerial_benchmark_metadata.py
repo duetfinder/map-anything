@@ -27,6 +27,16 @@ from mapanything.datasets.wai.vigor_chicago_rs_common import (
 )
 
 
+PROVIDER_COLUMN_PREFIX = "provider__"
+
+
+def parse_bool_like(value) -> bool:
+    if value is None:
+        return False
+    value = str(value).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
 def load_scene_names(split_dir: Path, split: str) -> list[str]:
     split_file = resolve_scene_list_path(split_dir, split)
     if not split_file.exists():
@@ -34,12 +44,12 @@ def load_scene_names(split_dir: Path, split: str) -> list[str]:
     return load_scene_list(split_file)
 
 
-def load_split_provider_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, str]]:
+def load_split_provider_csv(path: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     if not path.exists():
         raise FileNotFoundError(f"Missing split/provider csv: {path}")
 
     split_to_scenes = {"train": [], "val": [], "test": []}
-    provider_map: dict[str, str] = {}
+    provider_map: dict[str, list[str]] = {}
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
@@ -50,6 +60,10 @@ def load_split_provider_csv(path: Path) -> tuple[dict[str, list[str]], dict[str,
             raise ValueError(
                 f"CSV file {path} is missing required columns: {missing_columns}"
             )
+        provider_columns = [
+            name for name in reader.fieldnames
+            if str(name).startswith(PROVIDER_COLUMN_PREFIX)
+        ]
         for row_idx, row in enumerate(reader, start=2):
             scene_name = str(row["scene_name"]).strip()
             split = str(row["split"]).strip().lower()
@@ -60,9 +74,13 @@ def load_split_provider_csv(path: Path) -> tuple[dict[str, list[str]], dict[str,
                     f"Unsupported split {split!r} at line {row_idx} in {path}"
                 )
             split_to_scenes[split].append(scene_name)
-            remote_provider = str(row.get("remote_provider", "")).strip()
-            if remote_provider:
-                provider_map[scene_name] = remote_provider
+            providers: list[str] = []
+            for column in provider_columns:
+                if parse_bool_like(row.get(column)):
+                    providers.append(column[len(PROVIDER_COLUMN_PREFIX):])
+            providers = list(dict.fromkeys(providers))
+            if providers:
+                provider_map[scene_name] = providers
     return split_to_scenes, provider_map
 
 
@@ -185,7 +203,7 @@ def parse_args() -> argparse.Namespace:
         "--split_provider_csv",
         type=Path,
         default=None,
-        help="Optional CSV with columns scene_name,split[,city,remote_provider]. If provided, split membership and per-scene provider come from this file.",
+        help="Optional CSV with columns scene_name,split[,city,provider__<ProviderName>...]. If provided, split membership and per-scene provider come from this file.",
     )
     parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument(
@@ -204,7 +222,7 @@ def main() -> None:
     summary: dict[str, dict] = {}
     normalized_cities = normalize_cities(args.cities)
     split_provider_spec = None
-    provider_map: dict[str, str] = {}
+    provider_map: dict[str, list[str]] = {}
     if args.split_provider_csv is not None:
         split_provider_spec, provider_map = load_split_provider_csv(args.split_provider_csv)
 
@@ -223,7 +241,7 @@ def main() -> None:
         for scene_name in scene_names:
             scene_manifests = []
             scene_errors = []
-            scene_providers = [provider_map[scene_name]] if scene_name in provider_map else args.providers
+            scene_providers = provider_map[scene_name] if scene_name in provider_map else args.providers
             for provider in scene_providers:
                 try:
                     manifest = build_scene_manifest(

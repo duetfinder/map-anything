@@ -27,12 +27,21 @@ from mapanything.datasets.wai.vigor_chicago_rs_common import (
 )
 
 
+PROVIDER_COLUMN_PREFIX = "provider__"
+
+
+def parse_bool_like(value) -> bool:
+    if value is None:
+        return False
+    value = str(value).strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
 class VigorChicagoJointRSAerial(VigorChicagoWAI):
     def __init__(
         self,
         *args,
         remote_ROOT,
-        remote_provider='Google_Satellite',
         remote_providers=None,
         remote_provider_map_csv=None,
         remote_provider_sampling_mode='first_available',
@@ -48,8 +57,6 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
     ):
         self.remote_ROOT = Path(remote_ROOT)
         normalized_providers = normalize_providers(remote_providers)
-        if normalized_providers is None and remote_provider is not None:
-            normalized_providers = normalize_providers(remote_provider)
         self.remote_providers = normalized_providers
         self.remote_provider_map_csv = (
             Path(remote_provider_map_csv)
@@ -90,15 +97,25 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
                     raise ValueError(
                         f"CSV file has no header: {self.remote_provider_map_csv}"
                     )
-                if "scene_name" not in reader.fieldnames or "remote_provider" not in reader.fieldnames:
+                if "scene_name" not in reader.fieldnames:
                     raise ValueError(
-                        "remote_provider_map_csv must contain scene_name and remote_provider columns"
+                        "remote_provider_map_csv must contain a scene_name column"
                     )
+                provider_columns = [
+                    name for name in reader.fieldnames
+                    if str(name).startswith(PROVIDER_COLUMN_PREFIX)
+                ]
                 for row in reader:
                     scene_name = str(row["scene_name"]).strip()
-                    remote_provider = str(row["remote_provider"]).strip()
-                    if scene_name and remote_provider:
-                        self.remote_provider_map[scene_name] = remote_provider
+                    if not scene_name:
+                        continue
+                    providers: list[str] = []
+                    for column in provider_columns:
+                        if parse_bool_like(row.get(column)):
+                            providers.append(column[len(PROVIDER_COLUMN_PREFIX):])
+                    providers = list(dict.fromkeys(providers))
+                    if providers:
+                        self.remote_provider_map[scene_name] = providers
 
         available_scenes = []
         self.remote_scene_candidates = {}
@@ -106,7 +123,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         for scene_name in self.scenes:
             scene_root = self.remote_ROOT / scene_name
             if scene_name in self.remote_provider_map:
-                candidate_providers = [self.remote_provider_map[scene_name]]
+                candidate_providers = self.remote_provider_map[scene_name]
             else:
                 candidate_providers = self.remote_providers or available_providers(scene_root)
             if not candidate_providers:

@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--geometry-root",
         type=Path,
-        default=Path("/root/autodl-tmp/outputs/experiments/exp_005_map_points_generate/vigor/chicago"),
+        default=Path("/root/autodl-tmp/outputs/experiments/exp_005_map_points_generate/vigor/newyork"),
         help="Single-city source root containing per-location/provider geometry products.",
     )
     parser.add_argument(
@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--map-root",
         type=Path,
-        default=Path("/root/autodl-tmp/dataset/Vigor/map/chicago_subset_2000"),
+        default=Path("/root/autodl-tmp/dataset/Vigor/map/newyork_subset_2000"),
         help="Single-city source root containing per-location satellite map images.",
     )
     parser.add_argument(
@@ -71,14 +71,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("/root/autodl-tmp/traindata/Crossview_rs"),
+        default=Path("/root/autodl-tmp/traindata/Crossview_rs_newyork"),
         help="Target unified dataset root.",
     )
     parser.add_argument("--cities", nargs="*", default=None)
     parser.add_argument(
         "--mode",
         choices=["symlink", "hardlink", "copy"],
-        default="symlink",
+        default="copy",
         help="How to materialize files in the target root.",
     )
     parser.add_argument(
