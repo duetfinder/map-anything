@@ -8,6 +8,7 @@
 本文档只记录 `VIGOR Chicago` 在 `Models/map-anything` 中的训练相关内容，与 benchmark 设计、RS-Aerial 指标定义等内容拆开维护。
 
 loss 相关的独立汇总见：[MAPANYTHING_LOSSES_CN.md](MAPANYTHING_LOSSES_CN.md)。
+`MapAnything RS-joint` 的模型改动总结见：[MAPANYTHING_RS_JOINT_MODEL_CN.md](MAPANYTHING_RS_JOINT_MODEL_CN.md)。
 
 ## 0. 当前数据根目录
 
