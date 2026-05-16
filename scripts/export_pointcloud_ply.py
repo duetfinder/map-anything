@@ -17,58 +17,71 @@ Examples:
 
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/base \
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/base \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_4gpu_all_20260414_114403_lambda2.0/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/all_2 \
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/all_2 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_all_6/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17\
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/all_6 \
+    --image_folder /root/autodl-tmp/test/scence/471_2\
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/all_6 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_4gpu_chicago_20260414_1837_lambda2.0/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/chicago_2 \
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/chicago_2 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_2gpu_chicago/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/chicago_6
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/chicago_6
 && \
 python scripts/export_pointcloud_ply.py \
     --model mapanything \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/mapanything
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/mapanything
 
 
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/base \
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/base \
 && \
 python scripts/export_pointcloud_ply.py \
     --model mapanything \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/mapanything \
+    --image_folder /root/autodl-tmp/test/scence/471_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/mapanything \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_all_6/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_17\
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_17/all_6
+    --image_folder /root/autodl-tmp/test/scence/471_2\
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/all_6
+
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
+    --image_folder /root/autodl-tmp/test/scence/471_2\
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/vggt \    
 
 
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/471_2\
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/vggt_p5b \
+    --vggt_joint_remote_export \
+    --remote_view_names zimage.png
 
 
 """
@@ -96,7 +109,7 @@ from mapanything.utils.hf_utils.hf_helpers import (
     initialize_mapanything_local,
     initialize_mapanything_model,
 )
-from mapanything.utils.image import load_images
+from mapanything.utils.image import heif_support_enabled, load_images
 
 DEFAULT_MODEL = "pi3"
 DEFAULT_CONFIG_PATH = "configs/train.yaml"
@@ -129,6 +142,7 @@ CLASH_ENV = {
     "https_proxy": "http://127.0.0.1:7890",
     "all_proxy": "socks5://127.0.0.1:7891",
 }
+REMOTE_INSTANCE_VALUE = "remote"
 
 
 def parse_args() -> argparse.Namespace:
@@ -212,6 +226,45 @@ def parse_args() -> argparse.Namespace:
         "--strict",
         action="store_true",
         help="Load checkpoint with strict=True. Default is False for compatibility.",
+    )
+    parser.add_argument(
+        "--vggt_joint_remote_export",
+        action="store_true",
+        default=False,
+        help=(
+            "Special handling for VGGT p5b/p5c RS-joint checkpoints: disable "
+            "wrapper-side pretrained/custom init, enable remote point-head routing, "
+            "and mark all input views as the remote instance."
+        ),
+    )
+    parser.add_argument(
+        "--force_remote_instance",
+        action="store_true",
+        default=False,
+        help=(
+            "Force every loaded view to use instance='remote'. Useful when exporting "
+            "from VGGT RS-joint checkpoints that only route remote views through "
+            "the native point_head."
+        ),
+    )
+    parser.add_argument(
+        "--remote_view_indices",
+        nargs="*",
+        type=int,
+        default=None,
+        help=(
+            "0-based indices of input images that should be treated as remote views "
+            "for VGGT RS-joint export. Unspecified views remain ordinary views."
+        ),
+    )
+    parser.add_argument(
+        "--remote_view_names",
+        nargs="*",
+        default=None,
+        help=(
+            "Basenames of input images that should be treated as remote views for "
+            "VGGT RS-joint export."
+        ),
     )
     parser.add_argument(
         "--memory_efficient_inference",
@@ -338,8 +391,22 @@ def resolve_load_size(args: argparse.Namespace):
 
 def resolve_config_overrides(args: argparse.Namespace):
     if args.config_overrides is not None:
-        return args.config_overrides
-    return list(DEFAULT_CONFIG_OVERRIDES[args.model])
+        overrides = list(args.config_overrides)
+    else:
+        overrides = list(DEFAULT_CONFIG_OVERRIDES[args.model])
+
+    if args.vggt_joint_remote_export:
+        if args.model != "vggt":
+            raise ValueError("--vggt_joint_remote_export is only supported with --model vggt")
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=false",
+                "model.model_config.use_point_head_for_remote=true",
+            ]
+        )
+
+    return overrides
 
 
 def maybe_enable_clash_proxy(enable_proxy: bool):
@@ -459,6 +526,76 @@ def move_views_to_device(views, device: torch.device):
                 moved_view[key] = value
         moved_views.append(moved_view)
     return moved_views
+
+
+def list_loaded_image_names(image_folder: str, stride: int):
+    supported_extensions = [".jpg", ".jpeg", ".png"]
+    if heif_support_enabled:
+        supported_extensions += [".heic", ".heif"]
+    supported_extensions = tuple(supported_extensions)
+
+    names = []
+    for idx, name in enumerate(sorted(os.listdir(image_folder))):
+        if idx % stride != 0:
+            continue
+        if not name.lower().endswith(supported_extensions):
+            continue
+        names.append(name)
+    return names
+
+
+def annotate_view_source_names(views, image_folder: str, stride: int):
+    source_names = list_loaded_image_names(image_folder, stride)
+    if len(source_names) != len(views):
+        print(
+            "Warning: loaded image-name count does not match view count; "
+            "remote name selection may be unreliable."
+        )
+    for idx, view in enumerate(views):
+        if idx < len(source_names):
+            view["source_name"] = source_names[idx]
+    return views
+
+
+def maybe_assign_remote_instances(views, args: argparse.Namespace):
+    use_joint_remote_logic = (
+        args.force_remote_instance
+        or args.vggt_joint_remote_export
+        or bool(args.remote_view_indices)
+        or bool(args.remote_view_names)
+    )
+    if not use_joint_remote_logic:
+        return views
+
+    remote_indices = set(args.remote_view_indices or [])
+    remote_names = {name for name in (args.remote_view_names or [])}
+
+    if args.force_remote_instance or (
+        args.vggt_joint_remote_export and not remote_indices and not remote_names
+    ):
+        remote_indices = set(range(len(views)))
+
+    forced_views = []
+    remote_assignments = []
+    for idx, view in enumerate(views):
+        forced_view = dict(view)
+        source_name = forced_view.get("source_name")
+        is_remote = idx in remote_indices or (
+            source_name is not None and source_name in remote_names
+        )
+        if is_remote:
+            forced_view["instance"] = [REMOTE_INSTANCE_VALUE]
+            remote_assignments.append((idx, source_name or f"view_{idx}"))
+        forced_views.append(forced_view)
+
+    if remote_assignments:
+        print("Assigned remote views:")
+        for idx, source_name in remote_assignments:
+            print(f"  - idx={idx} name={source_name}")
+    else:
+        print("No views were marked as remote; VGGT export will use ordinary view logic.")
+
+    return forced_views
 
 
 def run_model_inference(model, views, args: argparse.Namespace):
@@ -585,9 +722,11 @@ def main() -> None:
     if len(views) == 0:
         raise ValueError(f"No images found in {args.image_folder}")
     print(f"Loaded {len(views)} views")
+    views = annotate_view_source_names(views, args.image_folder, args.stride)
 
     model_name = getattr(model, "name", args.model)
     views = convert_views_to_identity_if_needed(views, model_name)
+    views = maybe_assign_remote_instances(views, args)
 
     print("Running inference...")
     start_time = time()
