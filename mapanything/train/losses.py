@@ -313,6 +313,7 @@ class RSPointmapHeightLoss(nn.Module):
         pointmap_loss_weight=1.0,
         height_loss_weight=0.1,
         compare_in_view0_frame=False,
+        compare_gt_in_view0_frame_only=False,
         detach_pose_for_view0_align=False,
         pointmap_norm_mode=None,
     ):
@@ -322,8 +323,15 @@ class RSPointmapHeightLoss(nn.Module):
         self.pointmap_loss_weight = pointmap_loss_weight
         self.height_loss_weight = height_loss_weight
         self.compare_in_view0_frame = compare_in_view0_frame
+        self.compare_gt_in_view0_frame_only = compare_gt_in_view0_frame_only
         self.detach_pose_for_view0_align = detach_pose_for_view0_align
         self.pointmap_norm_mode = pointmap_norm_mode
+
+        if self.compare_in_view0_frame and self.compare_gt_in_view0_frame_only:
+            raise ValueError(
+                "compare_in_view0_frame and compare_gt_in_view0_frame_only are "
+                "mutually exclusive"
+            )
 
     @staticmethod
     def _masked_mean(loss_map, mask):
@@ -401,7 +409,11 @@ class RSPointmapHeightLoss(nn.Module):
             pred_pts3d = pred['pts3d'].float()
             if self.compare_in_view0_frame:
                 pred_pts3d = geotrf(pred_in_view0, pred_pts3d)
-            gt_pointmap_key = 'remote_pointmap_view0' if self.compare_in_view0_frame else 'remote_pointmap'
+            gt_pointmap_key = (
+                'remote_pointmap_view0'
+                if (self.compare_in_view0_frame or self.compare_gt_in_view0_frame_only)
+                else 'remote_pointmap'
+            )
             if gt_pointmap_key not in gt:
                 raise ValueError(f'Missing {gt_pointmap_key} in remote supervision view')
             gt_pointmap = gt[gt_pointmap_key].float()
