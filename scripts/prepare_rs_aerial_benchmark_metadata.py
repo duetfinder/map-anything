@@ -262,9 +262,23 @@ def main() -> None:
                 continue
 
             per_scene_primary_manifest[scene_name] = scene_manifests[0]
+            per_scene_manifest = dict(scene_manifests[0])
+            per_scene_manifest["remote_providers_allowed"] = [
+                manifest["remote_provider"] for manifest in scene_manifests
+            ]
+            per_scene_manifest["remote_entries"] = [
+                {
+                    "remote_provider": manifest["remote_provider"],
+                    "remote_scene_dir": manifest["remote_scene_dir"],
+                    "remote_image_path": manifest["remote_image_path"],
+                    "remote_pointmap_path": manifest["remote_pointmap_path"],
+                    "remote_info_path": manifest["remote_info_path"],
+                }
+                for manifest in scene_manifests
+            ]
             manifest_path = split_dir / f"{scene_name.replace('/', '__')}.json"
             with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(scene_manifests[0], f, indent=2)
+                json.dump(per_scene_manifest, f, indent=2)
 
         scene_names_payload = np.array(sorted(per_scene_primary_manifest.keys()), dtype=object)
         scene_list_path = split_dir / f"Crossview_rs_aerial_scene_list_{split}.npy"

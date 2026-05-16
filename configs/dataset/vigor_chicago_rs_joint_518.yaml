@@ -32,6 +32,7 @@ vigor_chicago_joint_rs_aerial:
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.remote_ROOT}',
         remote_providers=${dataset.vigor_chicago_joint_rs_aerial.train.remote_providers},
         remote_provider_map_csv='${dataset.vigor_chicago_joint_rs_aerial.train.remote_provider_map_csv}',
+        remote_dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.train.remote_dataset_metadata_dir}',
         remote_provider_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.train.remote_provider_sampling_mode}',
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.train.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.train.remote_transform}',
@@ -56,6 +57,7 @@ vigor_chicago_joint_rs_aerial:
     remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
     remote_provider_map_csv: null
+    remote_dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview_rs_aerial
     remote_provider_sampling_mode: 'first_available'
     remote_resolution: ${dataset.resolution_train}
     remote_transform: 'imgnorm'
@@ -85,6 +87,7 @@ vigor_chicago_joint_rs_aerial:
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.remote_ROOT}',
         remote_providers=${dataset.vigor_chicago_joint_rs_aerial.val.remote_providers},
         remote_provider_map_csv='${dataset.vigor_chicago_joint_rs_aerial.val.remote_provider_map_csv}',
+        remote_dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.val.remote_dataset_metadata_dir}',
         remote_provider_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.val.remote_provider_sampling_mode}',
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.val.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.val.remote_transform}',
@@ -109,6 +112,7 @@ vigor_chicago_joint_rs_aerial:
     remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
     remote_provider_map_csv: null
+    remote_dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview_rs_aerial
     remote_provider_sampling_mode: 'first_available'
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'
@@ -138,6 +142,7 @@ vigor_chicago_joint_rs_aerial:
         remote_ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.remote_ROOT}',
         remote_providers=${dataset.vigor_chicago_joint_rs_aerial.test.remote_providers},
         remote_provider_map_csv='${dataset.vigor_chicago_joint_rs_aerial.test.remote_provider_map_csv}',
+        remote_dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.test.remote_dataset_metadata_dir}',
         remote_provider_sampling_mode='${dataset.vigor_chicago_joint_rs_aerial.test.remote_provider_sampling_mode}',
         remote_resolution=${dataset.vigor_chicago_joint_rs_aerial.test.remote_resolution},
         remote_transform='${dataset.vigor_chicago_joint_rs_aerial.test.remote_transform}',
@@ -162,6 +167,7 @@ vigor_chicago_joint_rs_aerial:
     remote_ROOT: ${root_data_dir}/Crossview_rs
     remote_providers: ['Google_Satellite']
     remote_provider_map_csv: null
+    remote_dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview_rs_aerial
     remote_provider_sampling_mode: 'first_available'
     remote_resolution: ${dataset.resolution_val}
     remote_transform: 'imgnorm'

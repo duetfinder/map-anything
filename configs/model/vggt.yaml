@@ -9,6 +9,12 @@ model_config:
   load_custom_ckpt: false
   # Custom checkpoint path
   custom_ckpt_path: null
+  # For RS-joint experiments, route only remote views through VGGT's native point head.
+  use_point_head_for_remote: false
+  # Lightweight domain signal used by p5c.
+  use_view_type_bias: false
+  # Instance tag used by the joint RS training path for the appended remote view.
+  remote_instance_value: "remote"
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

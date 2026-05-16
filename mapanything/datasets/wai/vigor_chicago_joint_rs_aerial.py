@@ -44,6 +44,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         remote_ROOT,
         remote_providers=None,
         remote_provider_map_csv=None,
+        remote_dataset_metadata_dir=None,
         remote_provider_sampling_mode='first_available',
         remote_resolution=(518, 518),
         remote_transform='imgnorm',
@@ -61,6 +62,11 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         self.remote_provider_map_csv = (
             Path(remote_provider_map_csv)
             if remote_provider_map_csv not in (None, "None", "")
+            else None
+        )
+        self.remote_dataset_metadata_dir = (
+            Path(remote_dataset_metadata_dir)
+            if remote_dataset_metadata_dir not in (None, "None", "")
             else None
         )
         self.remote_provider_sampling_mode = str(remote_provider_sampling_mode).lower()
@@ -117,12 +123,28 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
                     if providers:
                         self.remote_provider_map[scene_name] = providers
 
+        self.remote_manifest_by_scene = {}
+        if self.remote_dataset_metadata_dir is not None:
+            split_dir = self.remote_dataset_metadata_dir / str(self.split)
+            for scene_name in self.scenes:
+                manifest_path = split_dir / f"{scene_name.replace('/', '__')}.json"
+                if not manifest_path.exists():
+                    continue
+                with manifest_path.open("r", encoding="utf-8") as f:
+                    self.remote_manifest_by_scene[scene_name] = json.load(f)
+
         available_scenes = []
         self.remote_scene_candidates = {}
         self._expanded_scene_entries = []
         for scene_name in self.scenes:
             scene_root = self.remote_ROOT / scene_name
-            if scene_name in self.remote_provider_map:
+            scene_manifest = self.remote_manifest_by_scene.get(scene_name)
+            if scene_manifest is not None and scene_manifest.get("remote_entries"):
+                candidate_providers = [
+                    str(entry["remote_provider"])
+                    for entry in scene_manifest["remote_entries"]
+                ]
+            elif scene_name in self.remote_provider_map:
                 candidate_providers = self.remote_provider_map[scene_name]
             else:
                 candidate_providers = self.remote_providers or available_providers(scene_root)

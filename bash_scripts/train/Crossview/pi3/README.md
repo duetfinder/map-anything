@@ -1,0 +1,27 @@
+# Crossview Pi3 Training Scripts
+
+这里收敛 `VIGOR Chicago / Crossview` 相关的 `Pi3` 训练脚本。
+
+当前建议按阶段使用：
+
+- `p0_pi3_data_sanity_500_pretrained_2gpu.sh`
+  - `P0` 数据读取与短跑检查
+- `p1_pi3_baseline_500_pretrained_2gpu.sh`
+  - `P1` aerial-only baseline
+- `p2_pi3_rs_only_debug_2gpu.sh`
+  - `P2` RS-only smoke
+- `p2a_pi3_rs_only_loss_ablation_2gpu.sh`
+  - `P2a` RS-only loss ablation
+- `p3_pi3_joint_input_debug_2gpu.sh`
+  - `P3` joint-input smoke
+- `p3_pi3_joint_input_500_2gpu_all.sh`
+  - 当前 `P3` 主基线
+- `p3_pi3_joint_input_500_2gpu_all_low_covis.sh`
+  - `P3` 低共视版本
+- `p3_pi3_joint_input_500_2gpu_all_zero_covis.sh`
+  - `P3` 零共视版本
+
+说明：
+
+- 旧路径 `bash_scripts/train/vigor_chicago/p*.sh` 仍保留为兼容包装。
+- 新实验优先放到本目录，避免 `vigor_chicago` 目录继续堆积不同阶段与不同模型线。

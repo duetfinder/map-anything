@@ -32,21 +32,39 @@ class VGGTWrapper(torch.nn.Module):
         intermediate_layer_idx=[4, 11, 17, 23],
         load_custom_ckpt=False,
         custom_ckpt_path=None,
+        use_point_head_for_remote=False,
+        use_view_type_bias=False,
+        remote_instance_value="remote",
     ):
         super().__init__()
         self.name = name
         self.torch_hub_force_reload = torch_hub_force_reload
         self.load_custom_ckpt = load_custom_ckpt
         self.custom_ckpt_path = custom_ckpt_path
+        self.use_point_head_for_remote = use_point_head_for_remote
+        self.use_view_type_bias = use_view_type_bias
+        self.remote_instance_value = remote_instance_value
+        self.embed_dim = 1024
 
         if load_pretrained_weights:
             # Load pre-trained weights
             if not torch_hub_force_reload:
-                # Initialize the 1B VGGT model from huggingface hub cache
+                # Prefer an offline cache hit so training does not depend on
+                # Hugging Face metadata requests once the model is already cached.
                 print("Loading facebook/VGGT-1B from huggingface cache ...")
-                self.model = VGGT.from_pretrained(
-                    "facebook/VGGT-1B",
-                )
+                try:
+                    self.model = VGGT.from_pretrained(
+                        "facebook/VGGT-1B",
+                        local_files_only=True,
+                    )
+                except Exception as offline_error:
+                    print(
+                        "Local VGGT cache not usable, falling back to online download: "
+                        f"{offline_error}"
+                    )
+                    self.model = VGGT.from_pretrained(
+                        "facebook/VGGT-1B",
+                    )
             else:
                 # Initialize the 1B VGGT model
                 print("Re-downloading facebook/VGGT-1B ...")
@@ -69,6 +87,11 @@ class VGGTWrapper(torch.nn.Module):
             else torch.float16
         )
 
+        if self.use_view_type_bias:
+            token_dim = 2 * self.embed_dim
+            self.aerial_view_type_embedding = torch.nn.Parameter(torch.zeros(token_dim))
+            self.remote_view_type_embedding = torch.nn.Parameter(torch.zeros(token_dim))
+
         # Load custom checkpoint if requested
         if self.load_custom_ckpt:
             print(f"Loading checkpoint from {self.custom_ckpt_path} ...")
@@ -78,6 +101,34 @@ class VGGTWrapper(torch.nn.Module):
             custom_ckpt = torch.load(self.custom_ckpt_path, weights_only=False)
             print(self.model.load_state_dict(custom_ckpt, strict=True))
             del custom_ckpt  # in case it occupies memory
+
+    def _is_remote_view(self, view):
+        instance = view.get("instance")
+        if isinstance(instance, (list, tuple)) and len(instance) > 0:
+            instance = instance[0]
+        return instance == self.remote_instance_value
+
+    def _apply_view_type_bias(self, aggregated_tokens_list, views):
+        if not self.use_view_type_bias:
+            return aggregated_tokens_list
+
+        remote_mask = torch.tensor(
+            [self._is_remote_view(view) for view in views],
+            device=aggregated_tokens_list[0].device,
+            dtype=torch.bool,
+        )
+        if not bool(remote_mask.any()):
+            return [
+                tokens + self.aerial_view_type_embedding.view(1, 1, 1, -1)
+                for tokens in aggregated_tokens_list
+            ]
+
+        type_bias = torch.where(
+            remote_mask.view(1, -1, 1, 1),
+            self.remote_view_type_embedding.view(1, 1, 1, -1),
+            self.aerial_view_type_embedding.view(1, 1, 1, -1),
+        )
+        return [tokens + type_bias for tokens in aggregated_tokens_list]
 
     def forward(self, views):
         """
@@ -113,6 +164,9 @@ class VGGTWrapper(torch.nn.Module):
         # Run the VGGT aggregator
         with torch.autocast("cuda", dtype=self.dtype):
             aggregated_tokens_list, ps_idx = self.model.aggregator(images)
+            aggregated_tokens_list = self._apply_view_type_bias(
+                aggregated_tokens_list, views
+            )
 
         # Run the Camera + Pose Branch of VGGT
         with torch.autocast("cuda", enabled=False):
@@ -131,6 +185,15 @@ class VGGTWrapper(torch.nn.Module):
             depth_map, depth_conf = self.model.depth_head(
                 aggregated_tokens_list, images, ps_idx
             )
+
+            point_map = None
+            point_conf = None
+            if self.use_point_head_for_remote and any(
+                self._is_remote_view(view) for view in views
+            ):
+                point_map, point_conf = self.model.point_head(
+                    aggregated_tokens_list, images, ps_idx
+                )
 
             # Convert the output to MapAnything format
             res = []
@@ -187,5 +250,9 @@ class VGGTWrapper(torch.nn.Module):
                         "conf": curr_view_confidence,
                     }
                 )
+
+                if point_map is not None and self._is_remote_view(views[view_idx]):
+                    res[-1]["pts3d"] = point_map[:, view_idx, ...]
+                    res[-1]["conf"] = point_conf[:, view_idx, ...]
 
         return res

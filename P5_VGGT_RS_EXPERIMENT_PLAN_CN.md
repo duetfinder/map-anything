@@ -586,15 +586,68 @@ remote loss 建议只做 direct pointmap 主监督，初版不要上复杂项。
 
 建议新增训练脚本：
 
-- `bash_scripts/train/vigor_chicago/p5b_vggt_joint_shared_all_loss_only.sh`
-- `bash_scripts/train/vigor_chicago/p5c_vggt_joint_shared_all_viewtype.sh`
-- `bash_scripts/train/vigor_chicago/p5d_vggt_joint_remote_patch_pointhead.sh`
+- `bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only.sh`
+- `bash_scripts/train/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype.sh`
+- `bash_scripts/train/Crossview/vggt/p5d_vggt_joint_remote_patch_pointhead.sh`
 
 其中：
 
 - `p5b` 可以直接复用 `model=vggt`
 - `p5c` 需要新增带 `view_type_embedding` 的 `VGGT` 变体
 - `p5d` 需要新增轻量 remote 分支版 `VGGT` 变体
+
+## 9.1 当前脚本目录组织建议
+
+当前 `Crossview` 训练脚本目录已经有：
+
+- `bash_scripts/train/Crossview/mapanything`
+- `bash_scripts/train/Crossview/pi3`
+- `bash_scripts/train/Crossview/vggt`
+
+因此本轮 `p5` 的 `VGGT` 脚本建议直接放在：
+
+- `bash_scripts/train/Crossview/vggt/`
+
+当前不建议再额外加一层子目录，例如：
+
+- `p5/`
+- `joint_rs/`
+- `debug/`
+- `formal/`
+
+原因是：
+
+- 当前 `VGGT` Crossview 实验脚本数量还少
+- 只有 `p5b / p5c` 两个主实验脚本时，平铺最直接
+- 目录层次过深会让调用和维护都更重
+
+因此当前建议是：
+
+- `p5b_vggt_joint_shared_all_loss_only.sh`
+- `p5c_vggt_joint_shared_all_viewtype.sh`
+
+都直接放在：
+
+- `bash_scripts/train/Crossview/vggt/`
+
+只有在后续出现以下情况时，再考虑加子目录：
+
+- `VGGT` 下继续扩出 `debug / smoke / formal / ablation`
+- `p5d / p5e / p5f` 等脚本显著增加
+- 希望把 `RS-only`、`joint`、`benchmark` 分开管理
+
+如果后续确实需要再拆层，优先建议的长期目录名是：
+
+- `bash_scripts/train/Crossview/vggt/joint_rs/`
+
+而不是按阶段号单独建：
+
+- `bash_scripts/train/Crossview/vggt/p5/`
+
+因为：
+
+- `p5` 更适合表达实验序号
+- `joint_rs` 更适合表达长期语义归类
 
 ## 10. 最终建议
 
