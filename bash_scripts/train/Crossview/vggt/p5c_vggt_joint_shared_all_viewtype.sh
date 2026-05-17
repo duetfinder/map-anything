@@ -2,18 +2,19 @@
 set -euo pipefail
 
 NUM_GPUS=${NUM_GPUS:-${1:-4}}
-CUDA_DEVICES=${CUDA_DEVICES:-0,1,2,3}
+CUDA_DEVICES=${CUDA_DEVICES:-4,5,6,7}
+MASTER_PORT=${MASTER_PORT:-29501}
 NUM_WORKERS=${NUM_WORKERS:-4}
 NUM_VIEWS=${NUM_VIEWS:-4}
-BATCH_SIZE=${BATCH_SIZE:-12}
+BATCH_SIZE=${BATCH_SIZE:-8}
 EPOCHS=${EPOCHS:-50}
 WARMUP_EPOCHS=${WARMUP_EPOCHS:-1}
 EVAL_FREQ=${EVAL_FREQ:-1}
-SAVE_FREQ=${SAVE_FREQ:-5}
-KEEP_FREQ=${KEEP_FREQ:-5}
+SAVE_FREQ=${SAVE_FREQ:-10}
+KEEP_FREQ=${KEEP_FREQ:-10}
 PRINT_FREQ=${PRINT_FREQ:-20}
-RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
-REMOTE_PROVIDER_SAMPLING_MODE=${REMOTE_PROVIDER_SAMPLING_MODE:-first_available}
+RS_PROVIDER=${RS_PROVIDER:-Google_Satellite,Bing_Satellite}
+REMOTE_PROVIDER_SAMPLING_MODE=${REMOTE_PROVIDER_SAMPLING_MODE:-random}
 REMOTE_TRAIN_CROP_MODE=${REMOTE_TRAIN_CROP_MODE:-random_scale_offset}
 REMOTE_VAL_CROP_MODE=${REMOTE_VAL_CROP_MODE:-random_scale_offset}
 REMOTE_TEST_CROP_MODE=${REMOTE_TEST_CROP_MODE:-none}
@@ -21,7 +22,7 @@ REMOTE_CROP_SCALE_MIN=${REMOTE_CROP_SCALE_MIN:-0.6}
 REMOTE_CROP_SCALE_MAX=${REMOTE_CROP_SCALE_MAX:-1.0}
 REMOTE_IMAGE_RESIZE_MODE=${REMOTE_IMAGE_RESIZE_MODE:-nearest}
 REMOTE_LABEL_RESIZE_MODE=${REMOTE_LABEL_RESIZE_MODE:-nearest}
-LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-1.0}
+LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-4.0}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 SCALE_REMOTE_BY_NUM_VIEWS=${SCALE_REMOTE_BY_NUM_VIEWS:-true}
 REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-false}
@@ -76,12 +77,15 @@ else
     echo "Starting from random initialization."
 fi
 
-PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "${NUM_GPUS}" \
+PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --master_port "${MASTER_PORT}" --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
     machine=autodl_vigor \
     dataset=vigor_chicago_rs_joint_518 \
     dataset.num_workers=${NUM_WORKERS} \
     dataset.num_views=${NUM_VIEWS} \
+    dataset.vigor_chicago_joint_rs_aerial.train.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.val.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.test.cities=[chicago] \
     dataset.vigor_chicago_joint_rs_aerial.train.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.val.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.test.remote_providers=[${RS_PROVIDER}] \

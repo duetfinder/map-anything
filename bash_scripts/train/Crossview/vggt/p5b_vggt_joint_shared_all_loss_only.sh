@@ -1,16 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
-NUM_GPUS=${NUM_GPUS:-${1:-2}}
-CUDA_DEVICES=${CUDA_DEVICES:-0,1}
+NUM_GPUS=${NUM_GPUS:-${1:-4}}
+CUDA_DEVICES=${CUDA_DEVICES:-0,1,2,3}
 NUM_WORKERS=${NUM_WORKERS:-4}
-NUM_VIEWS=${NUM_VIEWS:-2}
-BATCH_SIZE=${BATCH_SIZE:-2}
+NUM_VIEWS=${NUM_VIEWS:-4}
+BATCH_SIZE=${BATCH_SIZE:-8}
 EPOCHS=${EPOCHS:-50}
 WARMUP_EPOCHS=${WARMUP_EPOCHS:-1}
 EVAL_FREQ=${EVAL_FREQ:-1}
-SAVE_FREQ=${SAVE_FREQ:-5}
-KEEP_FREQ=${KEEP_FREQ:-5}
+SAVE_FREQ=${SAVE_FREQ:-10}
+KEEP_FREQ=${KEEP_FREQ:-10}
 PRINT_FREQ=${PRINT_FREQ:-20}
 RS_PROVIDER=${RS_PROVIDER:-Google_Satellite,Bing_Satellite}
 REMOTE_PROVIDER_SAMPLING_MODE=${REMOTE_PROVIDER_SAMPLING_MODE:-random}
@@ -77,7 +77,7 @@ else
     echo "Starting from random initialization."
 fi
 
-PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "${NUM_GPUS}" \
+PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --master_port "${MASTER_PORT}" --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
     machine=autodl_vigor \
     dataset=vigor_chicago_rs_joint_518 \

@@ -13,76 +13,56 @@ Supported benchmark models from bash_scripts/benchmark/rs_guided_dense_mv:
 - da3
 - mapanything
 
-Examples:
+Include:
 
+pi3：
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/base \
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/pi3 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_4gpu_all_20260414_114403_lambda2.0/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/all_2 \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_base/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/p3_pi3_base \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_all_6/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2\
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/all_6 \
-&& \
-python scripts/export_pointcloud_ply.py \
-    --model pi3 \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_4gpu_chicago_20260414_1837_lambda2.0/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/chicago_2 \
-&& \
-python scripts/export_pointcloud_ply.py \
-    --model pi3 \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_2gpu_chicago/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/chicago_6
-&& \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/p3_pi3_modality_embedding
+
+mapanything:
 python scripts/export_pointcloud_ply.py \
     --model mapanything \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/mapanything
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/mapanything
 
 
-python scripts/export_pointcloud_ply.py \
-    --model pi3 \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/base \
-&& \
-python scripts/export_pointcloud_ply.py \
-    --model mapanything \
-    --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/mapanything \
-&& \
-python scripts/export_pointcloud_ply.py \
-    --model pi3 \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_pi3_all_6/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2\
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/all_6
-
+vggt:
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
-    --image_folder /root/autodl-tmp/test/scence/471_2\
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/vggt \    
-
-
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/vggt \    
+&& \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/471_2\
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_2/vggt_p5b \
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/vggt_p5b \
+    --vggt_joint_remote_export \
+    --remote_view_names zimage.png \
+&& \
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/vggt_p5c \
     --vggt_joint_remote_export \
     --remote_view_names zimage.png
-
 
 """
 
