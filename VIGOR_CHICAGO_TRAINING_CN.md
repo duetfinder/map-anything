@@ -1012,8 +1012,8 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
 - 模型注册：[mapanything/models/mapanything/__init__.py](mapanything/models/mapanything/__init__.py)、[mapanything/models/__init__.py](mapanything/models/__init__.py)
 - 模型配置：[configs/model/mapanything_rs_joint.yaml](configs/model/mapanything_rs_joint.yaml)
 - 微调参数：[configs/train_params/mapanything_rs_joint_finetune.yaml](configs/train_params/mapanything_rs_joint_finetune.yaml)
-- 4 GPU 正式脚本：[bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_500_4gpu_all.sh](bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_500_4gpu_all.sh)
-- 1 GPU smoke 脚本：[bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh](bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh)
+- 4 GPU 正式脚本：[bash_scripts/train/Crossview/mapanything/p4_mapanything_rs_joint_500_4gpu_all.sh](bash_scripts/train/Crossview/mapanything/p4_mapanything_rs_joint_500_4gpu_all.sh)
+- 1 GPU smoke 脚本：[bash_scripts/train/Crossview/mapanything/p4_mapanything_rs_joint_debug_1gpu.sh](bash_scripts/train/Crossview/mapanything/p4_mapanything_rs_joint_debug_1gpu.sh)
 
 当前正式脚本已经按长期训练入口整理，默认支持直接通过环境变量覆盖这些关键项：
 
@@ -1068,9 +1068,10 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
 
 本次 smoke 运行：
 
-- 脚本：[bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh](bash_scripts/train/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu.sh)
+- 脚本：[bash_scripts/train/Crossview/mapanything/p4_mapanything_rs_joint_debug_1gpu.sh](bash_scripts/train/Crossview/mapanything/p4_mapanything_rs_joint_debug_1gpu.sh)
 - 预训练权重：[`../../outputs/checkpoints/mapanything/map-anything_benchmark.pth`](../../outputs/checkpoints/mapanything/map-anything_benchmark.pth)
-- 输出目录：[`../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu`](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu)
+- 历史 smoke 输出目录：[`../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu`](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p4_mapanything_rs_joint_debug_1gpu)
+- 当前脚本默认输出目录：[`../../outputs/mapanything_experiments/mapanything/training/Crossview/mapanything/p4_mapanything_rs_joint_debug_1gpu`](../../outputs/mapanything_experiments/mapanything/training/Crossview/mapanything/p4_mapanything_rs_joint_debug_1gpu)
 - 运行形态：1 GPU, `num_views=2`, `batch_size=2`, `train/val/test overfit = 8/4/4`, `epochs=1`
 
 结果：
@@ -1154,6 +1155,51 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
 - 这条脚本可以视为 `Pi3 / P3` 线的统一比较基准。
 - 后续所有 `Pi3` 改进实验都应尽量只改一个主变量，并与这条脚本直接对照。
 - 如果某个改动导致“不输入卫星图时的 aerial-only 重建能力下降”，则该改动不应继续扩展到长训。
+
+### 14.2.1 当前 `Pi3` 后续实验矩阵
+
+按照当前阶段结论，`Pi3 / P3` 后续优先按下面 4 条结构线推进：
+
+1. baseline
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh)
+   - `model=pi3`
+   - `train_params=pi3_finetune`
+
+2. `+ modality embedding`
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding.sh)
+   - `model=pi3_modality_embedding`
+   - `train_params=pi3_finetune`
+
+3. `+ embedding + freeze shared`
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared.sh)
+   - `model=pi3_modality_embedding`
+   - `train_params=pi3_finetune_freeze_shared`
+
+4. `+ embedding + remote head`
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_remote_head.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_remote_head.sh)
+   - `model=pi3_modality_embedding_remote_head`
+   - `train_params=pi3_finetune`
+
+对应新增的模型/训练配置：
+
+- [configs/model/pi3_modality_embedding.yaml](configs/model/pi3_modality_embedding.yaml)
+- [configs/model/pi3_modality_embedding_remote_head.yaml](configs/model/pi3_modality_embedding_remote_head.yaml)
+- [configs/train_params/pi3_finetune_freeze_shared.yaml](configs/train_params/pi3_finetune_freeze_shared.yaml)
+
+当前实现语义：
+
+- `modality embedding`
+  - 在 `Pi3` encoder 输出的 patch token 上加入 `aerial / remote` 两个可学习类型向量，再进入 shared decoder。
+- `freeze shared`
+  - 当前只冻结 `Pi3` 的共享 `model.decoder`，其余训练设置保持与 `pi3_finetune` 一致。
+- `remote head`
+  - 在 `modality embedding` 基础上，给 remote view 增加一套独立 `point/conf` head；aerial 仍走原始 `Pi3` head。
+
+这 4 条线的目标不是一次性追求最终最优，而是先回答：
+
+- 单靠模态区分信号是否已经足够减轻对 aerial-only 的破坏？
+- 如果 shared decoder 冻结后 aerial-only 不再退化，说明问题主要来自共享层被 remote 域扰动。
+- 如果只有加 `remote head` 才改善，说明 remote 和 aerial 需要的不只是“类型信号”，还需要输出头级别的参数解耦。
 
 ### 14.3 接下来训练优先级
 
