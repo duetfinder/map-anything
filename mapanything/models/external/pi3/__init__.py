@@ -9,6 +9,10 @@ Inference wrapper for Pi3
 
 import torch
 
+from mapanything.models.external.pi3.experimental import (
+    Pi3ModalityEmbeddingRemoteHeadWrapper,
+    Pi3ModalityEmbeddingWrapper,
+)
 from mapanything.models.external.pi3.models.pi3 import Pi3
 from mapanything.models.external.vggt.utils.rotation import mat_to_quat
 

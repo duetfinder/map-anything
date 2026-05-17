@@ -214,6 +214,14 @@ MODEL_CONFIGS = {
         "module": "mapanything.models.external.pi3",
         "class_name": "Pi3Wrapper",
     },
+    "pi3_modality_embedding": {
+        "module": "mapanything.models.external.pi3",
+        "class_name": "Pi3ModalityEmbeddingWrapper",
+    },
+    "pi3_modality_embedding_remote_head": {
+        "module": "mapanything.models.external.pi3",
+        "class_name": "Pi3ModalityEmbeddingRemoteHeadWrapper",
+    },
     "pi3x": {
         "module": "mapanything.models.external.pi3x",
         "class_name": "Pi3XWrapper",

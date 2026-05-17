@@ -1,0 +1,10 @@
+# String for model factory
+model_str: "pi3_modality_embedding_remote_head"
+# Model config
+model_config:
+  name: "pi3_modality_embedding_remote_head"
+  load_pretrained_weights: true
+# Image Normalization Type
+data_norm_type: "identity"
+pretrained: null
+torch_hub_force_reload: False

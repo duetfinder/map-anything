@@ -1,0 +1,12 @@
+defaults:
+  - pi3_finetune
+
+submodule_configs:
+  model.encoder:
+    lr: 5e-07
+    min_lr: 5e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.decoder:
+    lr: 0

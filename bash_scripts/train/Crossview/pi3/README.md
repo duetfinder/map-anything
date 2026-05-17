@@ -16,6 +16,12 @@
   - `P3` joint-input smoke
 - `p3_pi3_joint_input_500_2gpu_all.sh`
   - 当前 `P3` 主基线
+- `p3_pi3_joint_input_500_2gpu_all_modality_embedding.sh`
+  - `P3` 模态 embedding 版本
+- `p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared.sh`
+  - `P3` 模态 embedding + 冻结 shared decoder 版本
+- `p3_pi3_joint_input_500_2gpu_all_modality_embedding_remote_head.sh`
+  - `P3` 模态 embedding + remote head 版本
 - `p3_pi3_joint_input_500_2gpu_all_low_covis.sh`
   - `P3` 低共视版本
 - `p3_pi3_joint_input_500_2gpu_all_zero_covis.sh`
