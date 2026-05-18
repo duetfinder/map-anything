@@ -20,55 +20,55 @@ Include:
 pi3：
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/pi3 \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/pi3 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_base/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/p3_pi3_base \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_base \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/p3_pi3_modality_embedding
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding_remote_head \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding_remote_head/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/p3_pi3_modality_embedding_remote_head
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding_remote_head
 
 mapanything:
 python scripts/export_pointcloud_ply.py \
     --model mapanything \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/mapanything
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/mapanything
 
 
 vggt:
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/vggt \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt \
 && \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/vggt_p5b \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b \
     --vggt_joint_remote_export \
     --remote_view_names zimage.png \
 && \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/seq_14 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/seq_14/vggt_p5c \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5c \
     --vggt_joint_remote_export \
     --remote_view_names zimage.png
 
