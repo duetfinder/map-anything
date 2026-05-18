@@ -1,9 +1,12 @@
 #!/bin/bash
 
-NUM_GPUS=${NUM_GPUS:-${1:-4}}
+NUM_GPUS=${NUM_GPUS:-${1:-2}}
+CUDA_DEVICES=${CUDA_DEVICES:-4,5}
+MASTER_PORT=${MASTER_PORT:-29503}
 NUM_VIEWS=${NUM_VIEWS:-4}
 BATCH_SIZE=${BATCH_SIZE:-12}
-RS_PROVIDER=${RS_PROVIDER:-Google_Satellite}
+RS_PROVIDER=${RS_PROVIDER:-Google_Satellite,Bing_Satellite}
+REMOTE_PROVIDER_SAMPLING_MODE=${REMOTE_PROVIDER_SAMPLING_MODE:-random}
 REMOTE_TRAIN_CROP_MODE=${REMOTE_TRAIN_CROP_MODE:-random_scale_offset}
 REMOTE_VAL_CROP_MODE=${REMOTE_VAL_CROP_MODE:-random_scale_offset}
 REMOTE_TEST_CROP_MODE=${REMOTE_TEST_CROP_MODE:-none}
@@ -15,7 +18,7 @@ LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-6.0}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-true}
 REMOTE_DETACH_POSE_ALIGN=${REMOTE_DETACH_POSE_ALIGN:-false}
-OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/vigor_chicago/p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared'}
+OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/Crossview/pi3/p3_pi3_freeze_shared'}
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
     echo "BATCH_SIZE (${BATCH_SIZE}) is train_params.max_num_of_imgs_per_gpu and must be >= NUM_VIEWS (${NUM_VIEWS}); otherwise validation batch_size becomes 0." >&2
@@ -26,12 +29,18 @@ export HYDRA_FULL_ERROR=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=1
 
-PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node "${NUM_GPUS}" \
+PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --master_port "${MASTER_PORT}" --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
     machine=autodl_vigor \
     dataset=vigor_chicago_rs_joint_518 \
     dataset.num_workers=0 \
     dataset.num_views=${NUM_VIEWS} \
+    dataset.vigor_chicago_joint_rs_aerial.train.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.val.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.test.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.train.remote_provider_sampling_mode=${REMOTE_PROVIDER_SAMPLING_MODE} \
+    dataset.vigor_chicago_joint_rs_aerial.val.remote_provider_sampling_mode=${REMOTE_PROVIDER_SAMPLING_MODE} \
+    dataset.vigor_chicago_joint_rs_aerial.test.remote_provider_sampling_mode=${REMOTE_PROVIDER_SAMPLING_MODE} \
     dataset.vigor_chicago_joint_rs_aerial.train.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.val.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.test.remote_providers=[${RS_PROVIDER}] \
@@ -58,8 +67,8 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node "${NUM_GPUS}
     train_params.epochs=50 \
     train_params.warmup_epochs=1 \
     train_params.eval_freq=1 \
-    train_params.save_freq=5 \
-    train_params.keep_freq=5 \
+    train_params.save_freq=50 \
+    train_params.keep_freq=10 \
     train_params.max_num_of_imgs_per_gpu=${BATCH_SIZE} \
     train_params.print_freq=1 \
     train_params.resume=false \
