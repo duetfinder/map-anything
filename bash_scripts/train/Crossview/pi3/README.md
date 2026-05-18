@@ -12,22 +12,21 @@
   - `P2` RS-only smoke
 - `p2a_pi3_rs_only_loss_ablation_2gpu.sh`
   - `P2a` RS-only loss ablation
-- `p3_pi3_joint_input_debug_2gpu.sh`
-  - `P3` joint-input smoke
-- `p3_pi3_joint_input_500_2gpu_all.sh`
-  - 当前 `P3` 主基线
-- `p3_pi3_joint_input_500_2gpu_all_modality_embedding.sh`
+- `p3_pi3_base.sh`
+  - `P3` 当前 joint 主基线
+- `p3_pi3_modality_embedding.sh`
   - `P3` 模态 embedding 版本
-- `p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared.sh`
+- `p3_pi3_freeze_shared.sh`
   - `P3` 模态 embedding + 冻结 shared decoder 版本
-- `p3_pi3_joint_input_500_2gpu_all_modality_embedding_remote_head.sh`
+- `p3_pi3_modality_embedding_remote_head.sh`
   - `P3` 模态 embedding + remote head 版本
-- `p3_pi3_joint_input_500_2gpu_all_low_covis.sh`
+- `p3_pi3_low_covis.sh`
   - `P3` 低共视版本
-- `p3_pi3_joint_input_500_2gpu_all_zero_covis.sh`
+- `p3_pi3_zero_covis.sh`
   - `P3` 零共视版本
 
 说明：
 
 - 旧路径 `bash_scripts/train/vigor_chicago/p*.sh` 仍保留为兼容包装。
 - 新实验优先放到本目录，避免 `vigor_chicago` 目录继续堆积不同阶段与不同模型线。
+- `P3` 命名已统一为 `p3_pi3_*`；旧的 `p3_pi3_joint_input_*` 名称不再作为规范入口。

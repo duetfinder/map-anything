@@ -56,11 +56,11 @@ loss 相关的独立汇总见：[MAPANYTHING_LOSSES_CN.md](MAPANYTHING_LOSSES_CN
 - 新增的 [bash_scripts/train/Crossview/pi3/p1_pi3_baseline_500_pretrained_2gpu.sh](bash_scripts/train/Crossview/pi3/p1_pi3_baseline_500_pretrained_2gpu.sh) 主要是把 baseline 重新命名、单独归档，并显式定义为 `P1 Baseline-Main` 实验入口。
 - 新脚本同时暴露了 `NUM_VIEWS / BATCH_SIZE / OUTPUT_DIR`，而 P0 额外暴露了 `TRAIN_SETS / VAL_SETS / TEST_SETS`，便于在不改脚本的前提下做 debug 和 baseline 内部调参。
 
-补充：`P3 Joint-Input` 的第一版工程骨架已经补齐，并已完成一次 2-GPU debug smoke。
+补充：`P3 Joint-Input` 的第一版工程骨架已经补齐。当前 `Crossview/pi3` 目录已经整理为统一的 `p3_pi3_*` 命名，旧的 `p3_pi3_joint_input_*` 仅作为历史描述保留，不再是规范入口。
 
 本次 `P3` smoke 运行信息：
 
-- 脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
+- 历史 smoke 入口：`p3_pi3_joint_input_debug_2gpu.sh`，当前已并入整理后的 [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
 - 输出目录：[`../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_debug`](../../outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_debug)
 - 运行形态：2 GPU, `num_views=2`, `batch_size=2`, `train/val/test overfit = 16/8/8`, `epochs=1`
 - 结果：训练 1 epoch 完整跑通，验证阶段完整跑通，进程正常退出，已生成 `checkpoint-last / checkpoint-1 / checkpoint-best / checkpoint-final`
@@ -83,8 +83,14 @@ loss 相关的独立汇总见：[MAPANYTHING_LOSSES_CN.md](MAPANYTHING_LOSSES_CN
 - joint loss config：[configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
 - joint loss 实现：[mapanything/train/losses.py](mapanything/train/losses.py)
 - joint forward 组装：[mapanything/utils/inference.py](mapanything/utils/inference.py)
-- debug 脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
-- 500-scene 正式脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh)
+- 当前主基线脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
+- 结构变体脚本：
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding.sh](bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_freeze_shared.sh](bash_scripts/train/Crossview/pi3/p3_pi3_freeze_shared.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding_remote_head.sh](bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding_remote_head.sh)
+- 数据难度变体脚本：
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_low_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_low_covis.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_zero_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_zero_covis.sh)
 
 ## 2. 当前 aerial-only 训练的数据接口
 
@@ -302,8 +308,7 @@ total_loss = aerial_multiview_loss + lambda_remote_pm * remote_pointmap_loss + l
 - loss config
   - [configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
 - train script
-  - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
-  - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
 
 当前这套 `P3` 配置的设计点是：
 
@@ -433,7 +438,7 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 | P1c | Baseline-LoRA | 检查参数高效微调是否值得引入 | `pi3` | aerial-only, 500 scenes | LoRA / adapter | `pi3_loss` | 当前无脚本 | 当前仓库未原生支持，优先级低于 P1 / P1a / P2 |
 | P2 | RS-Only | 先验证模型能否单独适应 RS 输入域 | `pi3` | remote image only | remote-only 几何回归 | `lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/Crossview/pi3/p2_pi3_rs_only_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p2_pi3_rs_only_debug_2gpu.sh) | 已完成 2-GPU, 1-epoch smoke；当前是可运行的最小入口 |
 | P2a | RS-Only-Loss-Ablation | 比较 RS-only 的 remote loss 设计 | `pi3` | remote image only | 与 P2 相同 | 比较 `pointmap-only L1` / `pointmap+height L1` / `pointmap robust + height L1` | [bash_scripts/train/Crossview/pi3/p2a_pi3_rs_only_loss_ablation_2gpu.sh](bash_scripts/train/Crossview/pi3/p2a_pi3_rs_only_loss_ablation_2gpu.sh) | 第一版只做 loss 与权重对比，不引入新结构 |
-| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh) / [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh) | 已完成 2-GPU debug smoke；下一步进入权重与资源配置细化 |
+| P3 | Joint-Input | 检查 aerial + remote 同时输入是否有收益 | `pi3` 或 `vggt` | aerial views + remote image | joint forward | `aerial loss + lambda_pm * remote_pointmap_loss + lambda_h * remote_height_loss` | [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh) | 当前 `Pi3` 主基线已整理到 `p3_pi3_base`；结构与数据变体见 `Crossview/pi3` 目录 |
 | P4 | Model-Compare | 在稳定实验设置下比较不同模型 | `pi3` / `vggt` / `mapanything` / `da3` | 与选定任务一致 | 跟随对应 baseline / joint 设置 | 跟随模型对应主 loss | 视模型逐个补脚本 | 只有在 P1/P2/P3 跑稳后再展开 |
 
 补充解释：
@@ -490,9 +495,9 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 - `VAL_SETS=16`
 - `TEST_SETS=16`
 - `epochs=3`
-- 仍使用 [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
+- 仍使用 [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh) 的小样本覆写
 
-只有当这一层稳定后，再切到 [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh)。
+只有当这一层稳定后，再进入完整 `P3` 长训；当前规范入口仍是 [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)。
 
 ### 9.1.4 P3 正式训练前的记录口径
 
@@ -505,7 +510,7 @@ remote image 不是 scene 内普通帧，因此不适合直接纳入现有 covis
 
 ## 9.2 P3 500 正式脚本 bug 记录与修复
 
-2026-04-07 跑 `bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh` 时首次失败在 DataLoader 构建阶段，尚未进入模型训练。
+2026-04-07 早期 `P3` 正式脚本曾在 DataLoader 构建阶段失败，尚未进入模型训练。当前这部分参数与逻辑已收敛到整理后的 [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)。
 
 错误信息：
 
@@ -530,8 +535,7 @@ test_batch_size = 2 * (max_num_of_imgs_per_gpu // dataset.num_views)
 
 已修复：
 
-- [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh)：默认 `NUM_VIEWS=2`，`NUM_GPUS` 改为支持环境变量或第 1 个参数，并新增 `BATCH_SIZE >= NUM_VIEWS` 启动前检查
-- [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)：同步默认 `NUM_VIEWS=2`，并新增同样的启动前检查
+- 当前整理后的 [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh) 已内置 `BATCH_SIZE >= NUM_VIEWS` 启动前检查，并统一暴露 `NUM_VIEWS / BATCH_SIZE / CUDA_DEVICES / OUTPUT_DIR`
 
 重跑状态：
 
@@ -545,7 +549,7 @@ test_batch_size = 2 * (max_num_of_imgs_per_gpu // dataset.num_views)
 后续注意：如果需要实验 `NUM_VIEWS=4`，必须至少设置 `BATCH_SIZE>=4`，例如：
 
 ```bash
-NUM_VIEWS=4 BATCH_SIZE=4 bash bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh
+NUM_VIEWS=4 BATCH_SIZE=4 bash bash_scripts/train/Crossview/pi3/p3_pi3_base.sh
 ```
 
 但 P3 joint 实际前向是 `num_views` 个 aerial view 再加 1 个 remote view，`NUM_VIEWS=4` 会明显增加显存压力。当前正式训练仍建议先固定 `NUM_VIEWS=2, BATCH_SIZE=2`。
@@ -604,8 +608,7 @@ NUM_VIEWS=4 BATCH_SIZE=4 bash bash_scripts/train/Crossview/pi3/p3_pi3_joint_inpu
 - [configs/loss/pi3_loss_rs_joint.yaml](configs/loss/pi3_loss_rs_joint.yaml)
   - 默认启用 `compare_in_view0_frame=True`
   - 默认将 `remote_height_loss_weight` 调整为 `0.0`
-- [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
-- [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu.sh)
+- [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
   - 默认 `LAMBDA_REMOTE_H=0.0`
 
 ### 9.3.4 为什么先关闭 joint height loss
@@ -616,7 +619,7 @@ NUM_VIEWS=4 BATCH_SIZE=4 bash bash_scripts/train/Crossview/pi3/p3_pi3_joint_inpu
 
 已重新跑通最小 joint smoke：
 
-- 脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
+- 当前对应入口：[bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
 - 覆写参数：`TRAIN_SETS=4 VAL_SETS=4 TEST_SETS=4 NUM_VIEWS=2 BATCH_SIZE=2 NUM_GPUS=2`
 - 输出目录：[p3_joint_input_debug_view0fix](/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/vigor_chicago/p3_joint_input_debug_view0fix)
 
@@ -1125,28 +1128,40 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
   - [bash_scripts/train/Crossview/pi3/p2_pi3_rs_only_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p2_pi3_rs_only_debug_2gpu.sh)
 - `P2a` RS-only loss ablation：
   - [bash_scripts/train/Crossview/pi3/p2a_pi3_rs_only_loss_ablation_2gpu.sh](bash_scripts/train/Crossview/pi3/p2a_pi3_rs_only_loss_ablation_2gpu.sh)
-- `P3` joint-input smoke：
-  - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_debug_2gpu.sh)
 - `P3` 当前主基线：
-  - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
+- `P3` 模态 embedding 版本：
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding.sh](bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding.sh)
+- `P3` 模态 embedding + 冻结 shared 版本：
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_freeze_shared.sh](bash_scripts/train/Crossview/pi3/p3_pi3_freeze_shared.sh)
+- `P3` 模态 embedding + remote head 版本：
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding_remote_head.sh](bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding_remote_head.sh)
 - `P3` 低共视版本：
-  - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_low_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_low_covis.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_low_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_low_covis.sh)
 - `P3` 零共视版本：
-  - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_zero_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_zero_covis.sh)
+  - [bash_scripts/train/Crossview/pi3/p3_pi3_zero_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_zero_covis.sh)
 
 说明：
 
 - `bash_scripts/train/vigor_chicago` 下同名 `Pi3` 脚本现在只做跳转包装。
 - 后续新增 `Pi3` 实验脚本统一继续放到 `Crossview/pi3`。
+- 当前 `P3` 目录的规范命名已经整理为：
+  - `p3_pi3_base`
+  - `p3_pi3_modality_embedding`
+  - `p3_pi3_freeze_shared`
+  - `p3_pi3_modality_embedding_remote_head`
+  - `p3_pi3_low_covis`
+  - `p3_pi3_zero_covis`
 
 ### 14.2 当前 Pi3 训练基线
 
 当前 `Pi3` 训练线的统一主基线定义为：
 
-- 脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh)
+- 脚本：[bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
 - 数据：`vigor_chicago_rs_joint_518`
 - 输入：`NUM_VIEWS=4` 的 aerial + 1 个 remote
-- remote provider：默认 `Google_Satellite`
+- remote provider：默认 `Google_Satellite,Bing_Satellite`
+- remote provider sampling：`random`
 - remote loss：`pi3_loss_rs_joint`
 - 当前主要权重：`LAMBDA_REMOTE_PM=6.0`, `LAMBDA_REMOTE_H=0.0`
 
@@ -1161,22 +1176,22 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
 按照当前阶段结论，`Pi3 / P3` 后续优先按下面 4 条结构线推进：
 
 1. baseline
-   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all.sh)
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_base.sh](bash_scripts/train/Crossview/pi3/p3_pi3_base.sh)
    - `model=pi3`
    - `train_params=pi3_finetune`
 
 2. `+ modality embedding`
-   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding.sh)
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding.sh](bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding.sh)
    - `model=pi3_modality_embedding`
    - `train_params=pi3_finetune`
 
 3. `+ embedding + freeze shared`
-   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_freeze_shared.sh)
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_freeze_shared.sh](bash_scripts/train/Crossview/pi3/p3_pi3_freeze_shared.sh)
    - `model=pi3_modality_embedding`
    - `train_params=pi3_finetune_freeze_shared`
 
 4. `+ embedding + remote head`
-   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_remote_head.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_modality_embedding_remote_head.sh)
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding_remote_head.sh](bash_scripts/train/Crossview/pi3/p3_pi3_modality_embedding_remote_head.sh)
    - `model=pi3_modality_embedding_remote_head`
    - `train_params=pi3_finetune`
 
@@ -1209,20 +1224,20 @@ total_loss = masked_L1(pred_pts3d, gt_remote_pointmap)
    目标：降低 RS 点图异常像素对 joint 训练的破坏。  
    建议新增：
    - loss config：`configs/loss/pi3_loss_rs_joint_exclude_top5_norm.yaml`
-   - 脚本：`bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_top5.sh`
+   - 脚本：`bash_scripts/train/Crossview/pi3/p3_pi3_base_top5.sh`
 
 2. `P3-D1`：低共视 curriculum  
    目标：确认 joint 训练是否受当前 `covisibility_thres=0.05` 限制。  
    当前已有：
-   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_low_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_low_covis.sh)
-   - [bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_zero_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_all_zero_covis.sh)
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_low_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_low_covis.sh)
+   - [bash_scripts/train/Crossview/pi3/p3_pi3_zero_covis.sh](bash_scripts/train/Crossview/pi3/p3_pi3_zero_covis.sh)
    推荐顺序：
    - `0.05 -> 0.02 -> 0.0`
 
 3. `P3-M1`：多 provider 卫星输入  
    目标：测试 `Google + Bing` 是否能提升 remote 域泛化。  
    推荐新增脚本：
-   - `bash_scripts/train/Crossview/pi3/p3_pi3_joint_input_500_2gpu_google_bing_random.sh`
+   - `bash_scripts/train/Crossview/pi3/p3_pi3_base_google_bing_random.sh`
    关键设置：
    - `remote_providers=['Google_Satellite','Bing_Satellite']`
    - `remote_provider_sampling_mode='random'`

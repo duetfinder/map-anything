@@ -9,6 +9,8 @@ Export a unified world-space point cloud from an image folder.
 
 Supported benchmark models from bash_scripts/benchmark/rs_guided_dense_mv:
 - pi3
+- pi3_modality_embedding
+- pi3_modality_embedding_remote_head
 - vggt
 - da3
 - mapanything
@@ -28,10 +30,16 @@ python scripts/export_pointcloud_ply.py \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/p3_pi3_base \
 && \
 python scripts/export_pointcloud_ply.py \
-    --model pi3 \
+    --model pi3_modality_embedding \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/471_1 \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/p3_pi3_modality_embedding
+&& \
+python scripts/export_pointcloud_ply.py \
+    --model pi3_modality_embedding_remote_head \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding_remote_head/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/471_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/p3_pi3_modality_embedding_remote_head
 
 mapanything:
 python scripts/export_pointcloud_ply.py \
@@ -46,7 +54,7 @@ python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
     --image_folder /root/autodl-tmp/test/scence/471_1 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/vggt \    
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/471_1/vggt \
 && \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
@@ -94,10 +102,30 @@ from mapanything.utils.image import heif_support_enabled, load_images
 DEFAULT_MODEL = "pi3"
 DEFAULT_CONFIG_PATH = "configs/train.yaml"
 DEFAULT_MAPANYTHING_HF_MODEL = "facebook/map-anything"
+SUPPORTED_MODELS = [
+    "pi3",
+    "pi3_modality_embedding",
+    "pi3_modality_embedding_remote_head",
+    "vggt",
+    "da3",
+    "mapanything",
+]
 DEFAULT_CONFIG_OVERRIDES = {
     "pi3": [
         "machine=aws",
         "model=pi3",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "pi3_modality_embedding": [
+        "machine=aws",
+        "model=pi3_modality_embedding",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "pi3_modality_embedding_remote_head": [
+        "machine=aws",
+        "model=pi3_modality_embedding_remote_head",
         "model/task=images_only",
         "model.encoder.uses_torch_hub=false",
     ],
@@ -116,7 +144,15 @@ DEFAULT_CONFIG_OVERRIDES = {
         "model.encoder.uses_torch_hub=false",
     ],
 }
-IDENTITY_MODELS = {"anycalib", "moge", "pi3", "pi3x", "vggt"}
+IDENTITY_MODELS = {
+    "anycalib",
+    "moge",
+    "pi3",
+    "pi3_modality_embedding",
+    "pi3_modality_embedding_remote_head",
+    "pi3x",
+    "vggt",
+}
 CLASH_ENV = {
     "http_proxy": "http://127.0.0.1:7890",
     "https_proxy": "http://127.0.0.1:7890",
@@ -136,7 +172,7 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=str,
         default=DEFAULT_MODEL,
-        choices=["pi3", "vggt", "da3", "mapanything"],
+        choices=SUPPORTED_MODELS,
         help="Model to run. Matches the rs_guided_dense_mv benchmark model set.",
     )
     parser.add_argument(
@@ -389,6 +425,29 @@ def resolve_config_overrides(args: argparse.Namespace):
     return overrides
 
 
+def resolve_effective_model_name(args: argparse.Namespace) -> str:
+    if args.model != "pi3" or not args.checkpoint_path:
+        return args.model
+
+    checkpoint_path_lower = str(args.checkpoint_path).lower()
+    if "pi3_modality_embedding_remote_head" in checkpoint_path_lower:
+        print(
+            "Auto-detected Pi3 variant from checkpoint path: "
+            "pi3_modality_embedding_remote_head"
+        )
+        return "pi3_modality_embedding_remote_head"
+    if (
+        "pi3_modality_embedding" in checkpoint_path_lower
+        or "p3_pi3_freeze_shared" in checkpoint_path_lower
+    ):
+        print(
+            "Auto-detected Pi3 variant from checkpoint path: "
+            "pi3_modality_embedding"
+        )
+        return "pi3_modality_embedding"
+    return args.model
+
+
 def maybe_enable_clash_proxy(enable_proxy: bool):
     if not enable_proxy:
         return
@@ -413,32 +472,40 @@ def maybe_prepare_da3_pythonpath(model_name: str):
         print(f"Added DA3 dependency path: {da3_src}")
 
 
-def build_local_config(args: argparse.Namespace, config_overrides) -> dict:
+def build_local_config(
+    args: argparse.Namespace,
+    config_overrides,
+    effective_model_name: str,
+) -> dict:
     local_config = {
         "path": args.config_path,
         "checkpoint_path": args.checkpoint_path,
         "config_overrides": config_overrides,
         "strict": args.strict,
+        "model_str": args.model_str or effective_model_name,
     }
     if args.config_json_path is not None:
         local_config["config_json_path"] = args.config_json_path
-    if args.model_str is not None:
-        local_config["model_str"] = args.model_str
     return local_config
 
 
-def initialize_model(args: argparse.Namespace, device: str, config_overrides):
+def initialize_model(
+    args: argparse.Namespace,
+    device: str,
+    config_overrides,
+    effective_model_name: str,
+):
     maybe_enable_clash_proxy(args.enable_clash_proxy)
-    maybe_prepare_da3_pythonpath(args.model)
+    maybe_prepare_da3_pythonpath(effective_model_name)
 
     if args.checkpoint_path:
-        local_config = build_local_config(args, config_overrides)
+        local_config = build_local_config(args, config_overrides, effective_model_name)
         print(f"Initializing model from local config: {local_config}")
         model = initialize_mapanything_local(local_config, device)
         print("Successfully loaded local checkpoint")
         return model
 
-    if args.model == "mapanything":
+    if effective_model_name == "mapanything":
         hf_model_name = args.hf_model_name or DEFAULT_MAPANYTHING_HF_MODEL
         high_level_config = {
             "path": args.config_path,
@@ -455,8 +522,12 @@ def initialize_model(args: argparse.Namespace, device: str, config_overrides):
 
     from mapanything.models import init_model_from_config
 
-    print(f"Initializing model '{args.model}' from default wrapper weights")
-    model = init_model_from_config(args.model, device=device, machine="aws").eval()
+    print(
+        f"Initializing model '{effective_model_name}' from default wrapper weights"
+    )
+    model = init_model_from_config(
+        effective_model_name, device=device, machine="aws"
+    ).eval()
     print("Successfully loaded default wrapper weights")
     return model
 
@@ -683,12 +754,21 @@ def resolve_output_path(output_path_str: str) -> Path:
 
 def main() -> None:
     args = parse_args()
+    effective_model_name = resolve_effective_model_name(args)
+    if effective_model_name != args.model:
+        print(
+            f"Resolved export model '{args.model}' -> '{effective_model_name}' "
+            "based on the checkpoint path"
+        )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
+    original_model_name = args.model
+    args.model = effective_model_name
     config_overrides = resolve_config_overrides(args)
-    model = initialize_model(args, device, config_overrides)
+    model = initialize_model(args, device, config_overrides, effective_model_name)
+    args.model = original_model_name
 
     load_size = resolve_load_size(args)
     print(f"Loading images from: {args.image_folder}")
@@ -704,7 +784,7 @@ def main() -> None:
     print(f"Loaded {len(views)} views")
     views = annotate_view_source_names(views, args.image_folder, args.stride)
 
-    model_name = getattr(model, "name", args.model)
+    model_name = getattr(model, "name", effective_model_name)
     views = convert_views_to_identity_if_needed(views, model_name)
     views = maybe_assign_remote_instances(views, args)
 
