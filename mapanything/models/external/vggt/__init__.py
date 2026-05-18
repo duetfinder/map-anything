@@ -35,6 +35,8 @@ class VGGTWrapper(torch.nn.Module):
         use_point_head_for_remote=False,
         use_view_type_bias=False,
         remote_instance_value="remote",
+        ordinary_output_head="depth",
+        remote_output_head="auto",
     ):
         super().__init__()
         self.name = name
@@ -44,6 +46,8 @@ class VGGTWrapper(torch.nn.Module):
         self.use_point_head_for_remote = use_point_head_for_remote
         self.use_view_type_bias = use_view_type_bias
         self.remote_instance_value = remote_instance_value
+        self.ordinary_output_head = ordinary_output_head
+        self.remote_output_head = remote_output_head
         self.embed_dim = 1024
 
         if load_pretrained_weights:
@@ -101,6 +105,13 @@ class VGGTWrapper(torch.nn.Module):
             custom_ckpt = torch.load(self.custom_ckpt_path, weights_only=False)
             print(self.model.load_state_dict(custom_ckpt, strict=True))
             del custom_ckpt  # in case it occupies memory
+
+    def _output_head_for_view(self, view):
+        if self._is_remote_view(view):
+            if self.remote_output_head == "auto":
+                return "point" if self.use_point_head_for_remote else "depth"
+            return self.remote_output_head
+        return self.ordinary_output_head
 
     def _is_remote_view(self, view):
         instance = view.get("instance")
@@ -188,9 +199,7 @@ class VGGTWrapper(torch.nn.Module):
 
             point_map = None
             point_conf = None
-            if self.use_point_head_for_remote and any(
-                self._is_remote_view(view) for view in views
-            ):
+            if any(self._output_head_for_view(view) == "point" for view in views):
                 point_map, point_conf = self.model.point_head(
                     aggregated_tokens_list, images, ps_idx
                 )
@@ -251,8 +260,14 @@ class VGGTWrapper(torch.nn.Module):
                     }
                 )
 
-                if point_map is not None and self._is_remote_view(views[view_idx]):
+                if (
+                    point_map is not None
+                    and self._output_head_for_view(views[view_idx]) == "point"
+                ):
                     res[-1]["pts3d"] = point_map[:, view_idx, ...]
                     res[-1]["conf"] = point_conf[:, view_idx, ...]
+                    res[-1]["vggt_output_head"] = "point"
+                else:
+                    res[-1]["vggt_output_head"] = "depth"
 
         return res

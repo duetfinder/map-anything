@@ -15,6 +15,10 @@ model_config:
   use_view_type_bias: false
   # Instance tag used by the joint RS training path for the appended remote view.
   remote_instance_value: "remote"
+  # Export/debug controls. "depth" uses camera+depth; "point" uses VGGT point_head.
+  ordinary_output_head: "depth"
+  # "auto" preserves training behavior: point only when use_point_head_for_remote=true.
+  remote_output_head: "auto"
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

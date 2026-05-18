@@ -33,13 +33,31 @@ python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding \
+&& \
+python scripts/export_pointcloud_ply.py \
+    --model pi3_modality_embedding \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_freeze_shared/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_freeze_shared \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding_remote_head \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding_remote_head/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding_remote_head
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding_remote_head \
+&& \
+python scripts/export_pointcloud_ply.py \
+    --model pi3 \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_low_covis/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_low_covis \
+&& \
+python scripts/export_pointcloud_ply.py \
+    --model pi3 \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_zero_covis/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_zero_covis
 
 mapanything:
 python scripts/export_pointcloud_ply.py \
@@ -50,26 +68,64 @@ python scripts/export_pointcloud_ply.py \
 
 
 vggt:
+# Original VGGT, matching the wrapper path used by the benchmark. This detects
+# /outputs/checkpoints/vggt/model.pt as a raw VGGT state_dict and loads it via
+# VGGTWrapper.model.load_state_dict(...), not as a MapAnything training ckpt.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
     --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt \
-&& \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_base_depth
+
+# p5b default mixed export: ordinary views use camera+depth, remote uses point_head.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_mixed \
     --vggt_joint_remote_export \
-    --remote_view_names zimage.png \
-&& \
+    --vggt_export_mode mixed \
+    --remote_view_names zimage.png
+
+# p5b diagnostic: force every view through camera+depth.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_depth_all \
+    --vggt_joint_remote_export \
+    --vggt_export_mode depth_all \
+    --remote_view_names zimage.png
+
+# p5b diagnostic: force every view through point_head.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_point_all \
+    --vggt_joint_remote_export \
+    --vggt_export_mode point_all \
+    --remote_view_names zimage.png
+
+# p5b diagnostic: explicit per-type head selection.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_ordinary_point_remote_depth \
+    --vggt_joint_remote_export \
+    --vggt_ordinary_output_head point \
+    --vggt_remote_output_head depth \
+    --remote_view_names zimage.png
+
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5c \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5c_mixed \
     --vggt_joint_remote_export \
+    --vggt_export_mode mixed \
+    --config_overrides machine=aws model=vggt model.model_config.use_view_type_bias=true \
     --remote_view_names zimage.png
 
 """
@@ -250,8 +306,33 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Special handling for VGGT p5b/p5c RS-joint checkpoints: disable "
             "wrapper-side pretrained/custom init, enable remote point-head routing, "
-            "and mark all input views as the remote instance."
+            "and enable remote-view tagging for mixed export."
         ),
+    )
+    parser.add_argument(
+        "--vggt_export_mode",
+        type=str,
+        default=None,
+        choices=["mixed", "depth_all", "point_all", "ordinary_point_remote_depth"],
+        help=(
+            "Convenience VGGT output-head mode. mixed=ordinary depth and remote "
+            "point; depth_all=all camera+depth; point_all=all point_head; "
+            "ordinary_point_remote_depth swaps the mixed assignment."
+        ),
+    )
+    parser.add_argument(
+        "--vggt_ordinary_output_head",
+        type=str,
+        default=None,
+        choices=["depth", "point"],
+        help="Explicit output head for non-remote VGGT views.",
+    )
+    parser.add_argument(
+        "--vggt_remote_output_head",
+        type=str,
+        default=None,
+        choices=["auto", "depth", "point"],
+        help="Explicit output head for remote VGGT views.",
     )
     parser.add_argument(
         "--force_remote_instance",
@@ -405,11 +486,52 @@ def resolve_load_size(args: argparse.Namespace):
     return None
 
 
+def is_raw_vggt_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = Path(args.checkpoint_path)
+    return checkpoint_path.name == "model.pt" and "checkpoints/vggt" in str(
+        checkpoint_path
+    )
+
+
+def resolve_vggt_output_heads(args: argparse.Namespace):
+    if args.model != "vggt":
+        return None, None
+
+    ordinary_head = args.vggt_ordinary_output_head
+    remote_head = args.vggt_remote_output_head
+
+    if args.vggt_export_mode == "mixed":
+        ordinary_head = ordinary_head or "depth"
+        remote_head = remote_head or "point"
+    elif args.vggt_export_mode == "depth_all":
+        ordinary_head = ordinary_head or "depth"
+        remote_head = remote_head or "depth"
+    elif args.vggt_export_mode == "point_all":
+        ordinary_head = ordinary_head or "point"
+        remote_head = remote_head or "point"
+    elif args.vggt_export_mode == "ordinary_point_remote_depth":
+        ordinary_head = ordinary_head or "point"
+        remote_head = remote_head or "depth"
+
+    return ordinary_head, remote_head
+
+
 def resolve_config_overrides(args: argparse.Namespace):
     if args.config_overrides is not None:
         overrides = list(args.config_overrides)
     else:
         overrides = list(DEFAULT_CONFIG_OVERRIDES[args.model])
+
+    if is_raw_vggt_checkpoint(args):
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=true",
+                f"model.model_config.custom_ckpt_path={args.checkpoint_path}",
+            ]
+        )
 
     if args.vggt_joint_remote_export:
         if args.model != "vggt":
@@ -421,6 +543,12 @@ def resolve_config_overrides(args: argparse.Namespace):
                 "model.model_config.use_point_head_for_remote=true",
             ]
         )
+
+    ordinary_head, remote_head = resolve_vggt_output_heads(args)
+    if ordinary_head is not None:
+        overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
+    if remote_head is not None:
+        overrides.append(f"model.model_config.remote_output_head={remote_head}")
 
     return overrides
 
@@ -499,6 +627,12 @@ def initialize_model(
     maybe_prepare_da3_pythonpath(effective_model_name)
 
     if args.checkpoint_path:
+        if is_raw_vggt_checkpoint(args):
+            print(
+                "Detected raw VGGT checkpoint; loading it through "
+                "model.model_config.custom_ckpt_path before the compatibility "
+                "local-checkpoint load."
+            )
         local_config = build_local_config(args, config_overrides, effective_model_name)
         print(f"Initializing model from local config: {local_config}")
         model = initialize_mapanything_local(local_config, device)
@@ -722,6 +856,7 @@ def collect_world_space_point_cloud(
             {
                 "view_idx": view_idx,
                 "points": int(selected_points.shape[0]),
+                "head": pred.get("vggt_output_head", "default"),
             }
         )
 
@@ -803,7 +938,10 @@ def main() -> None:
         confidence_percentile=args.confidence_percentile,
     )
     for stat in per_view_stats:
-        print(f"View {stat['view_idx']}: kept {stat['points']} points")
+        print(
+            f"View {stat['view_idx']}: kept {stat['points']} points "
+            f"(head={stat['head']})"
+        )
     print(f"Total points before downsampling: {points.shape[0]}")
 
     if args.voxel_downsample:

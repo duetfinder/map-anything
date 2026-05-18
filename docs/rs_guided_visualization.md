@@ -227,6 +227,100 @@ rerun /path/to/scene_bundle.rrd --web-viewer
 
 然后在浏览器中打开对应地址。
 
+## 运行示例
+
+### 1. 生成一个可视化 CSV
+
+先准备一个 CSV，例如：
+
+```bash
+cat >/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv <<'EOF'
+scene_name,frame_indices,provider
+newyork__location_471,"0,2,4,6",Google_Satellite
+EOF
+```
+
+### 2. 导出 scene_bundle
+
+原始 `Pi3`：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model pi3 \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/pi3_default
+```
+
+`P3` 主基线：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model pi3 \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_base/checkpoint-best.pth \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/p3_pi3_base
+```
+
+`P3` 模态 embedding：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model pi3_modality_embedding \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding/checkpoint-best.pth \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/p3_pi3_modality_embedding
+```
+
+`P3` 冻结 shared 和 remote head 变体分别使用：
+
+```text
+--model pi3_modality_embedding
+--checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_freeze_shared/checkpoint-best.pth
+```
+
+```text
+--model pi3_modality_embedding_remote_head
+--checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding_remote_head/checkpoint-best.pth
+```
+
+### 3. 打开 Rerun viewer
+
+单场景：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+bash scripts/serve_rs_guided_scene.sh \
+    /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/p3_pi3_base/pi3/p3_pi3_base/newyork__location_471/scene_bundle.pt \
+    127.0.0.1 9047 9877 0.0.0.0
+```
+
+如果在远端机器上看，需要同时转发 web 和 gRPC 端口：
+
+```bash
+ssh -L 9047:127.0.0.1:9047 -L 9877:127.0.0.1:9877 <user>@<server>
+```
+
+也可以直接把某个包含多个 `scene_bundle.pt` 的目录转成一个 collection：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+bash scripts/serve_rs_guided_scene.sh \
+    /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/p3_pi3_base/pi3/p3_pi3_base \
+    127.0.0.1 9047 9877 0.0.0.0
+```
+
 ## 当前建议的查看顺序
 
 看结果时建议按这个顺序：

@@ -49,10 +49,30 @@ from uniception.models.encoders.image_normalizations import IMAGE_NORMALIZATION_
 DEFAULT_MODEL = "pi3"
 DEFAULT_CONFIG_PATH = "configs/train.yaml"
 DEFAULT_MAPANYTHING_HF_MODEL = "facebook/map-anything"
+SUPPORTED_MODELS = [
+    "pi3",
+    "pi3_modality_embedding",
+    "pi3_modality_embedding_remote_head",
+    "vggt",
+    "da3",
+    "mapanything",
+]
 DEFAULT_CONFIG_OVERRIDES = {
     "pi3": [
         "machine=aws",
         "model=pi3",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "pi3_modality_embedding": [
+        "machine=aws",
+        "model=pi3_modality_embedding",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "pi3_modality_embedding_remote_head": [
+        "machine=aws",
+        "model=pi3_modality_embedding_remote_head",
         "model/task=images_only",
         "model.encoder.uses_torch_hub=false",
     ],
@@ -73,11 +93,21 @@ DEFAULT_CONFIG_OVERRIDES = {
 }
 DEFAULT_DATA_NORM = {
     "pi3": "identity",
+    "pi3_modality_embedding": "identity",
+    "pi3_modality_embedding_remote_head": "identity",
     "vggt": "identity",
     "da3": "dinov2",
     "mapanything": "dinov2",
 }
-IDENTITY_MODELS = {"anycalib", "moge", "pi3", "pi3x", "vggt"}
+IDENTITY_MODELS = {
+    "anycalib",
+    "moge",
+    "pi3",
+    "pi3_modality_embedding",
+    "pi3_modality_embedding_remote_head",
+    "pi3x",
+    "vggt",
+}
 CLASH_ENV = {
     "http_proxy": "http://127.0.0.1:7890",
     "https_proxy": "http://127.0.0.1:7890",
@@ -170,7 +200,7 @@ def parse_args():
         "--model",
         type=str,
         default=DEFAULT_MODEL,
-        choices=["pi3", "vggt", "da3", "mapanything"],
+        choices=SUPPORTED_MODELS,
     )
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument(
@@ -232,6 +262,29 @@ def resolve_config_overrides(args):
     return list(DEFAULT_CONFIG_OVERRIDES[args.model])
 
 
+def resolve_effective_model_name(args):
+    if args.model != "pi3" or not args.checkpoint_path:
+        return args.model
+
+    checkpoint_path_lower = str(args.checkpoint_path).lower()
+    if "pi3_modality_embedding_remote_head" in checkpoint_path_lower:
+        print(
+            "Auto-detected Pi3 variant from checkpoint path: "
+            "pi3_modality_embedding_remote_head"
+        )
+        return "pi3_modality_embedding_remote_head"
+    if (
+        "pi3_modality_embedding" in checkpoint_path_lower
+        or "p3_pi3_freeze_shared" in checkpoint_path_lower
+    ):
+        print(
+            "Auto-detected Pi3 variant from checkpoint path: "
+            "pi3_modality_embedding"
+        )
+        return "pi3_modality_embedding"
+    return args.model
+
+
 def maybe_enable_clash_proxy(enable_proxy):
     if not enable_proxy:
         return
@@ -256,32 +309,31 @@ def maybe_prepare_da3_pythonpath(model_name):
         print(f"Added DA3 dependency path: {da3_src}")
 
 
-def build_local_config(args, config_overrides):
+def build_local_config(args, config_overrides, effective_model_name):
     local_config = {
         "path": args.config_path,
         "checkpoint_path": args.checkpoint_path,
         "config_overrides": config_overrides,
         "strict": args.strict,
+        "model_str": args.model_str or effective_model_name,
     }
     if args.config_json_path is not None:
         local_config["config_json_path"] = args.config_json_path
-    if args.model_str is not None:
-        local_config["model_str"] = args.model_str
     return local_config
 
 
-def initialize_model(args, device, config_overrides):
+def initialize_model(args, device, config_overrides, effective_model_name):
     maybe_enable_clash_proxy(args.enable_clash_proxy)
-    maybe_prepare_da3_pythonpath(args.model)
+    maybe_prepare_da3_pythonpath(effective_model_name)
 
     if args.checkpoint_path:
-        local_config = build_local_config(args, config_overrides)
+        local_config = build_local_config(args, config_overrides, effective_model_name)
         print(f"Initializing model from local config: {local_config}")
         model = initialize_mapanything_local(local_config, device)
         model.eval()
         return model
 
-    if args.model == "mapanything":
+    if effective_model_name == "mapanything":
         hf_model_name = args.hf_model_name or DEFAULT_MAPANYTHING_HF_MODEL
         high_level_config = {
             "path": args.config_path,
@@ -298,8 +350,10 @@ def initialize_model(args, device, config_overrides):
 
     from mapanything.models import init_model_from_config
 
-    print(f"Initializing model '{args.model}' from default wrapper weights")
-    model = init_model_from_config(args.model, device=device, machine="aws").eval()
+    print(f"Initializing model '{effective_model_name}' from default wrapper weights")
+    model = init_model_from_config(
+        effective_model_name, device=device, machine="aws"
+    ).eval()
     return model
 
 
@@ -1150,11 +1204,19 @@ def write_batch_summary(args, rows):
 
 def main():
     args = parse_args()
+    effective_model_name = resolve_effective_model_name(args)
+    if effective_model_name != args.model:
+        print(
+            f"Resolved batch inference model '{args.model}' -> "
+            f"'{effective_model_name}' based on the checkpoint path"
+        )
+        args.model = effective_model_name
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     config_overrides = resolve_config_overrides(args)
-    model = initialize_model(args, device, config_overrides)
+    model = initialize_model(args, device, config_overrides, args.model)
 
     available_scene_dataset = VigorChicagoWAI(
         ROOT=args.aerial_root,
