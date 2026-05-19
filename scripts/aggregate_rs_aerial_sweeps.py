@@ -13,6 +13,17 @@ MODELS = {
     'pi3_chicago500_finetuned_p1': 'Pi3 (finetuned P1)',
     'pi3_chicago500_finetuned_p3': 'Pi3 (finetuned P3)',
 }
+CROSSVIEW_P3_MODELS = {
+    'pi3_crossview_p3_base': 'Pi3 CrossView P3 Base',
+    'pi3_crossview_p3_modality_embedding': 'Pi3 CrossView P3 Modality Embedding',
+    'pi3_crossview_p3_modality_embedding_freeze_shared': 'Pi3 CrossView P3 Freeze Shared',
+    'pi3_crossview_p3_modality_embedding_remote_head': 'Pi3 CrossView P3 Remote Head',
+    'pi3_crossview_p3_zero_covis': 'Pi3 CrossView P3 Zero Covis',
+}
+MODEL_SETS = {
+    'default': MODELS,
+    'crossview_p3': CROSSVIEW_P3_MODELS,
+}
 VIEWS = [2, 4, 8, 16, 24, 32, 40]
 AERIAL_METRICS = [
     'pointmaps_abs_rel',
@@ -43,11 +54,24 @@ def load_result(path: Path):
     return json.loads(path.read_text())
 
 
-def collect_rows(root: Path):
+def infer_model_set(root: Path):
+    for model_key in CROSSVIEW_P3_MODELS:
+        if any((root / f'{model_key}_{num_views}v' / 'rs_aerial_benchmark_results.json').exists() for num_views in VIEWS):
+            return CROSSVIEW_P3_MODELS
+    return MODELS
+
+
+def collect_rows(root: Path, models):
     rows = []
-    for model_key, model_name in MODELS.items():
+    for model_key, model_name in models.items():
         for num_views in VIEWS:
-            result_path = root / f'{model_key}_unified_{num_views}v' / 'rs_aerial_benchmark_results.json'
+            if model_key.endswith('_unified'):
+                dirname = f'{model_key}_{num_views}v'
+            elif model_key.startswith('pi3_crossview_p3_'):
+                dirname = f'{model_key}_{num_views}v'
+            else:
+                dirname = f'{model_key}_unified_{num_views}v'
+            result_path = root / dirname / 'rs_aerial_benchmark_results.json'
             result = load_result(result_path)
             if result is None:
                 print(f'Warning: Result file not found for {model_name} with {num_views} views at {result_path}')
@@ -63,14 +87,14 @@ def collect_rows(root: Path):
                 }
                 for metric in AERIAL_METRICS:
                     row[metric] = metrics.get(metric)
-                if model_name != 'MapAnything':
+                if model_key != 'mapanything':
                     row['metric_scale_abs_rel'] = None
                     row['metric_point_l1'] = None
 
                 if mode_key == 'joint':
                     row['joint_global_pointmaps_abs_rel'] = result['joint']['average'].get('joint_global_pointmaps_abs_rel')
-                    row['rs_height_mae'] = result['joint']['average'].get('rs_height_mae') if model_name == 'MapAnything' else None
-                    row['rs_height_rmse'] = result['joint']['average'].get('rs_height_rmse') if model_name == 'MapAnything' else None
+                    row['rs_height_mae'] = result['joint']['average'].get('rs_height_mae') if model_key == 'mapanything' else None
+                    row['rs_height_rmse'] = result['joint']['average'].get('rs_height_rmse') if model_key == 'mapanything' else None
                     row['rs_height_mae_affine'] = result['joint']['average'].get('rs_height_mae_affine')
                     row['rs_height_rmse_affine'] = result['joint']['average'].get('rs_height_rmse_affine')
                 else:
@@ -111,6 +135,11 @@ def plot_metrics(rows, out_dir: Path):
         'DA3': '#9467bd',
         'Pi3 (finetuned P1)': "#fc7c0b",
         'Pi3 (finetuned P3)': "#0c31e9",
+        'Pi3 CrossView P3 Base': '#1f77b4',
+        'Pi3 CrossView P3 Modality Embedding': '#2ca02c',
+        'Pi3 CrossView P3 Freeze Shared': '#ff7f0e',
+        'Pi3 CrossView P3 Remote Head': '#9467bd',
+        'Pi3 CrossView P3 Zero Covis': '#d62728',
     }
     mode_labels = {
         'aerial_only': 'Aerial-only',
@@ -136,7 +165,7 @@ def plot_metrics(rows, out_dir: Path):
                 ax.plot(
                     sub['num_views'],
                     y,
-                    color=colors[model],
+                    color=colors.get(model),
                     linestyle='--' if mode == 'aerial_only' else '-',
                     marker='o',
                     label=f'{model} / {mode_labels[mode]}',
@@ -161,12 +190,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork'),type=Path)
     parser.add_argument('--out-dir',default=Path('/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/aggregated'), type=Path)
+    parser.add_argument('--model-set', choices=['auto', *MODEL_SETS.keys()], default='auto')
     args = parser.parse_args()
 
     out_dir = args.out_dir or args.root / 'aggregated'
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = collect_rows(args.root)
+    models = infer_model_set(args.root) if args.model_set == 'auto' else MODEL_SETS[args.model_set]
+    rows = collect_rows(args.root, models)
     if not rows:
         raise SystemExit('No benchmark result files found.')
 

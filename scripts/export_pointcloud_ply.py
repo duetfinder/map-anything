@@ -20,51 +20,51 @@ Include:
 pi3：
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/pi3 \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/pi3 \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_base/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_base \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/p3_pi3_base \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/p3_pi3_modality_embedding \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_freeze_shared/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_freeze_shared \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/p3_pi3_freeze_shared \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3_modality_embedding_remote_head \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding_remote_head/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_modality_embedding_remote_head \
-&& \
-python scripts/export_pointcloud_ply.py \
-    --model pi3 \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_low_covis/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_low_covis \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/p3_pi3_modality_embedding_remote_head \
 && \
 python scripts/export_pointcloud_ply.py \
     --model pi3 \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_zero_covis/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/p3_pi3_zero_covis
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/p3_pi3_zero_covis \
+&& \
+python scripts/export_pointcloud_ply.py \
+    --model pi3 \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_low_covis/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/p3_pi3_low_covis \
 
 mapanything:
 python scripts/export_pointcloud_ply.py \
     --model mapanything \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/mapanything
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/mapanything
 
 
 vggt:
@@ -74,15 +74,15 @@ vggt:
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_base_depth
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_base_depth
 
 # p5b default mixed export: ordinary views use camera+depth, remote uses point_head.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_mixed \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_mixed \
     --vggt_joint_remote_export \
     --vggt_export_mode mixed \
     --remote_view_names zimage.png
@@ -91,8 +91,8 @@ python scripts/export_pointcloud_ply.py \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_depth_all \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_depth_all \
     --vggt_joint_remote_export \
     --vggt_export_mode depth_all \
     --remote_view_names zimage.png
@@ -101,8 +101,8 @@ python scripts/export_pointcloud_ply.py \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_point_all \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_point_all \
     --vggt_joint_remote_export \
     --vggt_export_mode point_all \
     --remote_view_names zimage.png
@@ -111,18 +111,29 @@ python scripts/export_pointcloud_ply.py \
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5b_ordinary_point_remote_depth \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_ordinary_point_remote_depth \
     --vggt_joint_remote_export \
     --vggt_ordinary_output_head point \
     --vggt_remote_output_head depth \
     --remote_view_names zimage.png
 
+# p5d remote-private point head + consistency checkpoint.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5d_vggt_remote_point_head_consistency/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/473_2 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5d_mixed \
+    --vggt_joint_remote_export \
+    --vggt_use_remote_private_point_head \
+    --vggt_export_mode mixed \
+    --remote_view_names zimage.png
+
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5c_mixed \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5c_mixed \
     --vggt_joint_remote_export \
     --vggt_export_mode mixed \
     --config_overrides machine=aws model=vggt model.model_config.use_view_type_bias=true \
@@ -333,6 +344,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         choices=["auto", "depth", "point"],
         help="Explicit output head for remote VGGT views.",
+    )
+    parser.add_argument(
+        "--vggt_use_remote_private_point_head",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable VGGT remote private point_head when exporting p5d checkpoints."
+        ),
     )
     parser.add_argument(
         "--force_remote_instance",
@@ -549,6 +568,13 @@ def resolve_config_overrides(args: argparse.Namespace):
         overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
     if remote_head is not None:
         overrides.append(f"model.model_config.remote_output_head={remote_head}")
+    if args.model == "vggt" and args.vggt_use_remote_private_point_head:
+        overrides.extend(
+            [
+                "model.model_config.use_remote_private_point_head=true",
+                "model.model_config.output_point_head_for_consistency=true",
+            ]
+        )
 
     return overrides
 
