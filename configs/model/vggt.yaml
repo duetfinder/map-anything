@@ -19,6 +19,10 @@ model_config:
   ordinary_output_head: "depth"
   # "auto" preserves training behavior: point only when use_point_head_for_remote=true.
   remote_output_head: "auto"
+  # P5d: use a dedicated remote point_head initialized from VGGT's native point_head.
+  use_remote_private_point_head: false
+  # P5d diagnostics/training: expose native point_head outputs for ordinary views.
+  output_point_head_for_consistency: false
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

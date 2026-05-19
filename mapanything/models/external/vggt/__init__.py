@@ -7,6 +7,8 @@
 Inference wrapper for VGGT
 """
 
+from copy import deepcopy
+
 import torch
 
 from mapanything.models.external.vggt.models.vggt import VGGT
@@ -37,6 +39,8 @@ class VGGTWrapper(torch.nn.Module):
         remote_instance_value="remote",
         ordinary_output_head="depth",
         remote_output_head="auto",
+        use_remote_private_point_head=False,
+        output_point_head_for_consistency=False,
     ):
         super().__init__()
         self.name = name
@@ -48,6 +52,8 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_instance_value = remote_instance_value
         self.ordinary_output_head = ordinary_output_head
         self.remote_output_head = remote_output_head
+        self.use_remote_private_point_head = use_remote_private_point_head
+        self.output_point_head_for_consistency = output_point_head_for_consistency
         self.embed_dim = 1024
 
         if load_pretrained_weights:
@@ -96,6 +102,9 @@ class VGGTWrapper(torch.nn.Module):
             self.aerial_view_type_embedding = torch.nn.Parameter(torch.zeros(token_dim))
             self.remote_view_type_embedding = torch.nn.Parameter(torch.zeros(token_dim))
 
+        if self.use_remote_private_point_head:
+            self.remote_point_head = deepcopy(self.model.point_head)
+
         # Load custom checkpoint if requested
         if self.load_custom_ckpt:
             print(f"Loading checkpoint from {self.custom_ckpt_path} ...")
@@ -105,6 +114,10 @@ class VGGTWrapper(torch.nn.Module):
             custom_ckpt = torch.load(self.custom_ckpt_path, weights_only=False)
             print(self.model.load_state_dict(custom_ckpt, strict=True))
             del custom_ckpt  # in case it occupies memory
+            if self.use_remote_private_point_head:
+                self.remote_point_head.load_state_dict(
+                    deepcopy(self.model.point_head.state_dict())
+                )
 
     def _output_head_for_view(self, view):
         if self._is_remote_view(view):
@@ -199,8 +212,25 @@ class VGGTWrapper(torch.nn.Module):
 
             point_map = None
             point_conf = None
-            if any(self._output_head_for_view(view) == "point" for view in views):
+            need_shared_point_head = self.output_point_head_for_consistency or any(
+                self._output_head_for_view(view) == "point"
+                and not (
+                    self.use_remote_private_point_head and self._is_remote_view(view)
+                )
+                for view in views
+            )
+            if need_shared_point_head:
                 point_map, point_conf = self.model.point_head(
+                    aggregated_tokens_list, images, ps_idx
+                )
+            remote_point_map = None
+            remote_point_conf = None
+            if self.use_remote_private_point_head and any(
+                self._output_head_for_view(view) == "point"
+                and self._is_remote_view(view)
+                for view in views
+            ):
+                remote_point_map, remote_point_conf = self.remote_point_head(
                     aggregated_tokens_list, images, ps_idx
                 )
 
@@ -251,6 +281,7 @@ class VGGTWrapper(torch.nn.Module):
                 res.append(
                     {
                         "pts3d": curr_view_pts3d,
+                        "depth_pts3d": curr_view_pts3d,
                         "pts3d_cam": curr_view_pts3d_cam,
                         "ray_directions": curr_view_ray_dirs,
                         "depth_along_ray": curr_view_depth_along_ray,
@@ -260,12 +291,31 @@ class VGGTWrapper(torch.nn.Module):
                     }
                 )
 
-                if (
-                    point_map is not None
-                    and self._output_head_for_view(views[view_idx]) == "point"
-                ):
-                    res[-1]["pts3d"] = point_map[:, view_idx, ...]
-                    res[-1]["conf"] = point_conf[:, view_idx, ...]
+                if point_map is not None:
+                    res[-1]["point_head_pts3d"] = point_map[:, view_idx, ...]
+                    res[-1]["point_head_conf"] = point_conf[:, view_idx, ...]
+
+                output_head = self._output_head_for_view(views[view_idx])
+                if output_head == "point":
+                    if (
+                        remote_point_map is not None
+                        and self._is_remote_view(views[view_idx])
+                    ):
+                        res[-1]["pts3d"] = remote_point_map[:, view_idx, ...]
+                        res[-1]["conf"] = remote_point_conf[:, view_idx, ...]
+                        res[-1]["remote_private_point_head_pts3d"] = remote_point_map[
+                            :, view_idx, ...
+                        ]
+                        res[-1]["remote_private_point_head_conf"] = remote_point_conf[
+                            :, view_idx, ...
+                        ]
+                    elif point_map is not None:
+                        res[-1]["pts3d"] = point_map[:, view_idx, ...]
+                        res[-1]["conf"] = point_conf[:, view_idx, ...]
+                    else:
+                        raise RuntimeError(
+                            "VGGT point output requested but point_head was not run"
+                        )
                     res[-1]["vggt_output_head"] = "point"
                 else:
                     res[-1]["vggt_output_head"] = "depth"

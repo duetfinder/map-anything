@@ -364,7 +364,7 @@ class RSPointmapHeightLoss(nn.Module):
 
     @staticmethod
     def _normalize_pair(pred_pts3d, gt_pointmap, valid_mask, norm_mode):
-        if not norm_mode:
+        if norm_mode in (None, "", "None", "none", "null"):
             return pred_pts3d, gt_pointmap, None, None
 
         pred_norm, pred_norm_factor = normalize_multiple_pointclouds(
@@ -381,6 +381,52 @@ class RSPointmapHeightLoss(nn.Module):
         )
         return pred_norm, gt_norm, pred_norm_factor, gt_norm_factor
 
+    @staticmethod
+    def _normalize_pair_with_aerial_factors(
+        pred_pts3d,
+        gt_pointmap,
+        aerial_gts,
+        aerial_preds,
+        norm_mode,
+    ):
+        if not aerial_gts or not aerial_preds:
+            raise ValueError(
+                "aerial/shared remote normalization requires aerial_gts and aerial_preds"
+            )
+        if len(aerial_gts) != len(aerial_preds):
+            raise ValueError(
+                f"Expected same number of aerial GTs and predictions, got "
+                f"{len(aerial_gts)} and {len(aerial_preds)}"
+            )
+
+        in_camera0 = closed_form_pose_inverse(aerial_gts[0]["camera_pose"].float())
+        gt_pts = []
+        pred_pts = []
+        valid_masks = []
+        for gt, pred in zip(aerial_gts, aerial_preds):
+            gt_pts.append(geotrf(in_camera0, gt["pts3d"].float()))
+            pred_pts.append(pred["pts3d"].float())
+            valid_masks.append(gt["valid_mask"].bool())
+
+        pred_norm_factor = normalize_multiple_pointclouds(
+            pred_pts,
+            valid_masks,
+            norm_mode,
+            ret_factor=True,
+        )[-1]
+        gt_norm_factor = normalize_multiple_pointclouds(
+            gt_pts,
+            valid_masks,
+            norm_mode,
+            ret_factor=True,
+        )[-1]
+        return (
+            pred_pts3d / pred_norm_factor,
+            gt_pointmap / gt_norm_factor,
+            pred_norm_factor,
+            gt_norm_factor,
+        )
+
 
     def forward(self, gts, preds, **kwargs):
         if len(gts) != len(preds):
@@ -396,6 +442,7 @@ class RSPointmapHeightLoss(nn.Module):
         height_losses_weighted = []
         pred_in_view0 = None
         aerial_preds = kwargs.get('aerial_preds')
+        aerial_gts = kwargs.get('aerial_gts')
 
         if self.compare_in_view0_frame and self.height_loss_weight > 0:
             raise ValueError('Height supervision is not supported when compare_in_view0_frame=True. Use height_loss_weight=0.')
@@ -423,9 +470,19 @@ class RSPointmapHeightLoss(nn.Module):
             raw_pointmap_loss = self._masked_mean(raw_pointmap_loss_map, valid_mask)
             pointmap_raw_losses.append(float(raw_pointmap_loss))
 
-            pred_pts3d_for_loss, gt_pointmap_for_loss, pred_norm_factor, gt_norm_factor = self._normalize_pair(
-                pred_pts3d, gt_pointmap, valid_mask, self.pointmap_norm_mode
-            )
+            norm_mode = self.pointmap_norm_mode
+            if isinstance(norm_mode, str) and norm_mode.startswith("aerial_"):
+                pred_pts3d_for_loss, gt_pointmap_for_loss, pred_norm_factor, gt_norm_factor = self._normalize_pair_with_aerial_factors(
+                    pred_pts3d,
+                    gt_pointmap,
+                    aerial_gts,
+                    aerial_preds,
+                    norm_mode[len("aerial_") :],
+                )
+            else:
+                pred_pts3d_for_loss, gt_pointmap_for_loss, pred_norm_factor, gt_norm_factor = self._normalize_pair(
+                    pred_pts3d, gt_pointmap, valid_mask, norm_mode
+                )
             if pred_norm_factor is not None:
                 pred_pointmap_norm_factors.append(float(pred_norm_factor.mean()))
                 gt_pointmap_norm_factors.append(float(gt_norm_factor.mean()))
@@ -626,16 +683,20 @@ class JointAerialRSLoss(nn.Module):
         self,
         aerial_criterion=None,
         remote_criterion=None,
+        branch_consistency_criterion=None,
         aerial_loss_weight=1.0,
         remote_loss_weight=1.0,
+        branch_consistency_loss_weight=0.0,
         remote_view_index=-1,
         scale_remote_loss_by_num_aerial_views=False,
     ):
         super().__init__()
         self.aerial_criterion = aerial_criterion
         self.remote_criterion = remote_criterion or RSPointmapHeightLoss()
+        self.branch_consistency_criterion = branch_consistency_criterion
         self.aerial_loss_weight = aerial_loss_weight
         self.remote_loss_weight = remote_loss_weight
+        self.branch_consistency_loss_weight = branch_consistency_loss_weight
         self.remote_view_index = remote_view_index
         self.scale_remote_loss_by_num_aerial_views = scale_remote_loss_by_num_aerial_views
 
@@ -678,10 +739,104 @@ class JointAerialRSLoss(nn.Module):
             details['remote_loss_weight_effective'] = float(effective_remote_weight)
             details.update(remote_details)
 
+        if (
+            self.branch_consistency_criterion is not None
+            and self.branch_consistency_loss_weight > 0
+        ):
+            consistency_loss, consistency_details = self.branch_consistency_criterion(
+                aerial_gts, aerial_preds, **kwargs
+            )
+            weighted_consistency_loss = (
+                self.branch_consistency_loss_weight * consistency_loss
+            )
+            total_loss = (
+                weighted_consistency_loss
+                if total_loss is None
+                else total_loss + weighted_consistency_loss
+            )
+            details['branch_consistency_loss'] = float(consistency_loss)
+            details['branch_consistency_loss_weighted'] = float(
+                weighted_consistency_loss
+            )
+            details.update(consistency_details)
+
         if total_loss is None:
             raise ValueError('JointAerialRSLoss received no active sub-criterion')
 
         return total_loss, details
+
+
+class VGGTBranchConsistencyLoss(nn.Module):
+    """
+    Align VGGT's native point_head output with the camera+depth pointmap branch.
+
+    This is used for p5d to reduce fixed branch-specific offsets when ordinary
+    views use camera+depth and remote views use a point-head route.
+    """
+
+    def __init__(
+        self,
+        criterion=None,
+        pointmap_norm_mode=None,
+        detach_depth_target=True,
+    ):
+        super().__init__()
+        self.criterion = criterion or L1Loss(reduction="none")
+        self.pointmap_norm_mode = pointmap_norm_mode
+        self.detach_depth_target = detach_depth_target
+
+    @staticmethod
+    def _masked_mean(loss_map, mask):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if mask.any():
+            return loss_map[mask].mean()
+        return 0 * loss_map.sum()
+
+    def forward(self, gts, preds, **kwargs):
+        losses = []
+        raw_losses = []
+        for pred in preds:
+            if "point_head_pts3d" not in pred or "depth_pts3d" not in pred:
+                continue
+
+            point_pts3d = pred["point_head_pts3d"].float()
+            depth_pts3d = pred["depth_pts3d"].float()
+            if self.detach_depth_target:
+                depth_pts3d = depth_pts3d.detach()
+
+            valid_mask = torch.isfinite(point_pts3d).all(dim=-1) & torch.isfinite(
+                depth_pts3d
+            ).all(dim=-1)
+
+            raw_loss_map = self.criterion(point_pts3d, depth_pts3d)
+            raw_loss = self._masked_mean(raw_loss_map, valid_mask)
+            raw_losses.append(float(raw_loss))
+
+            if self.pointmap_norm_mode:
+                point_norm, depth_norm, _, _ = RSPointmapHeightLoss._normalize_pair(
+                    point_pts3d,
+                    depth_pts3d,
+                    valid_mask,
+                    self.pointmap_norm_mode,
+                )
+            else:
+                point_norm, depth_norm = point_pts3d, depth_pts3d
+
+            loss_map = self.criterion(point_norm, depth_norm)
+            losses.append(self._masked_mean(loss_map, valid_mask))
+
+        if not losses:
+            zero = preds[0]["pts3d"].sum() * 0 if preds else torch.tensor(0.0)
+            return zero, {
+                "vggt_branch_consistency_num_views": 0,
+            }
+
+        loss = sum(losses) / len(losses)
+        return loss, {
+            "vggt_branch_consistency_num_views": len(losses),
+            "vggt_branch_consistency_raw_metric": sum(raw_losses) / len(raw_losses),
+        }
 
 
 class BaseCriterion(nn.Module):
