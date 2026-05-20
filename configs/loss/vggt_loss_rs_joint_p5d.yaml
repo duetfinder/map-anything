@@ -5,7 +5,9 @@ test_remote_height_loss_weight: 0.0
 remote_compare_in_view0_frame: false
 remote_compare_gt_in_view0_frame_only: true
 remote_detach_pose_for_view0_align: false
-remote_pointmap_norm_mode: avg_dis
+# Use the same avg_dis scale source as aerial views. This matches the
+# p5b shared-normalization setting that avoids remote-only scale drift.
+remote_pointmap_norm_mode: aerial_avg_dis
 scale_remote_loss_by_num_aerial_views: true
 branch_consistency_loss_weight: 0.2
 branch_consistency_norm_mode: null
