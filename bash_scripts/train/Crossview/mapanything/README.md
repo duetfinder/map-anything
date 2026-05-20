@@ -19,3 +19,4 @@
 - 相关训练记录见：
   - [../../../../VIGOR_CHICAGO_TRAINING_CN.md](../../../../VIGOR_CHICAGO_TRAINING_CN.md)
   - [../../../../MAPANYTHING_RS_JOINT_MODEL_CN.md](../../../../MAPANYTHING_RS_JOINT_MODEL_CN.md)
+  - [../../../../P4_MAPANYTHING_RS_JOINT_EXPERIMENT_CN.md](../../../../P4_MAPANYTHING_RS_JOINT_EXPERIMENT_CN.md)

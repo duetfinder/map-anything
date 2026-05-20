@@ -1,5 +1,7 @@
 # P5: VGGT RS 联合训练实验规划
 
+> 2026-05-20 更新：本文前半部分保留早期规划背景，最新可执行结论以文末“当前实验总结”章节为准。当前已经确认 p5 主线应使用 `aerial_avg_dis` shared normalization，而不是早期规划中的 remote-only `avg_dis`。
+
 本文档整理 `Models/map-anything` 中将 `VGGT` 作为 `p5` 实验的整体规划，目标是回答两个问题：
 
 1. `remote / satellite` 是否可以直接当作普通 view 输入 `VGGT`，只通过 `global pointmap` 监督完成联合训练。
@@ -671,3 +673,290 @@ remote loss 建议只做 direct pointmap 主监督，初版不要上复杂项。
 - 轻量 remote patch/head branch
 
 这会比直接复制一整套 remote encoder / remote transformer 更稳，也更容易解释实验结果。
+
+---
+
+## 11. 当前实验总结（2026-05-20）
+
+本节是当前 p5 实验的最新状态，优先级高于前面的早期规划。
+
+当前已经实现并验证的关键判断是：
+
+- VGGT 的 global pointmap 语义是 canonical / first-view 坐标系，实际可按 view0 坐标系理解。
+- Remote GT 不能直接用原始 world-frame pointmap 监督 VGGT point head，应使用 `remote_pointmap_view0`。
+- 对 p5b，`REMOTE_COMPARE_GT_IN_VIEW0_ONLY=true` 是必要设置。
+- `REMOTE_COMPARE_IN_VIEW0=false` 更符合 VGGT point head 语义，因为 remote pred 本身已经应在 view0/canonical 坐标系下，不需要再通过预测 pose 变换一次。
+- 实验证明 remote-only `avg_dis` 归一化会造成普通视角和 remote 点云之间的尺度/偏移不一致风险。
+- 当前 p5 主线应统一使用 `aerial_avg_dis`，即 shared / aerial-based normalization。
+
+### 11.1 当前推荐默认参数
+
+当前 p5b / p5c / p5d 应统一使用：
+
+- `remote_compare_in_view0_frame=false`
+- `remote_compare_gt_in_view0_frame_only=true`
+- `remote_pointmap_norm_mode=aerial_avg_dis`
+- `scale_remote_loss_by_num_aerial_views=true`
+- `remote_height_loss_weight=0.0`
+
+`aerial_avg_dis` 的含义：
+
+- remote pred 不再用 remote 自己的点云尺度归一化。
+- remote pred 除以普通视角预测点云组计算出的 `avg_dis` factor。
+- remote GT 除以普通视角 GT 点云组计算出的 `avg_dis` factor。
+- 这样 remote loss 和普通视角 loss 使用同一组尺度参考，保留归一化但避免 remote 独立尺度漂移。
+
+### 11.2 当前已实现文件
+
+模型入口：
+
+- [mapanything/models/external/vggt/__init__.py](mapanything/models/external/vggt/__init__.py)
+
+当前 `VGGTWrapper` 已支持：
+
+- `use_point_head_for_remote`
+- `use_view_type_bias`
+- `ordinary_output_head`
+- `remote_output_head`
+- `use_remote_private_point_head`
+- `output_point_head_for_consistency`
+
+Loss：
+
+- [configs/loss/vggt_loss_rs_joint.yaml](configs/loss/vggt_loss_rs_joint.yaml)
+- [configs/loss/vggt_loss_rs_joint_shared_norm.yaml](configs/loss/vggt_loss_rs_joint_shared_norm.yaml)
+- [configs/loss/vggt_loss_rs_joint_p5d.yaml](configs/loss/vggt_loss_rs_joint_p5d.yaml)
+- [mapanything/train/losses.py](mapanything/train/losses.py)
+
+训练脚本：
+
+- [bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only.sh](bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only.sh)
+- [bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_shared_norm.sh](bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_shared_norm.sh)
+- [bash_scripts/train/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype.sh](bash_scripts/train/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype.sh)
+- [bash_scripts/train/Crossview/vggt/p5d_vggt_remote_point_head_consistency.sh](bash_scripts/train/Crossview/vggt/p5d_vggt_remote_point_head_consistency.sh)
+
+导出和检查脚本：
+
+- [scripts/export_pointcloud_ply.py](scripts/export_pointcloud_ply.py)
+- [scripts/export_vigor_joint_rs_gt_ply.py](scripts/export_vigor_joint_rs_gt_ply.py)
+
+### 11.3 p5b 当前主线：shared-all + shared normalization
+
+当前推荐 p5b 脚本：
+
+- [bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_shared_norm.sh](bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_shared_norm.sh)
+
+对应 loss：
+
+- [configs/loss/vggt_loss_rs_joint_shared_norm.yaml](configs/loss/vggt_loss_rs_joint_shared_norm.yaml)
+
+结构：
+
+- 不新增 remote encoder。
+- 不新增 remote private point head。
+- 所有输入视角共享 VGGT encoder / aggregator。
+- 普通视角走 `camera_head + depth_head`。
+- Remote 视角走 VGGT 原生 `point_head`。
+
+监督：
+
+- 普通视角使用 VGGT 原始几何监督：`FactoredGeometryRegr3DPlusNormalGMLoss`。
+- Remote 只启用 pointmap loss：`RSPointmapHeightLoss`。
+- Remote GT 使用 `remote_pointmap_view0`。
+- Remote 归一化使用 `aerial_avg_dis`。
+
+推荐命令：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+bash bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_shared_norm.sh
+```
+
+低显存命令：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+CUDA_DEVICES=0 NUM_GPUS=1 NUM_VIEWS=2 BATCH_SIZE=2 \
+bash bash_scripts/train/Crossview/vggt/p5b_vggt_joint_shared_all_shared_norm.sh 1
+```
+
+当前结论：
+
+- `p5b_vggt_joint_shared_all_loss_only.sh` 是旧 baseline，默认 remote-only `avg_dis`，不再作为推荐主线。
+- `p5b_vggt_joint_shared_all_shared_norm.sh` 是当前 p5b 正式主线。
+- 后续 p5c / p5d 应继承该归一化方式，否则实验变量不干净。
+
+### 11.4 p5c 当前定位：shared-all + view-type bias
+
+脚本：
+
+- [bash_scripts/train/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype.sh](bash_scripts/train/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype.sh)
+
+实验目的：
+
+- 在 p5b shared-all 基础上加入 view-type / domain signal。
+- 验证 remote 与普通视角是否主要存在 shared trunk 中的 domain confusion。
+
+注意：
+
+- p5c 应使用与 p5b shared norm 完全一致的 remote loss。
+- 如果脚本默认仍指向 `vggt_loss_rs_joint.yaml` 或默认 `avg_dis`，正式实验前应改成 `vggt_loss_rs_joint_shared_norm.yaml`，或者显式覆盖 `REMOTE_POINTMAP_NORM_MODE=aerial_avg_dis`。
+
+建议命令：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+REMOTE_POINTMAP_NORM_MODE=aerial_avg_dis \
+bash bash_scripts/train/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype.sh
+```
+
+### 11.5 p5d 当前定位：remote private point head + branch consistency
+
+脚本：
+
+- [bash_scripts/train/Crossview/vggt/p5d_vggt_remote_point_head_consistency.sh](bash_scripts/train/Crossview/vggt/p5d_vggt_remote_point_head_consistency.sh)
+
+对应 loss：
+
+- [configs/loss/vggt_loss_rs_joint_p5d.yaml](configs/loss/vggt_loss_rs_joint_p5d.yaml)
+
+当前实际实现不是完整 remote encoder / remote patch branch，而是轻量版本：
+
+- 普通视角：`ordinary_output_head=depth`
+- Remote 视角：`remote_output_head=point`
+- Remote 使用 `use_remote_private_point_head=true`
+- `remote_private_point_head` 从原始 VGGT `point_head` 权重初始化
+- 启用 `output_point_head_for_consistency=true`
+- 对普通视角增加 `VGGTBranchConsistencyLoss`，约束 VGGT 原生 point head 输出靠近 `camera+depth` 路线输出
+
+当前 p5d 默认已更新为：
+
+- `REMOTE_POINTMAP_NORM_MODE=aerial_avg_dis`
+- `LAMBDA_BRANCH_CONSISTENCY=0.2`
+- `BRANCH_CONSISTENCY_NORM_MODE=null`
+- `BRANCH_CONSISTENCY_DETACH_DEPTH=true`
+
+推荐命令：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+bash bash_scripts/train/Crossview/vggt/p5d_vggt_remote_point_head_consistency.sh
+```
+
+已验证：
+
+- p5d smoke 能跑通训练、反传和保存 checkpoint。
+- p5d 当前已经和 p5b shared norm 使用同一种 `aerial_avg_dis` 归一化。
+
+### 11.6 Loss 设计的当前解释
+
+普通视角 loss 保持 VGGT finetune 主结构：
+
+- `ConfAndExcludeTopNPercentPixelLoss`
+- 内层 `FactoredGeometryRegr3DPlusNormalGMLoss`
+- `depth_type_for_loss='depth_z'`
+- `compute_pairwise_relative_pose_loss=False`
+- `compute_world_frame_points_loss=True`
+
+Remote loss 只启用：
+
+- pointmap loss
+
+Remote 暂不启用：
+
+- pose loss
+- ray direction loss
+- camera-frame depth loss
+- height loss
+
+原因是 remote/satellite 不应被强迫满足普通 perspective camera 的局部几何语义。
+
+### 11.7 为什么需要 shared normalization
+
+旧 remote-only `avg_dis` 的问题是：
+
+- remote pred 用 remote pred 自己的尺度 factor。
+- remote GT 用 remote GT 自己的尺度 factor。
+- 普通视角 loss 另用普通视角组的尺度 factor。
+
+这使 remote 和普通视角虽然都做了归一化，但尺度约束来源不同。实际观察中，这会导致训练数据上也可能出现 remote 点云和普通视角点云的固定偏移。
+
+当前 shared normalization 改为：
+
+- remote pred 使用 aerial pred group 的尺度 factor。
+- remote GT 使用 aerial GT group 的尺度 factor。
+
+这样 remote loss 和 ordinary/aerial loss 共享尺度参考，更符合最终导出统一全局点云的目标。
+
+### 11.8 导出建议
+
+p5b / p5c 导出建议：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+python scripts/export_pointcloud_ply.py \
+  --model vggt \
+  --checkpoint_path /path/to/checkpoint-best.pth \
+  --image_folder /path/to/scene \
+  --output_path /path/to/output \
+  --vggt_joint_remote_export \
+  --remote_view_names zimage.png \
+  --vggt_ordinary_output_head depth \
+  --vggt_remote_output_head point
+```
+
+p5d 导出建议加上 private point head：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+python scripts/export_pointcloud_ply.py \
+  --model vggt \
+  --checkpoint_path /path/to/p5d/checkpoint-best.pth \
+  --image_folder /path/to/scene \
+  --output_path /path/to/output \
+  --vggt_joint_remote_export \
+  --remote_view_names zimage.png \
+  --vggt_ordinary_output_head depth \
+  --vggt_remote_output_head point \
+  --vggt_use_remote_private_point_head
+```
+
+原始 VGGT baseline 导出：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+python scripts/export_pointcloud_ply.py \
+  --model vggt \
+  --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
+  --image_folder /path/to/scene \
+  --output_path /path/to/output
+```
+
+GT 检查结论：
+
+- 已通过 [scripts/export_vigor_joint_rs_gt_ply.py](scripts/export_vigor_joint_rs_gt_ply.py) 验证 `vigor_joint_rs_gt_view0_raw_remote.ply` 中 ordinary 和 remote GT 是对齐的。
+- 因此早期 p5b 的偏移更可能来自训练目标、归一化或输出分支，而不是原始 GT 未对齐。
+
+### 11.9 当前推荐实验顺序
+
+推荐正式顺序：
+
+1. `p5b_vggt_joint_shared_all_shared_norm`
+2. `p5c_vggt_joint_shared_all_viewtype`，但必须使用 `aerial_avg_dis`
+3. `p5d_vggt_remote_point_head_consistency`
+
+判断逻辑：
+
+- 如果 p5b shared norm 已经明显缓解偏移，说明主要问题是归一化尺度来源。
+- 如果 p5c 进一步改善，说明 domain signal 对 shared trunk 有帮助。
+- 如果 p5d 进一步改善，说明 remote 需要独立 point head 适配，而不仅是共享 point head。
+
+### 11.10 当前不推荐作为主线的设置
+
+以下设置可以保留做 ablation，但不建议作为当前 p5 主实验默认值：
+
+- `remote_pointmap_norm_mode=avg_dis`
+- `remote_compare_in_view0_frame=true`
+- 直接用原始 `vggt_loss.yaml` 训练 remote view
+- 对 remote 强加 pose / ray direction / camera-frame depth loss
+- 在未固定导出协议前同时扩大多个结构和 loss 变量
