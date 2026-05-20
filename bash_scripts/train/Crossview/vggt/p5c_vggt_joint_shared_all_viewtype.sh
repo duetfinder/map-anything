@@ -28,6 +28,7 @@ SCALE_REMOTE_BY_NUM_VIEWS=${SCALE_REMOTE_BY_NUM_VIEWS:-true}
 REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-false}
 REMOTE_COMPARE_GT_IN_VIEW0_ONLY=${REMOTE_COMPARE_GT_IN_VIEW0_ONLY:-true}
 REMOTE_DETACH_POSE_ALIGN=${REMOTE_DETACH_POSE_ALIGN:-false}
+REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE:-aerial_avg_dis}
 PRETRAINED_CKPT=${PRETRAINED_CKPT:-/root/autodl-tmp/outputs/checkpoints/vggt/model.pt}
 LOAD_PRETRAINED_WEIGHTS=${LOAD_PRETRAINED_WEIGHTS:-false}
 LOAD_CUSTOM_CKPT=${LOAD_CUSTOM_CKPT:-auto}
@@ -77,6 +78,8 @@ else
     echo "Starting from random initialization."
 fi
 
+echo "REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE}"
+
 PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --master_port "${MASTER_PORT}" --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
     machine=autodl_vigor \
@@ -104,13 +107,14 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --master_port "${MA
     dataset.vigor_chicago_joint_rs_aerial.train.remote_label_resize_mode=${REMOTE_LABEL_RESIZE_MODE} \
     dataset.vigor_chicago_joint_rs_aerial.val.remote_label_resize_mode=${REMOTE_LABEL_RESIZE_MODE} \
     dataset.vigor_chicago_joint_rs_aerial.test.remote_label_resize_mode=${REMOTE_LABEL_RESIZE_MODE} \
-    loss=vggt_loss_rs_joint \
+    loss=vggt_loss_rs_joint_shared_norm \
     loss.remote_pointmap_loss_weight=${LAMBDA_REMOTE_PM} \
     loss.remote_height_loss_weight=${LAMBDA_REMOTE_H} \
     loss.scale_remote_loss_by_num_aerial_views=${SCALE_REMOTE_BY_NUM_VIEWS} \
     loss.remote_compare_in_view0_frame=${REMOTE_COMPARE_IN_VIEW0} \
     loss.remote_compare_gt_in_view0_frame_only=${REMOTE_COMPARE_GT_IN_VIEW0_ONLY} \
     loss.remote_detach_pose_for_view0_align=${REMOTE_DETACH_POSE_ALIGN} \
+    loss.remote_pointmap_norm_mode=${REMOTE_POINTMAP_NORM_MODE} \
     model=vggt \
     model.model_config.load_pretrained_weights=${LOAD_PRETRAINED_WEIGHTS} \
     model.model_config.load_custom_ckpt=${LOAD_CUSTOM_CKPT} \
