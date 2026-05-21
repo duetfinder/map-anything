@@ -52,6 +52,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         skip_missing_remote=False,
         remote_crop_mode='none',
         remote_crop_scale_range=(1.0, 1.0),
+        remote_num_views=1,
         remote_image_resize_mode='nearest',
         remote_label_resize_mode='nearest',
         **kwargs,
@@ -75,8 +76,12 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         self.skip_missing_remote = skip_missing_remote
         self.remote_crop_mode = remote_crop_mode
         self.remote_crop_scale_range = tuple(remote_crop_scale_range)
+        self.remote_num_views = int(remote_num_views)
         self.remote_image_resize_mode = remote_image_resize_mode
         self.remote_label_resize_mode = remote_label_resize_mode
+
+        if self.remote_num_views < 1:
+            raise ValueError(f"remote_num_views must be >= 1, got {remote_num_views}")
 
         if self.remote_provider_sampling_mode not in {
             'first_available',
@@ -139,7 +144,9 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         for scene_name in self.scenes:
             scene_root = self.remote_ROOT / scene_name
             scene_manifest = self.remote_manifest_by_scene.get(scene_name)
-            if scene_manifest is not None and scene_manifest.get("remote_entries"):
+            if self.remote_providers:
+                candidate_providers = self.remote_providers
+            elif scene_manifest is not None and scene_manifest.get("remote_entries"):
                 candidate_providers = [
                     str(entry["remote_provider"])
                     for entry in scene_manifest["remote_entries"]
@@ -205,7 +212,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             remote_info = remote_candidates[0]
         return scene_name, remote_info
 
-    def _load_remote_sample(self, remote_info: dict) -> dict:
+    def _load_remote_sample(self, remote_info: dict, *, aug_variant: int = 0) -> dict:
         remote_scene_dir = remote_info['remote_scene_dir']
         remote_provider = remote_info['remote_provider']
 
@@ -233,7 +240,7 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             crop_scale_range=self.remote_crop_scale_range,
             image_resize_mode=self.remote_image_resize_mode,
             label_resize_mode=self.remote_label_resize_mode,
-            rng=np.random.default_rng(0),
+            rng=self._rng,
         )
         remote_image = self.remote_transform(remote_image)
 
@@ -249,7 +256,17 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             'remote_valid_mask': remote_valid_mask,
             'remote_height_map': remote_height_map,
             'remote_crop_box_xyxy': np.asarray(crop_box, dtype=np.int32),
+            'remote_aug_variant': int(aug_variant),
         }
+
+    @staticmethod
+    def _pack_remote_samples(remote_samples: list[dict]) -> dict:
+        packed = {'remote_num_views': len(remote_samples)}
+        for sample_idx, remote_sample in enumerate(remote_samples):
+            suffix = "" if sample_idx == 0 else f"_{sample_idx}"
+            for key, value in remote_sample.items():
+                packed[f"{key}{suffix}"] = value
+        return packed
 
     def _get_views(self, sampled_idx, num_views_to_sample, resolution):
         if self.remote_provider_sampling_mode == 'expand':
@@ -259,9 +276,13 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         else:
             _, remote_info = self._resolve_scene_name_and_remote_info(sampled_idx)
             views = super()._get_views(sampled_idx, num_views_to_sample, resolution)
-        remote_sample = self._load_remote_sample(remote_info)
+        remote_samples = [
+            self._load_remote_sample(remote_info, aug_variant=remote_idx)
+            for remote_idx in range(self.remote_num_views)
+        ]
+        remote_payload = self._pack_remote_samples(remote_samples)
 
         for view in views:
-            view.update(remote_sample)
+            view.update(remote_payload)
 
         return views

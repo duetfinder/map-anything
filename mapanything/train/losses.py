@@ -507,6 +507,7 @@ class RSPointmapHeightLoss(nn.Module):
 
         if total_loss is None:
             raise ValueError('RSPointmapHeightLoss received an empty batch')
+        total_loss = total_loss / len(gts)
 
         details = {}
         if pointmap_losses:
@@ -700,6 +701,17 @@ class JointAerialRSLoss(nn.Module):
         self.remote_view_index = remote_view_index
         self.scale_remote_loss_by_num_aerial_views = scale_remote_loss_by_num_aerial_views
 
+    @staticmethod
+    def _is_remote_supervision_view(gt):
+        if 'remote_pointmap' in gt or 'remote_pointmap_view0' in gt:
+            return True
+        instance = gt.get('instance')
+        if torch.is_tensor(instance):
+            return False
+        if isinstance(instance, (list, tuple)):
+            return any(str(item) == 'remote' for item in instance)
+        return str(instance) == 'remote'
+
     def forward(self, gts, preds, **kwargs):
         if len(gts) != len(preds):
             raise ValueError(
@@ -711,10 +723,23 @@ class JointAerialRSLoss(nn.Module):
             )
 
         remote_idx = self.remote_view_index
-        aerial_gts = list(gts[:remote_idx]) if remote_idx == -1 else list(gts[:remote_idx] + gts[remote_idx + 1 :])
-        aerial_preds = list(preds[:remote_idx]) if remote_idx == -1 else list(preds[:remote_idx] + preds[remote_idx + 1 :])
-        remote_gts = [gts[remote_idx]]
-        remote_preds = [preds[remote_idx]]
+        if remote_idx == -1:
+            remote_indices = [
+                idx for idx, gt in enumerate(gts)
+                if self._is_remote_supervision_view(gt)
+            ]
+            if not remote_indices:
+                remote_indices = [len(gts) - 1]
+        else:
+            remote_indices = [remote_idx]
+        remote_index_set = set(remote_indices)
+        aerial_gts = [gt for idx, gt in enumerate(gts) if idx not in remote_index_set]
+        aerial_preds = [pred for idx, pred in enumerate(preds) if idx not in remote_index_set]
+        remote_gts = [gts[idx] for idx in remote_indices]
+        remote_preds = [preds[idx] for idx in remote_indices]
+
+        if not aerial_gts:
+            raise ValueError('JointAerialRSLoss requires at least one aerial view')
 
         total_loss = None
         details = {}

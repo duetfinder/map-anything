@@ -39,6 +39,7 @@ vigor_chicago_joint_rs_aerial:
         skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.train.skip_missing_remote},
         remote_crop_mode='${dataset.vigor_chicago_joint_rs_aerial.train.remote_crop_mode}',
         remote_crop_scale_range=${dataset.vigor_chicago_joint_rs_aerial.train.remote_crop_scale_range},
+        remote_num_views=${dataset.vigor_chicago_joint_rs_aerial.train.remote_num_views},
         remote_image_resize_mode='${dataset.vigor_chicago_joint_rs_aerial.train.remote_image_resize_mode}',
         remote_label_resize_mode='${dataset.vigor_chicago_joint_rs_aerial.train.remote_label_resize_mode}')"
     split: 'train'
@@ -64,6 +65,7 @@ vigor_chicago_joint_rs_aerial:
     skip_missing_remote: false
     remote_crop_mode: 'none'
     remote_crop_scale_range: [1.0, 1.0]
+    remote_num_views: 1
     remote_image_resize_mode: 'nearest'
     remote_label_resize_mode: 'nearest'
     cities: []
@@ -94,6 +96,7 @@ vigor_chicago_joint_rs_aerial:
         skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.val.skip_missing_remote},
         remote_crop_mode='${dataset.vigor_chicago_joint_rs_aerial.val.remote_crop_mode}',
         remote_crop_scale_range=${dataset.vigor_chicago_joint_rs_aerial.val.remote_crop_scale_range},
+        remote_num_views=${dataset.vigor_chicago_joint_rs_aerial.val.remote_num_views},
         remote_image_resize_mode='${dataset.vigor_chicago_joint_rs_aerial.val.remote_image_resize_mode}',
         remote_label_resize_mode='${dataset.vigor_chicago_joint_rs_aerial.val.remote_label_resize_mode}')"
     split: 'val'
@@ -119,6 +122,7 @@ vigor_chicago_joint_rs_aerial:
     skip_missing_remote: false
     remote_crop_mode: 'none'
     remote_crop_scale_range: [1.0, 1.0]
+    remote_num_views: 1
     remote_image_resize_mode: 'nearest'
     remote_label_resize_mode: 'nearest'
     cities: []
@@ -149,6 +153,7 @@ vigor_chicago_joint_rs_aerial:
         skip_missing_remote=${dataset.vigor_chicago_joint_rs_aerial.test.skip_missing_remote},
         remote_crop_mode='${dataset.vigor_chicago_joint_rs_aerial.test.remote_crop_mode}',
         remote_crop_scale_range=${dataset.vigor_chicago_joint_rs_aerial.test.remote_crop_scale_range},
+        remote_num_views=${dataset.vigor_chicago_joint_rs_aerial.test.remote_num_views},
         remote_image_resize_mode='${dataset.vigor_chicago_joint_rs_aerial.test.remote_image_resize_mode}',
         remote_label_resize_mode='${dataset.vigor_chicago_joint_rs_aerial.test.remote_label_resize_mode}')"
     split: 'test'
@@ -174,6 +179,7 @@ vigor_chicago_joint_rs_aerial:
     skip_missing_remote: false
     remote_crop_mode: 'none'
     remote_crop_scale_range: [1.0, 1.0]
+    remote_num_views: 1
     remote_image_resize_mode: 'nearest'
     remote_label_resize_mode: 'nearest'
     cities: []

@@ -53,6 +53,19 @@ def has_joint_remote_supervision(batch):
     return bool(batch) and 'camera_pose' in batch[0] and 'remote_image' in batch[0]
 
 
+def _remote_num_views(remote_source):
+    value = remote_source.get('remote_num_views', 1)
+    if torch.is_tensor(value):
+        value = value.flatten()[0].item()
+    elif isinstance(value, (list, tuple)):
+        value = value[0]
+    return int(value)
+
+
+def _remote_key(base_key, remote_idx):
+    return base_key if remote_idx == 0 else f"{base_key}_{remote_idx}"
+
+
 def _transform_remote_pointmap_to_view0(remote_pointmap, camera_pose):
     if torch.is_tensor(remote_pointmap):
         if remote_pointmap.ndim == 3:
@@ -80,29 +93,47 @@ def _transform_remote_pointmap_to_view0(remote_pointmap, camera_pose):
     return remote_pointmap_view0[0] if squeeze else remote_pointmap_view0
 
 
-def build_remote_supervision_view(batch):
+def build_remote_supervision_view(batch, remote_idx=0):
     remote_source = batch[0]
+    remote_image_key = _remote_key('remote_image', remote_idx)
+    remote_pointmap_key = _remote_key('remote_pointmap', remote_idx)
+    remote_valid_mask_key = _remote_key('remote_valid_mask', remote_idx)
+    remote_height_map_key = _remote_key('remote_height_map', remote_idx)
+    remote_provider_key = _remote_key('remote_provider', remote_idx)
+    remote_scene_dir_key = _remote_key('remote_scene_dir', remote_idx)
+    remote_crop_box_key = _remote_key('remote_crop_box_xyxy', remote_idx)
+    remote_aug_variant_key = _remote_key('remote_aug_variant', remote_idx)
+
     remote_view = {
-        'img': remote_source['remote_image'],
+        'img': remote_source[remote_image_key],
         'data_norm_type': remote_source['data_norm_type'],
         'dataset': remote_source.get('dataset', 'vigor_chicago_joint_rs_aerial'),
         'label': remote_source.get('label'),
-        'instance': remote_source.get('remote_provider', 'remote'),
-        'remote_pointmap': remote_source['remote_pointmap'],
+        'instance': 'remote',
+        'remote_pointmap': remote_source[remote_pointmap_key],
         'remote_pointmap_view0': _transform_remote_pointmap_to_view0(
-            remote_source['remote_pointmap'], remote_source['camera_pose']
+            remote_source[remote_pointmap_key], remote_source['camera_pose']
         ),
-        'remote_valid_mask': remote_source['remote_valid_mask'],
+        'remote_valid_mask': remote_source[remote_valid_mask_key],
     }
-    if 'remote_height_map' in remote_source:
-        remote_view['remote_height_map'] = remote_source['remote_height_map']
-    if 'remote_provider' in remote_source:
-        remote_view['remote_provider'] = remote_source['remote_provider']
-    if 'remote_crop_box_xyxy' in remote_source:
-        remote_view['remote_crop_box_xyxy'] = remote_source['remote_crop_box_xyxy']
-    if 'remote_aug_variant' in remote_source:
-        remote_view['remote_aug_variant'] = remote_source['remote_aug_variant']
+    if remote_height_map_key in remote_source:
+        remote_view['remote_height_map'] = remote_source[remote_height_map_key]
+    if remote_provider_key in remote_source:
+        remote_view['remote_provider'] = remote_source[remote_provider_key]
+    if remote_scene_dir_key in remote_source:
+        remote_view['remote_scene_dir'] = remote_source[remote_scene_dir_key]
+    if remote_crop_box_key in remote_source:
+        remote_view['remote_crop_box_xyxy'] = remote_source[remote_crop_box_key]
+    if remote_aug_variant_key in remote_source:
+        remote_view['remote_aug_variant'] = remote_source[remote_aug_variant_key]
     return remote_view
+
+
+def build_remote_supervision_views(batch):
+    return [
+        build_remote_supervision_view(batch, remote_idx=remote_idx)
+        for remote_idx in range(_remote_num_views(batch[0]))
+    ]
 
 
 def loss_of_one_batch_multi_view(
@@ -147,6 +178,8 @@ def loss_of_one_batch_multi_view(
                 "rng",
                 "data_norm_type",
                 "remote_provider",
+                "remote_scene_dir",
+                "remote_num_views",
                 "remote_crop_box_xyxy",
                 "remote_aug_variant",
             ]
@@ -179,14 +212,15 @@ def loss_of_one_batch_multi_view(
     criterion_batch = batch
     model_batch = batch
     if has_joint_remote_supervision(batch):
-        remote_gt_view = build_remote_supervision_view(batch)
-        criterion_batch = list(batch) + [remote_gt_view]
+        remote_gt_views = build_remote_supervision_views(batch)
+        criterion_batch = list(batch) + remote_gt_views
         model_batch = list(batch) + [
             {
                 'img': remote_gt_view['img'],
                 'data_norm_type': remote_gt_view['data_norm_type'],
                 'instance': 'remote',
             }
+            for remote_gt_view in remote_gt_views
         ]
 
     # Run model and compute loss
