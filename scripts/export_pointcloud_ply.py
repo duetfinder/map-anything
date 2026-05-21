@@ -96,8 +96,8 @@ python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
     --image_folder /root/autodl-tmp/test/scence/461 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_base_depth
-
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt \
+&& \
 # p5b default mixed export: ordinary views use camera+depth, remote uses point_head.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
@@ -106,8 +106,8 @@ python scripts/export_pointcloud_ply.py \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_mixed \
     --vggt_joint_remote_export \
     --vggt_export_mode mixed \
-    --remote_view_names zimage.png
-
+    --remote_view_names image.png \
+&& \
 # p5b diagnostic: force every view through camera+depth.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
@@ -116,8 +116,8 @@ python scripts/export_pointcloud_ply.py \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_depth_all \
     --vggt_joint_remote_export \
     --vggt_export_mode depth_all \
-    --remote_view_names zimage.png
-
+    --remote_view_names image.png \
+&& \
 # p5b diagnostic: force every view through point_head.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
@@ -126,30 +126,9 @@ python scripts/export_pointcloud_ply.py \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_point_all \
     --vggt_joint_remote_export \
     --vggt_export_mode point_all \
-    --remote_view_names zimage.png
-
-# p5b diagnostic: explicit per-type head selection.
-python scripts/export_pointcloud_ply.py \
-    --model vggt \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/461 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/vggt_p5b_ordinary_point_remote_depth \
-    --vggt_joint_remote_export \
-    --vggt_ordinary_output_head point \
-    --vggt_remote_output_head depth \
-    --remote_view_names zimage.png
-
-# p5d remote-private point head + consistency checkpoint.
-python scripts/export_pointcloud_ply.py \
-    --model vggt \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5d_vggt_remote_point_head_consistency/checkpoint-best.pth \
-    --image_folder /root/autodl-tmp/test/scence/473_2 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/473_2/vggt_p5d_mixed \
-    --vggt_joint_remote_export \
-    --vggt_use_remote_private_point_head \
-    --vggt_export_mode mixed \
-    --remote_view_names zimage.png
-
+    --remote_view_names image.png \
+&& \
+# p5c
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype/checkpoint-best.pth \
@@ -158,8 +137,18 @@ python scripts/export_pointcloud_ply.py \
     --vggt_joint_remote_export \
     --vggt_export_mode mixed \
     --config_overrides machine=aws model=vggt model.model_config.use_view_type_bias=true \
-    --remote_view_names zimage.png
-
+    --remote_view_names image.png \
+&& \
+# p5d remote-private point head + consistency checkpoint.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5d_vggt_remote_point_head_consistency/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/461_1 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461_1/vggt_p5d_mixed \
+    --vggt_joint_remote_export \
+    --vggt_use_remote_private_point_head \
+    --vggt_export_mode mixed \
+    --remote_view_names image.png
 """
 
 import argparse
