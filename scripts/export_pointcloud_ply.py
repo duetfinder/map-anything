@@ -73,6 +73,8 @@ mapanything_rs_joint:
 # folder contains a satellite / map image, mark it with --remote_view_names
 # or --remote_view_indices so that it is routed through the remote direct
 # pointmap head. Unmarked views use the ordinary MapAnything aerial branch.
+# Filename metadata used for --remote_view_names is stripped before calling
+# MapAnything.infer(), whose input validator only accepts model-facing keys.
 python scripts/export_pointcloud_ply.py \
     --model mapanything_rs_joint \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/mapanything/p4_mapanything_rs_joint_500_4gpu_all/checkpoint-best.pth \
@@ -827,10 +829,20 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     return forced_views
 
 
+def strip_export_only_view_keys(views):
+    stripped_views = []
+    for view in views:
+        stripped_view = dict(view)
+        stripped_view.pop("source_name", None)
+        stripped_views.append(stripped_view)
+    return stripped_views
+
+
 def run_model_inference(model, views, args: argparse.Namespace):
+    views_for_model = strip_export_only_view_keys(views)
     if hasattr(model, "infer"):
         return model.infer(
-            views,
+            views_for_model,
             memory_efficient_inference=args.memory_efficient_inference,
             minibatch_size=args.minibatch_size,
             use_amp=True,
@@ -842,7 +854,7 @@ def run_model_inference(model, views, args: argparse.Namespace):
         )
 
     model_device = next(model.parameters()).device
-    return model(move_views_to_device(views, model_device))
+    return model(move_views_to_device(views_for_model, model_device))
 
 
 def get_view_colors(pred, view):
