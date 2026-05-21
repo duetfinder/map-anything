@@ -14,6 +14,7 @@ Supported benchmark models from bash_scripts/benchmark/rs_guided_dense_mv:
 - vggt
 - da3
 - mapanything
+- mapanything_rs_joint
 
 Include:
 
@@ -65,6 +66,26 @@ python scripts/export_pointcloud_ply.py \
     --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
     --image_folder /root/autodl-tmp/test/scence/461 \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/mapanything
+
+mapanything_rs_joint:
+# P4 MapAnything RS-joint checkpoints are supported for export. Use
+# --model mapanything_rs_joint and pass the trained checkpoint. If the input
+# folder contains a satellite / map image, mark it with --remote_view_names
+# or --remote_view_indices so that it is routed through the remote direct
+# pointmap head. Unmarked views use the ordinary MapAnything aerial branch.
+python scripts/export_pointcloud_ply.py \
+    --model mapanything_rs_joint \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/mapanything/p4_mapanything_rs_joint_500_4gpu_all/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/mapanything_p4_rs_joint \
+    --remote_view_names zimage.png
+
+# Baseline comparison with the original MapAnything checkpoint.
+python scripts/export_pointcloud_ply.py \
+    --model mapanything \
+    --checkpoint_path /root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth \
+    --image_folder /root/autodl-tmp/test/scence/461 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461/mapanything_base
 
 
 vggt:
@@ -176,6 +197,7 @@ SUPPORTED_MODELS = [
     "vggt",
     "da3",
     "mapanything",
+    "mapanything_rs_joint",
 ]
 DEFAULT_CONFIG_OVERRIDES = {
     "pi3": [
@@ -207,6 +229,12 @@ DEFAULT_CONFIG_OVERRIDES = {
     "mapanything": [
         "machine=aws",
         "model=mapanything",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "mapanything_rs_joint": [
+        "machine=aws",
+        "model=mapanything_rs_joint",
         "model/task=images_only",
         "model.encoder.uses_torch_hub=false",
     ],
@@ -359,8 +387,8 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help=(
             "Force every loaded view to use instance='remote'. Useful when exporting "
-            "from VGGT RS-joint checkpoints that only route remote views through "
-            "the native point_head."
+            "from RS-joint checkpoints that route remote views through a dedicated "
+            "point head."
         ),
     )
     parser.add_argument(
@@ -370,7 +398,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "0-based indices of input images that should be treated as remote views "
-            "for VGGT RS-joint export. Unspecified views remain ordinary views."
+            "for RS-joint export. Unspecified views remain ordinary views."
         ),
     )
     parser.add_argument(
@@ -379,7 +407,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Basenames of input images that should be treated as remote views for "
-            "VGGT RS-joint export."
+            "RS-joint export."
         ),
     )
     parser.add_argument(
@@ -772,6 +800,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     use_joint_remote_logic = (
         args.force_remote_instance
         or args.vggt_joint_remote_export
+        or args.model == "mapanything_rs_joint"
         or bool(args.remote_view_indices)
         or bool(args.remote_view_names)
     )
@@ -804,7 +833,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         for idx, source_name in remote_assignments:
             print(f"  - idx={idx} name={source_name}")
     else:
-        print("No views were marked as remote; VGGT export will use ordinary view logic.")
+        print("No views were marked as remote; export will use ordinary view logic.")
 
     return forced_views
 
@@ -916,6 +945,11 @@ def resolve_output_path(output_path_str: str) -> Path:
 def main() -> None:
     args = parse_args()
     effective_model_name = resolve_effective_model_name(args)
+    if effective_model_name == "mapanything_rs_joint" and not args.checkpoint_path:
+        raise ValueError(
+            "--model mapanything_rs_joint requires --checkpoint_path because there "
+            "is no default HuggingFace checkpoint for this local RS-joint variant."
+        )
     if effective_model_name != args.model:
         print(
             f"Resolved export model '{args.model}' -> '{effective_model_name}' "
