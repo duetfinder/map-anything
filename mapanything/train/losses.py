@@ -703,8 +703,6 @@ class JointAerialRSLoss(nn.Module):
 
     @staticmethod
     def _is_remote_supervision_view(gt):
-        if 'remote_pointmap' in gt or 'remote_pointmap_view0' in gt:
-            return True
         instance = gt.get('instance')
         if torch.is_tensor(instance):
             return False
