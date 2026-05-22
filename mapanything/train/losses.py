@@ -541,7 +541,9 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         height_loss_weight=0.1,
         top_n_percent=5.0,
         compare_in_view0_frame=False,
+        compare_gt_in_view0_frame_only=False,
         detach_pose_for_view0_align=False,
+        pointmap_norm_mode=None,
     ):
         super().__init__()
         self.pointmap_criterion = pointmap_criterion or L1Loss(reduction="none")
@@ -549,11 +551,18 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         self.pointmap_loss_weight = pointmap_loss_weight
         self.height_loss_weight = height_loss_weight
         self.compare_in_view0_frame = compare_in_view0_frame
+        self.compare_gt_in_view0_frame_only = compare_gt_in_view0_frame_only
         self.detach_pose_for_view0_align = detach_pose_for_view0_align
+        self.pointmap_norm_mode = pointmap_norm_mode
         self.top_n_percent = float(top_n_percent)
         self.bottom_n_percent = 100.0 - self.top_n_percent
         if not (0.0 <= self.top_n_percent < 100.0):
             raise ValueError(f"top_n_percent must be in [0, 100), got {top_n_percent}")
+        if self.compare_in_view0_frame and self.compare_gt_in_view0_frame_only:
+            raise ValueError(
+                "compare_in_view0_frame and compare_gt_in_view0_frame_only are "
+                "mutually exclusive"
+            )
 
     @staticmethod
     def _get_pred_in_view0(aerial_preds, detach_pose_for_view0_align=False):
@@ -588,6 +597,8 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
     def _exclude_top_n_masked_mean(self, loss_map, mask):
         if mask.dtype != torch.bool:
             mask = mask.bool()
+        if loss_map.ndim == mask.ndim + 1:
+            loss_map = loss_map.mean(dim=-1)
         if loss_map.ndim == 2:
             loss_map = loss_map.unsqueeze(0)
             mask = mask.unsqueeze(0)
@@ -620,8 +631,12 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
         pointmap_losses_weighted = []
         height_losses = []
         height_losses_weighted = []
+        pointmap_raw_losses = []
+        pred_pointmap_norm_factors = []
+        gt_pointmap_norm_factors = []
         pred_in_view0 = None
         aerial_preds = kwargs.get('aerial_preds')
+        aerial_gts = kwargs.get('aerial_gts')
 
         if self.compare_in_view0_frame and self.height_loss_weight > 0:
             raise ValueError('Height supervision is not supported when compare_in_view0_frame=True. Use height_loss_weight=0.')
@@ -635,13 +650,42 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
             pred_pts3d = pred['pts3d'].float()
             if self.compare_in_view0_frame:
                 pred_pts3d = geotrf(pred_in_view0, pred_pts3d)
-            gt_pointmap_key = 'remote_pointmap_view0' if self.compare_in_view0_frame else 'remote_pointmap'
+            gt_pointmap_key = (
+                'remote_pointmap_view0'
+                if (self.compare_in_view0_frame or self.compare_gt_in_view0_frame_only)
+                else 'remote_pointmap'
+            )
             if gt_pointmap_key not in gt:
                 raise ValueError(f'Missing {gt_pointmap_key} in remote supervision view')
             gt_pointmap = gt[gt_pointmap_key].float()
             valid_mask = gt['remote_valid_mask'].bool()
 
-            pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
+            raw_pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
+            raw_pointmap_loss = self._masked_mean(raw_pointmap_loss_map, valid_mask)
+            pointmap_raw_losses.append(float(raw_pointmap_loss))
+
+            norm_mode = self.pointmap_norm_mode
+            if isinstance(norm_mode, str) and norm_mode.startswith("aerial_"):
+                pred_pts3d_for_loss, gt_pointmap_for_loss, pred_norm_factor, gt_norm_factor = (
+                    RSPointmapHeightLoss._normalize_pair_with_aerial_factors(
+                        pred_pts3d,
+                        gt_pointmap,
+                        aerial_gts,
+                        aerial_preds,
+                        norm_mode[len("aerial_") :],
+                    )
+                )
+            else:
+                pred_pts3d_for_loss, gt_pointmap_for_loss, pred_norm_factor, gt_norm_factor = (
+                    RSPointmapHeightLoss._normalize_pair(
+                        pred_pts3d, gt_pointmap, valid_mask, norm_mode
+                    )
+                )
+            if pred_norm_factor is not None:
+                pred_pointmap_norm_factors.append(float(pred_norm_factor.mean()))
+                gt_pointmap_norm_factors.append(float(gt_norm_factor.mean()))
+
+            pointmap_loss_map = self.pointmap_criterion(pred_pts3d_for_loss, gt_pointmap_for_loss)
             pointmap_loss = self._exclude_top_n_masked_mean(pointmap_loss_map, valid_mask)
             pointmap_losses.append(float(pointmap_loss))
             pointmap_losses_weighted.append(float(self.pointmap_loss_weight * pointmap_loss))
@@ -661,12 +705,20 @@ class RSExcludeTopNPercentPointmapHeightLoss(nn.Module):
 
         if total_loss is None:
             raise ValueError('RSExcludeTopNPercentPointmapHeightLoss received an empty batch')
+        total_loss = total_loss / len(gts)
 
         details = {}
         if pointmap_losses:
             details[f'rs_pointmap_bot{self.bottom_n_percent:g}%_loss'] = sum(pointmap_losses) / len(pointmap_losses)
+            details['rs_pointmap_loss'] = sum(pointmap_losses) / len(pointmap_losses)
+            details['rs_pointmap_loss_weighted'] = sum(pointmap_losses_weighted) / len(pointmap_losses_weighted)
+            details['rs_pointmap_loss_raw_metric'] = sum(pointmap_raw_losses) / len(pointmap_raw_losses)
+        if pred_pointmap_norm_factors:
+            details['rs_pointmap_pred_norm_factor'] = sum(pred_pointmap_norm_factors) / len(pred_pointmap_norm_factors)
+            details['rs_pointmap_gt_norm_factor'] = sum(gt_pointmap_norm_factors) / len(gt_pointmap_norm_factors)
         if height_losses:
             details['rs_height_loss'] = sum(height_losses) / len(height_losses)
+            details['rs_height_loss_weighted'] = sum(height_losses_weighted) / len(height_losses_weighted)
 
         return total_loss, details
 
