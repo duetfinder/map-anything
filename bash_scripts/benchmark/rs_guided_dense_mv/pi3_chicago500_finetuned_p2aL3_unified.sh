@@ -19,5 +19,5 @@ PYTHONPATH=. python3 \
     dataset.num_workers=0 \
     batch_size=$BATCH_SIZE \
     model=pi3 \
-    model.pretrained="$CKPT_PATH" \
+    checkpoint_path="$CKPT_PATH" \
     hydra.run.dir="$OUTPUT_DIR"

@@ -26,7 +26,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python3 \
     model=mapanything \
     model/task=images_only \
     model.encoder.uses_torch_hub=false \
-    model.pretrained="$MAPANYTHING_CKPT" \
+    checkpoint_path="$MAPANYTHING_CKPT" \
     hydra.run.dir="$OUTPUT_DIR" \
     dataset.vigor_chicago_wai.val.cities=[newyork] \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[newyork]

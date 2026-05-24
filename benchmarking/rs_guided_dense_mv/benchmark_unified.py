@@ -31,12 +31,15 @@ from benchmarking.dense_n_view.benchmark import (
     build_dataset,
     get_all_info_for_metric_computation,
 )
-from mapanything.models import init_model
 from mapanything.utils.geometry import (
     geotrf,
     inv,
     normalize_multiple_pointclouds,
     quaternion_to_rotation_matrix,
+)
+from mapanything.utils.hf_utils.hf_helpers import (
+    initialize_mapanything_local,
+    initialize_mapanything_model,
 )
 from mapanything.utils.metrics import (
     calculate_auc_np,
@@ -48,6 +51,321 @@ from mapanything.utils.metrics import (
 from mapanything.utils.misc import StreamToLogger
 
 log = logging.getLogger(__name__)
+
+DEFAULT_CONFIG_PATH = "configs/train.yaml"
+DEFAULT_MAPANYTHING_HF_MODEL = "facebook/map-anything"
+SUPPORTED_MODEL_INPUTS = {
+    "pi3",
+    "pi3_modality_embedding",
+    "pi3_modality_embedding_remote_head",
+    "vggt",
+    "da3",
+    "mapanything",
+    "mapanything_rs_joint",
+}
+DEFAULT_CONFIG_OVERRIDES = {
+    "pi3": [
+        "machine=aws",
+        "model=pi3",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "pi3_modality_embedding": [
+        "machine=aws",
+        "model=pi3_modality_embedding",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "pi3_modality_embedding_remote_head": [
+        "machine=aws",
+        "model=pi3_modality_embedding_remote_head",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "vggt": [
+        "machine=aws",
+        "model=vggt",
+    ],
+    "da3": [
+        "machine=aws",
+        "model=da3",
+    ],
+    "mapanything": [
+        "machine=aws",
+        "model=mapanything",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+    "mapanything_rs_joint": [
+        "machine=aws",
+        "model=mapanything_rs_joint",
+        "model/task=images_only",
+        "model.encoder.uses_torch_hub=false",
+    ],
+}
+CLASH_ENV = {
+    "http_proxy": "http://127.0.0.1:7890",
+    "https_proxy": "http://127.0.0.1:7890",
+    "all_proxy": "socks5://127.0.0.1:7891",
+}
+
+
+def cfg_get(args, key, default=None):
+    if args is None:
+        return default
+    if isinstance(args, DictConfig):
+        return args.get(key, default)
+    return getattr(args, key, default)
+
+
+def resolve_requested_model_name(args):
+    requested_model = cfg_get(args, "model_input")
+    if requested_model:
+        return str(requested_model)
+    model_cfg = cfg_get(args, "model")
+    if model_cfg is not None:
+        model_config = cfg_get(model_cfg, "model_config")
+        if model_config is not None:
+            model_name = cfg_get(model_config, "name")
+            if model_name:
+                return str(model_name)
+        model_str = cfg_get(model_cfg, "model_str")
+        if model_str:
+            return str(model_str)
+    raise ValueError("Could not resolve model name from config")
+
+
+def is_raw_vggt_checkpoint(args, model_name):
+    checkpoint_path = cfg_get(args, "checkpoint_path")
+    if model_name != "vggt" or not checkpoint_path:
+        return False
+    checkpoint_path = Path(str(checkpoint_path))
+    return checkpoint_path.name == "model.pt" and "checkpoints/vggt" in str(
+        checkpoint_path
+    )
+
+
+def resolve_vggt_output_heads(args, model_name):
+    if model_name != "vggt":
+        return None, None
+
+    ordinary_head = cfg_get(args, "vggt_ordinary_output_head")
+    remote_head = cfg_get(args, "vggt_remote_output_head")
+    export_mode = cfg_get(args, "vggt_export_mode")
+
+    if export_mode == "mixed":
+        ordinary_head = ordinary_head or "depth"
+        remote_head = remote_head or "point"
+    elif export_mode == "depth_all":
+        ordinary_head = ordinary_head or "depth"
+        remote_head = remote_head or "depth"
+    elif export_mode == "point_all":
+        ordinary_head = ordinary_head or "point"
+        remote_head = remote_head or "point"
+    elif export_mode == "ordinary_point_remote_depth":
+        ordinary_head = ordinary_head or "point"
+        remote_head = remote_head or "depth"
+
+    return ordinary_head, remote_head
+
+
+def resolve_config_overrides(args, model_name):
+    config_overrides = cfg_get(args, "config_overrides")
+    if config_overrides is not None:
+        overrides = list(config_overrides)
+    else:
+        if model_name not in DEFAULT_CONFIG_OVERRIDES:
+            raise ValueError(
+                f"Unsupported model input '{model_name}'. Supported: {sorted(SUPPORTED_MODEL_INPUTS)}"
+            )
+        overrides = list(DEFAULT_CONFIG_OVERRIDES[model_name])
+
+    checkpoint_path = cfg_get(args, "checkpoint_path")
+    if is_raw_vggt_checkpoint(args, model_name):
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=true",
+                f"model.model_config.custom_ckpt_path={checkpoint_path}",
+            ]
+        )
+
+    if cfg_get(args, "vggt_joint_remote_export", False):
+        if model_name != "vggt":
+            raise ValueError("vggt_joint_remote_export is only supported with vggt")
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=false",
+                "model.model_config.use_point_head_for_remote=true",
+            ]
+        )
+
+    ordinary_head, remote_head = resolve_vggt_output_heads(args, model_name)
+    if ordinary_head is not None:
+        overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
+    if remote_head is not None:
+        overrides.append(f"model.model_config.remote_output_head={remote_head}")
+    if model_name == "vggt" and cfg_get(args, "vggt_use_remote_private_point_head", False):
+        overrides.extend(
+            [
+                "model.model_config.use_remote_private_point_head=true",
+                "model.model_config.output_point_head_for_consistency=true",
+            ]
+        )
+
+    return overrides
+
+
+def resolve_effective_model_name(args, requested_model_name):
+    checkpoint_path = cfg_get(args, "checkpoint_path")
+    if requested_model_name != "pi3" or not checkpoint_path:
+        return requested_model_name
+
+    checkpoint_path_lower = str(checkpoint_path).lower()
+    if "pi3_modality_embedding_remote_head" in checkpoint_path_lower:
+        print(
+            "Auto-detected Pi3 variant from checkpoint path: "
+            "pi3_modality_embedding_remote_head"
+        )
+        return "pi3_modality_embedding_remote_head"
+    if (
+        "pi3_modality_embedding" in checkpoint_path_lower
+        or "p3_pi3_freeze_shared" in checkpoint_path_lower
+    ):
+        print(
+            "Auto-detected Pi3 variant from checkpoint path: "
+            "pi3_modality_embedding"
+        )
+        return "pi3_modality_embedding"
+    return requested_model_name
+
+
+def maybe_enable_clash_proxy(enable_proxy):
+    if not enable_proxy:
+        return
+    clash_path = Path("/etc/profile.d/clash.sh")
+    if not clash_path.exists():
+        print("Clash helper not found at /etc/profile.d/clash.sh; skipping proxy setup")
+        return
+    os.environ.update(CLASH_ENV)
+    print("Enabled Clash proxy environment for HuggingFace downloads")
+
+
+def maybe_prepare_da3_pythonpath(model_name):
+    if model_name != "da3":
+        return
+    da3_src = Path("/root/autodl-tmp/Models/Depth-Anything-3/src")
+    if not da3_src.exists():
+        raise FileNotFoundError(
+            "DA3 requires /root/autodl-tmp/Models/Depth-Anything-3/src to exist"
+        )
+    if str(da3_src) not in sys.path:
+        sys.path.insert(0, str(da3_src))
+        print(f"Added DA3 dependency path: {da3_src}")
+
+
+def build_local_config(
+    args,
+    config_overrides,
+    requested_model_name,
+    effective_model_name,
+):
+    checkpoint_path = cfg_get(args, "checkpoint_path")
+    legacy_pretrained = cfg_get(cfg_get(args, "model"), "pretrained")
+    if checkpoint_path is None:
+        checkpoint_path = legacy_pretrained
+    local_config = {
+        "path": cfg_get(args, "config_path", DEFAULT_CONFIG_PATH),
+        "checkpoint_path": checkpoint_path,
+        "config_overrides": config_overrides,
+        "strict": bool(cfg_get(args, "strict", False)),
+        "model_str": cfg_get(args, "model_str") or effective_model_name,
+    }
+
+    # Legacy benchmark scripts may pass model.model_config.* Hydra overrides
+    # together with model.pretrained. Preserve that resolved config when the
+    # requested and effective model are the same. New checkpoint_path-based
+    # calls use the export-style override flags instead.
+    if (
+        legacy_pretrained
+        and checkpoint_path == legacy_pretrained
+        and requested_model_name == effective_model_name
+        and cfg_get(args, "config_overrides") is None
+    ):
+        local_config["model_config"] = cfg_get(cfg_get(args, "model"), "model_config")
+
+    config_json_path = cfg_get(args, "config_json_path")
+    if config_json_path is not None:
+        local_config["config_json_path"] = config_json_path
+    return local_config
+
+
+def initialize_benchmark_model(args, device):
+    requested_model_name = resolve_requested_model_name(args)
+    effective_model_name = resolve_effective_model_name(args, requested_model_name)
+    config_overrides = resolve_config_overrides(args, effective_model_name)
+    maybe_enable_clash_proxy(cfg_get(args, "enable_clash_proxy", False))
+    maybe_prepare_da3_pythonpath(effective_model_name)
+
+    checkpoint_path = cfg_get(args, "checkpoint_path")
+    legacy_pretrained = cfg_get(cfg_get(args, "model"), "pretrained")
+    if checkpoint_path or legacy_pretrained:
+        if checkpoint_path is None:
+            print(
+                "Using legacy model.pretrained checkpoint input. Prefer "
+                "checkpoint_path=... for parity with scripts/export_pointcloud_ply.py."
+            )
+        if is_raw_vggt_checkpoint(args, effective_model_name):
+            print(
+                "Detected raw VGGT checkpoint; loading it through "
+                "model.model_config.custom_ckpt_path."
+            )
+        local_config = build_local_config(
+            args,
+            config_overrides,
+            requested_model_name,
+            effective_model_name,
+        )
+        print(f"Initializing model from local config: {local_config}")
+        model = initialize_mapanything_local(local_config, device)
+        return model.eval()
+
+    if effective_model_name == "mapanything":
+        hf_model_name = cfg_get(args, "hf_model_name") or DEFAULT_MAPANYTHING_HF_MODEL
+        high_level_config = {
+            "path": cfg_get(args, "config_path", DEFAULT_CONFIG_PATH),
+            "hf_model_name": hf_model_name,
+            "model_str": "mapanything",
+            "config_overrides": config_overrides,
+            "checkpoint_name": "model.safetensors",
+            "config_name": "config.json",
+        }
+        print(f"Initializing model from HuggingFace defaults: {high_level_config}")
+        model = initialize_mapanything_model(high_level_config, device)
+        return model.eval()
+
+    model_cfg = cfg_get(args, "model")
+    current_model_name = cfg_get(cfg_get(model_cfg, "model_config"), "name")
+    if requested_model_name == effective_model_name == current_model_name:
+        from mapanything.models import init_model
+
+        print(f"Initializing model '{effective_model_name}' from Hydra benchmark config")
+        model = init_model(
+            cfg_get(model_cfg, "model_str"),
+            cfg_get(model_cfg, "model_config"),
+            torch_hub_force_reload=False,
+        )
+        model.to(device)
+        return model.eval()
+
+    from mapanything.models import init_model_from_config
+
+    print(f"Initializing model '{effective_model_name}' from default wrapper weights")
+    model = init_model_from_config(
+        effective_model_name, device=device, machine="aws"
+    )
+    return model.eval()
 
 
 def resolve_resolution(resolution_cfg):
@@ -430,16 +748,8 @@ def benchmark(args):
         for idx in range(len(remote_loader.dataset))
     }
 
-    model = init_model(
-        args.model.model_str, args.model.model_config, torch_hub_force_reload=False
-    )
+    model = initialize_benchmark_model(args, device)
     model.to(device)
-
-    if args.model.pretrained:
-        print("Loading pretrained: ", args.model.pretrained)
-        ckpt = torch.load(args.model.pretrained, map_location=device, weights_only=False)
-        print(model.load_state_dict(ckpt["model"], strict=False))
-        del ckpt
 
     aerial_per_scene = {}
     rs_per_scene = {}

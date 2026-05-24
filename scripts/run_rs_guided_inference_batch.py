@@ -215,6 +215,45 @@ def parse_args():
     parser.add_argument("--hf_model_name", type=str, default=None)
     parser.add_argument("--enable_clash_proxy", action="store_true", default=False)
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument(
+        "--vggt_joint_remote_export",
+        action="store_true",
+        default=False,
+        help=(
+            "VGGT RS-joint export mode: disable wrapper-side pretrained/custom "
+            "init and route remote views through point_head."
+        ),
+    )
+    parser.add_argument(
+        "--vggt_export_mode",
+        type=str,
+        default=None,
+        choices=["mixed", "depth_all", "point_all", "ordinary_point_remote_depth"],
+        help=(
+            "VGGT output-head mode. mixed=ordinary depth and remote point; "
+            "depth_all=all camera+depth; point_all=all point_head."
+        ),
+    )
+    parser.add_argument(
+        "--vggt_ordinary_output_head",
+        type=str,
+        default=None,
+        choices=["depth", "point"],
+        help="Explicit output head for non-remote VGGT views.",
+    )
+    parser.add_argument(
+        "--vggt_remote_output_head",
+        type=str,
+        default=None,
+        choices=["auto", "depth", "point"],
+        help="Explicit output head for remote VGGT views.",
+    )
+    parser.add_argument(
+        "--vggt_use_remote_private_point_head",
+        action="store_true",
+        default=False,
+        help="Enable VGGT remote private point_head for P5D checkpoints.",
+    )
     parser.add_argument("--split", type=str, default="val")
     parser.add_argument("--data_norm_type", type=str, default=None)
     parser.add_argument("--aerial_root", type=str, default="/root/autodl-tmp/traindata/Crossview_wai")
@@ -256,10 +295,78 @@ def parse_frame_indices(value):
     return [int(part) for part in parts]
 
 
+def is_raw_vggt_checkpoint(args):
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = Path(args.checkpoint_path)
+    return checkpoint_path.name == "model.pt" and "checkpoints/vggt" in str(
+        checkpoint_path
+    )
+
+
+def resolve_vggt_output_heads(args):
+    if args.model != "vggt":
+        return None, None
+
+    ordinary_head = args.vggt_ordinary_output_head
+    remote_head = args.vggt_remote_output_head
+
+    if args.vggt_export_mode == "mixed":
+        ordinary_head = ordinary_head or "depth"
+        remote_head = remote_head or "point"
+    elif args.vggt_export_mode == "depth_all":
+        ordinary_head = ordinary_head or "depth"
+        remote_head = remote_head or "depth"
+    elif args.vggt_export_mode == "point_all":
+        ordinary_head = ordinary_head or "point"
+        remote_head = remote_head or "point"
+    elif args.vggt_export_mode == "ordinary_point_remote_depth":
+        ordinary_head = ordinary_head or "point"
+        remote_head = remote_head or "depth"
+
+    return ordinary_head, remote_head
+
+
 def resolve_config_overrides(args):
     if args.config_overrides is not None:
-        return args.config_overrides
-    return list(DEFAULT_CONFIG_OVERRIDES[args.model])
+        overrides = list(args.config_overrides)
+    else:
+        overrides = list(DEFAULT_CONFIG_OVERRIDES[args.model])
+
+    if is_raw_vggt_checkpoint(args):
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=true",
+                f"model.model_config.custom_ckpt_path={args.checkpoint_path}",
+            ]
+        )
+
+    if args.vggt_joint_remote_export:
+        if args.model != "vggt":
+            raise ValueError("--vggt_joint_remote_export is only supported with --model vggt")
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=false",
+                "model.model_config.use_point_head_for_remote=true",
+            ]
+        )
+
+    ordinary_head, remote_head = resolve_vggt_output_heads(args)
+    if ordinary_head is not None:
+        overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
+    if remote_head is not None:
+        overrides.append(f"model.model_config.remote_output_head={remote_head}")
+    if args.model == "vggt" and args.vggt_use_remote_private_point_head:
+        overrides.extend(
+            [
+                "model.model_config.use_remote_private_point_head=true",
+                "model.model_config.output_point_head_for_consistency=true",
+            ]
+        )
+
+    return overrides
 
 
 def resolve_effective_model_name(args):
@@ -327,6 +434,11 @@ def initialize_model(args, device, config_overrides, effective_model_name):
     maybe_prepare_da3_pythonpath(effective_model_name)
 
     if args.checkpoint_path:
+        if is_raw_vggt_checkpoint(args):
+            print(
+                "Detected raw VGGT checkpoint; loading it through "
+                "model.model_config.custom_ckpt_path."
+            )
         local_config = build_local_config(args, config_overrides, effective_model_name)
         print(f"Initializing model from local config: {local_config}")
         model = initialize_mapanything_local(local_config, device)

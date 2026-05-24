@@ -16,3 +16,22 @@ disable_cudnn_benchmark: true
 batch_size: 1
 amp: 1
 amp_dtype: "bf16"
+
+# Model input compatibility with scripts/export_pointcloud_ply.py.
+# Existing Hydra usage with `model=...` remains supported. `model_input` can be
+# used as an explicit alias when a caller wants to keep the model config group
+# untouched and still select the export-style model name.
+model_input: null
+checkpoint_path: null
+config_path: "configs/train.yaml"
+config_json_path: null
+model_str: null
+config_overrides: null
+hf_model_name: null
+enable_clash_proxy: false
+strict: false
+vggt_joint_remote_export: false
+vggt_export_mode: null
+vggt_ordinary_output_head: null
+vggt_remote_output_head: null
+vggt_use_remote_private_point_head: false

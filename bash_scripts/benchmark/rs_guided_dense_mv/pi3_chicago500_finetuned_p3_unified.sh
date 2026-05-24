@@ -19,7 +19,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=1 python3 \
     dataset.num_workers=0 \
     batch_size=$BATCH_SIZE \
     model=pi3 \
-    model.pretrained="$CKPT_PATH" \
+    checkpoint_path="$CKPT_PATH" \
     hydra.run.dir="$OUTPUT_DIR" \
     dataset.vigor_chicago_wai.val.cities=[newyork] \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[newyork]

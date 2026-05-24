@@ -42,7 +42,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=${CUDA_DEVICE} python3 \
     dataset.vigor_chicago_wai.val.view_sampling_mode=${VIEW_SAMPLING_MODE} \
     batch_size=${BATCH_SIZE} \
     model=${MODEL_NAME} \
-    model.pretrained="${CKPT_PATH}" \
+    checkpoint_path="${CKPT_PATH}" \
     hydra.run.dir="${OUTPUT_DIR}" \
     dataset.vigor_chicago_wai.val.cities=[${CITY}] \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[${CITY}] \

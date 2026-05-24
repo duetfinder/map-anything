@@ -295,6 +295,106 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch
 --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/pi3/p3_pi3_modality_embedding_remote_head/checkpoint-best.pth
 ```
 
+#### VGGT 可视化导出
+
+原始 `VGGT` 默认权重：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model vggt \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/vggt_default
+```
+
+如果要显式使用本地原始 VGGT checkpoint，例如 `/root/autodl-tmp/outputs/checkpoints/vggt/model.pt`，直接传 `--checkpoint_path`。脚本会把它识别为 VGGT raw state dict，通过 `model.model_config.custom_ckpt_path` 加载，而不是当作 MapAnything training checkpoint：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt/model.pt \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/vggt_raw_model_pt
+```
+
+`P5B` VGGT RS-joint checkpoint，推荐用 mixed 模式：ordinary aerial views 走 camera+depth，remote view 走 VGGT `point_head`：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5b_vggt_joint_shared_all_loss_only/checkpoint-best.pth \
+    --vggt_joint_remote_export \
+    --vggt_export_mode mixed \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/vggt_p5b_mixed
+```
+
+`P5C` 在 P5B 的基础上启用 view type bias，需额外传 config override：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5c_vggt_joint_shared_all_viewtype/checkpoint-best.pth \
+    --vggt_joint_remote_export \
+    --vggt_export_mode mixed \
+    --config_overrides machine=aws model=vggt model.model_config.use_view_type_bias=true \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/vggt_p5c_mixed
+```
+
+`P5D` 使用 remote-private point head，需要同时启用 private head 和 consistency 输出配置：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+PYTHONPATH=. CUDA_VISIBLE_DEVICES=0 python scripts/run_rs_guided_inference_batch.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5d_vggt_remote_point_head_consistency/checkpoint-best.pth \
+    --vggt_joint_remote_export \
+    --vggt_use_remote_private_point_head \
+    --vggt_export_mode mixed \
+    --csv_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/scenes.csv \
+    --split test \
+    --cities newyork \
+    --provider Google_Satellite \
+    --output_root /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/rs_guided_vis/vggt_p5d_mixed
+```
+
+`--vggt_export_mode` 也可用于诊断：
+
+- `mixed`: ordinary 用 depth，remote 用 point，推荐看 P5B/P5C/P5D
+- `depth_all`: 所有 view 都用 camera+depth
+- `point_all`: 所有 view 都用 point_head
+- `ordinary_point_remote_depth`: ordinary 用 point，remote 用 depth
+
+#### VGGT rs_guided_dense_mv benchmark 脚本
+
+如果只跑 benchmark JSON，而不是导出 `scene_bundle.pt`，可以直接使用：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_unified.sh
+bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5b_unified.sh
+bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5c_unified.sh
+bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5d_unified.sh
+```
+
+这几个 benchmark 脚本现在也使用和 `scripts/export_pointcloud_ply.py` 一致的模型输入：`checkpoint_path=...`、`vggt_joint_remote_export=true`、`vggt_export_mode=mixed`，其中 P5C 会额外打开 `model.model_config.use_view_type_bias=true`，P5D 会额外打开 `vggt_use_remote_private_point_head=true`。
+
 ### 3. 打开 Rerun viewer
 
 单场景：
