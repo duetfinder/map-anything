@@ -583,16 +583,25 @@ def postprocess_model_outputs_for_inference(
                             normals, tol=edge_normal_threshold, mask=normals_mask
                         )
 
-                        # Compute depth-based edge mask
-                        depth_z = (
-                            processed_output["depth_z"][b].squeeze(-1).cpu().numpy()
-                        )
-                        depth_edges = depth_edge(
-                            depth_z, rtol=edge_depth_threshold, mask=batch_final_mask
-                        )
+                        if "depth_z" in processed_output:
+                            # Compute depth-based edge mask when camera-frame depth is available.
+                            depth_z = (
+                                processed_output["depth_z"][b]
+                                .squeeze(-1)
+                                .cpu()
+                                .numpy()
+                            )
+                            depth_edges = depth_edge(
+                                depth_z,
+                                rtol=edge_depth_threshold,
+                                mask=batch_final_mask,
+                            )
 
-                        # Combine both edge types
-                        edge_mask = ~(depth_edges & normal_edges)
+                            # Suppress only pixels flagged by both depth and normal edges.
+                            edge_mask = ~(depth_edges & normal_edges)
+                        else:
+                            # Point-head-only outputs may not include camera-frame depth.
+                            edge_mask = ~normal_edges
                         edge_masks.append(edge_mask)
                     else:
                         # No valid points, keep all as invalid
