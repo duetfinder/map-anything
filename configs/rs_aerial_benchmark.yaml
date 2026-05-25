@@ -35,3 +35,8 @@ vggt_export_mode: null
 vggt_ordinary_output_head: null
 vggt_remote_output_head: null
 vggt_use_remote_private_point_head: false
+
+# Extra controls for measuring whether the paired remote image carries
+# scene-specific useful information for aerial reconstruction.
+remote_control_modes: [same]
+blank_remote_value: 0.5

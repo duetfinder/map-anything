@@ -9,6 +9,9 @@ REMOTE_PROVIDER=${REMOTE_PROVIDER:-Google_Satellite}
 CITY=${CITY:-newyork}
 COVISIBILITY_THRES=${COVISIBILITY_THRES:-0.0}
 VIEW_SAMPLING_MODE=${VIEW_SAMPLING_MODE:-connected}
+REMOTE_OVERFIT_NUM_SETS=${REMOTE_OVERFIT_NUM_SETS:-null}
+REMOTE_CONTROL_MODES=${REMOTE_CONTROL_MODES:-[same]}
+BLANK_REMOTE_VALUE=${BLANK_REMOTE_VALUE:-0.5}
 CUDA_DEVICE=${CUDA_DEVICE:-0}
 
 if [ -z "${MODEL_NAME:-}" ]; then
@@ -38,6 +41,9 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=${CUDA_DEVICE} python3 \
     dataset.num_views=${NUM_VIEWS} \
     dataset.num_workers=0 \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.providers=[${REMOTE_PROVIDER}] \
+    dataset.vigor_chicago_rs_aerial_benchmark.remote.overfit_num_sets=${REMOTE_OVERFIT_NUM_SETS} \
+    remote_control_modes="${REMOTE_CONTROL_MODES}" \
+    blank_remote_value=${BLANK_REMOTE_VALUE} \
     dataset.vigor_chicago_wai.val.covisibility_thres=${COVISIBILITY_THRES} \
     dataset.vigor_chicago_wai.val.view_sampling_mode=${VIEW_SAMPLING_MODE} \
     batch_size=${BATCH_SIZE} \

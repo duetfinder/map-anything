@@ -41,6 +41,10 @@ class VGGTWrapper(torch.nn.Module):
         remote_output_head="auto",
         use_remote_private_point_head=False,
         output_point_head_for_consistency=False,
+        use_pre_aggregator_view_type_bias=False,
+        use_remote_to_aerial_gated_residual=False,
+        remote_to_aerial_residual_hidden_scale=0.25,
+        remote_to_aerial_gate_init=0.0,
     ):
         super().__init__()
         self.name = name
@@ -54,6 +58,10 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_output_head = remote_output_head
         self.use_remote_private_point_head = use_remote_private_point_head
         self.output_point_head_for_consistency = output_point_head_for_consistency
+        self.use_pre_aggregator_view_type_bias = use_pre_aggregator_view_type_bias
+        self.use_remote_to_aerial_gated_residual = use_remote_to_aerial_gated_residual
+        self.remote_to_aerial_residual_hidden_scale = remote_to_aerial_residual_hidden_scale
+        self.remote_to_aerial_gate_init = remote_to_aerial_gate_init
         self.embed_dim = 1024
 
         if load_pretrained_weights:
@@ -102,6 +110,23 @@ class VGGTWrapper(torch.nn.Module):
             self.aerial_view_type_embedding = torch.nn.Parameter(torch.zeros(token_dim))
             self.remote_view_type_embedding = torch.nn.Parameter(torch.zeros(token_dim))
 
+        if self.use_pre_aggregator_view_type_bias:
+            self.pre_aggregator_view_type_embedding = torch.nn.Embedding(2, self.embed_dim)
+            torch.nn.init.zeros_(self.pre_aggregator_view_type_embedding.weight)
+
+        if self.use_remote_to_aerial_gated_residual:
+            token_dim = 2 * self.embed_dim
+            hidden_dim = max(1, int(token_dim * remote_to_aerial_residual_hidden_scale))
+            self.remote_to_aerial_residual = torch.nn.Sequential(
+                torch.nn.LayerNorm(token_dim),
+                torch.nn.Linear(token_dim, hidden_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_dim, token_dim),
+            )
+            self.remote_to_aerial_gate = torch.nn.Parameter(
+                torch.tensor(float(remote_to_aerial_gate_init))
+            )
+
         if self.use_remote_private_point_head:
             self.remote_point_head = deepcopy(self.model.point_head)
 
@@ -132,14 +157,26 @@ class VGGTWrapper(torch.nn.Module):
             instance = instance[0]
         return instance == self.remote_instance_value
 
+    def _view_type_ids(self, views, device):
+        return torch.tensor(
+            [1 if self._is_remote_view(view) else 0 for view in views],
+            device=device,
+            dtype=torch.long,
+        )
+
+    def _remote_view_mask(self, views, device):
+        return torch.tensor(
+            [self._is_remote_view(view) for view in views],
+            device=device,
+            dtype=torch.bool,
+        )
+
     def _apply_view_type_bias(self, aggregated_tokens_list, views):
         if not self.use_view_type_bias:
             return aggregated_tokens_list
 
-        remote_mask = torch.tensor(
-            [self._is_remote_view(view) for view in views],
-            device=aggregated_tokens_list[0].device,
-            dtype=torch.bool,
+        remote_mask = self._remote_view_mask(
+            views, device=aggregated_tokens_list[0].device
         )
         if not bool(remote_mask.any()):
             return [
@@ -153,6 +190,40 @@ class VGGTWrapper(torch.nn.Module):
             self.aerial_view_type_embedding.view(1, 1, 1, -1),
         )
         return [tokens + type_bias for tokens in aggregated_tokens_list]
+
+    def _apply_remote_to_aerial_gated_residual(self, aggregated_tokens_list, views):
+        if not self.use_remote_to_aerial_gated_residual:
+            return aggregated_tokens_list
+
+        remote_mask = self._remote_view_mask(
+            views, device=aggregated_tokens_list[0].device
+        )
+        if not bool(remote_mask.any()) or bool(remote_mask.all()):
+            return aggregated_tokens_list
+
+        aerial_mask = ~remote_mask
+        patch_start_idx = getattr(self.model.aggregator, "patch_start_idx", 0)
+        updated_tokens_list = []
+        for tokens in aggregated_tokens_list:
+            if tokens.shape[2] <= patch_start_idx:
+                updated_tokens_list.append(tokens)
+                continue
+
+            remote_patch_tokens = tokens[:, remote_mask, patch_start_idx:, :]
+            remote_context = remote_patch_tokens.mean(dim=(1, 2))
+            remote_delta = self.remote_to_aerial_residual(remote_context)
+            remote_delta = remote_delta.view(tokens.shape[0], 1, 1, tokens.shape[-1])
+            gate = self.remote_to_aerial_gate.to(
+                device=tokens.device, dtype=tokens.dtype
+            )
+
+            updated_tokens = tokens.clone()
+            updated_tokens[:, aerial_mask, patch_start_idx:, :] = (
+                updated_tokens[:, aerial_mask, patch_start_idx:, :] + gate * remote_delta
+            )
+            updated_tokens_list.append(updated_tokens)
+
+        return updated_tokens_list
 
     def forward(self, views):
         """
@@ -187,7 +258,18 @@ class VGGTWrapper(torch.nn.Module):
 
         # Run the VGGT aggregator
         with torch.autocast("cuda", dtype=self.dtype):
-            aggregated_tokens_list, ps_idx = self.model.aggregator(images)
+            aggregator_kwargs = {}
+            if self.use_pre_aggregator_view_type_bias:
+                aggregator_kwargs = {
+                    "view_type_ids": self._view_type_ids(views, images.device),
+                    "view_type_embedding": self.pre_aggregator_view_type_embedding.weight,
+                }
+            aggregated_tokens_list, ps_idx = self.model.aggregator(
+                images, **aggregator_kwargs
+            )
+            aggregated_tokens_list = self._apply_remote_to_aerial_gated_residual(
+                aggregated_tokens_list, views
+            )
             aggregated_tokens_list = self._apply_view_type_bias(
                 aggregated_tokens_list, views
             )

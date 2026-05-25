@@ -23,6 +23,12 @@ model_config:
   use_remote_private_point_head: false
   # P5d diagnostics/training: expose native point_head outputs for ordinary views.
   output_point_head_for_consistency: false
+  # P5f-lite: inject view-type signal before VGGT's aggregator patch tokens.
+  use_pre_aggregator_view_type_bias: false
+  # P5f-lite: add a tiny gated remote-context residual to ordinary patch tokens.
+  use_remote_to_aerial_gated_residual: false
+  remote_to_aerial_residual_hidden_scale: 0.25
+  remote_to_aerial_gate_init: 0.0
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

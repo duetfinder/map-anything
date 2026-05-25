@@ -712,6 +712,59 @@ def diff_metric_dict(new_metrics, baseline_metrics):
     return diff
 
 
+def resolve_remote_control_modes(args):
+    modes = cfg_get(args, "remote_control_modes", ["same"])
+    if modes is None:
+        return []
+    if isinstance(modes, str):
+        modes = modes.strip()
+        if not modes or modes.lower() == "none":
+            return []
+        if modes.startswith("[") and modes.endswith("]"):
+            inner = modes[1:-1].strip()
+            modes = [] if not inner else [mode.strip().strip("'\"") for mode in inner.split(",")]
+        else:
+            modes = [mode.strip() for mode in modes.split(",")]
+
+    valid_modes = {"same", "blank", "shuffled"}
+    resolved_modes = []
+    for mode in modes:
+        mode = str(mode).strip()
+        if not mode:
+            continue
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Unsupported remote control mode '{mode}'. Supported: {sorted(valid_modes)}"
+            )
+        if mode not in resolved_modes:
+            resolved_modes.append(mode)
+    return resolved_modes
+
+
+def make_remote_view(remote_image, args, batch_size):
+    return {
+        "img": remote_image,
+        "data_norm_type": [args.model.data_norm_type] * batch_size,
+        "instance": "remote",
+    }
+
+
+def build_blank_remote_image(remote_image, blank_value):
+    return torch.full_like(remote_image, fill_value=float(blank_value))
+
+
+def choose_shuffled_remote_sample(scene_name, remote_scene_names, remote_samples_by_scene):
+    if len(remote_scene_names) <= 1:
+        return scene_name, remote_samples_by_scene[scene_name]
+
+    scene_idx = remote_scene_names.index(scene_name) if scene_name in remote_scene_names else -1
+    for offset in range(1, len(remote_scene_names) + 1):
+        candidate_scene = remote_scene_names[(scene_idx + offset) % len(remote_scene_names)]
+        if candidate_scene != scene_name:
+            return candidate_scene, remote_samples_by_scene[candidate_scene]
+    return scene_name, remote_samples_by_scene[scene_name]
+
+
 @torch.no_grad()
 def benchmark(args):
     print("Output Directory: " + args.output_dir)
@@ -747,6 +800,9 @@ def benchmark(args):
         remote_loader.dataset[idx]["scene_name"]: remote_loader.dataset[idx]
         for idx in range(len(remote_loader.dataset))
     }
+    remote_scene_names = sorted(remote_samples_by_scene.keys())
+    remote_control_modes = resolve_remote_control_modes(args)
+    blank_remote_value = float(cfg_get(args, "blank_remote_value", 0.5))
 
     model = initialize_benchmark_model(args, device)
     model.to(device)
@@ -756,6 +812,9 @@ def benchmark(args):
     joint_per_scene = {}
     improvement_aerial = {}
     improvement_rs = {}
+    remote_control_per_scene = {mode: {} for mode in remote_control_modes}
+    remote_control_improvement_aerial = {mode: {} for mode in remote_control_modes}
+    remote_control_sources = {}
 
     for batch in aerial_loader:
         scene_names = list(batch[0]["label"])
@@ -794,21 +853,57 @@ def benchmark(args):
         remote_image = torch.stack(
             [remote_sample["remote_image"] for remote_sample in remote_samples], dim=0
         ).to(device, non_blocking=True)
-        remote_view = {
-            "img": remote_image,
-            "data_norm_type": [args.model.data_norm_type] * len(remote_samples),
-            "instance": "remote",
+        remote_view = make_remote_view(remote_image, args, len(remote_samples))
+
+        control_remote_views = {"same": remote_view}
+        control_remote_source_scenes = {
+            scene_name: {"same": scene_name} for scene_name in scene_names
         }
+        if "blank" in remote_control_modes:
+            blank_remote_image = build_blank_remote_image(remote_image, blank_remote_value)
+            control_remote_views["blank"] = make_remote_view(
+                blank_remote_image, args, len(remote_samples)
+            )
+            for scene_name in scene_names:
+                control_remote_source_scenes[scene_name]["blank"] = "blank"
+        if "shuffled" in remote_control_modes:
+            shuffled_samples = []
+            for scene_name in scene_names:
+                shuffled_scene, shuffled_sample = choose_shuffled_remote_sample(
+                    scene_name, remote_scene_names, remote_samples_by_scene
+                )
+                shuffled_samples.append(shuffled_sample)
+                control_remote_source_scenes[scene_name]["shuffled"] = shuffled_scene
+            shuffled_remote_image = torch.stack(
+                [sample["remote_image"] for sample in shuffled_samples], dim=0
+            ).to(device, non_blocking=True)
+            control_remote_views["shuffled"] = make_remote_view(
+                shuffled_remote_image, args, len(shuffled_samples)
+            )
 
         with torch.autocast("cuda", enabled=bool(args.amp), dtype=amp_dtype):
             aerial_preds = model(batch)
             rs_preds = model([remote_view])
             joint_preds = model(batch + [remote_view])
+            control_joint_preds = {"same": joint_preds}
+            for control_mode in remote_control_modes:
+                if control_mode == "same":
+                    continue
+                control_joint_preds[control_mode] = model(
+                    batch + [control_remote_views[control_mode]]
+                )
 
         aerial_metrics_by_scene = compute_aerial_scene_metrics(batch, aerial_preds)
         joint_aerial_metrics_by_scene = compute_aerial_scene_metrics(
             batch, joint_preds[: len(batch)]
         )
+        control_aerial_metrics_by_scene = {"same": joint_aerial_metrics_by_scene}
+        for control_mode, control_preds in control_joint_preds.items():
+            if control_mode == "same":
+                continue
+            control_aerial_metrics_by_scene[control_mode] = compute_aerial_scene_metrics(
+                batch, control_preds[: len(batch)]
+            )
         rs_supports_metric_outputs = model_supports_metric_outputs(rs_preds)
         joint_supports_metric_outputs = model_supports_metric_outputs(joint_preds)
 
@@ -865,6 +960,13 @@ def benchmark(args):
             }
             improvement_aerial[scene] = diff_metric_dict(joint_aerial_metrics, aerial_metrics)
             improvement_rs[scene] = diff_metric_dict(joint_rs_metrics, rs_metrics)
+            remote_control_sources[scene] = control_remote_source_scenes[scene]
+            for control_mode in remote_control_modes:
+                control_aerial_metrics = control_aerial_metrics_by_scene[control_mode][scene]
+                remote_control_per_scene[control_mode][scene] = control_aerial_metrics
+                remote_control_improvement_aerial[control_mode][scene] = diff_metric_dict(
+                    control_aerial_metrics, aerial_metrics
+                )
 
     paired_scenes = sorted(set(aerial_per_scene.keys()) & set(rs_per_scene.keys()) & set(joint_per_scene.keys()))
 
@@ -877,6 +979,15 @@ def benchmark(args):
             "improvement": {
                 "aerial_vs_aerial_only": improvement_aerial[scene],
                 "rs_vs_rs_only": improvement_rs[scene],
+            },
+            "remote_controls": {
+                mode: {
+                    "remote_source_scene": remote_control_sources.get(scene, {}).get(mode),
+                    "joint_aerial": remote_control_per_scene[mode][scene],
+                    "aerial_vs_aerial_only": remote_control_improvement_aerial[mode][scene],
+                }
+                for mode in remote_control_modes
+                if scene in remote_control_per_scene[mode]
             },
         }
 
@@ -892,6 +1003,8 @@ def benchmark(args):
             "joint_metric_names": [
                 "joint_global_pointmaps_abs_rel",
             ],
+            "remote_control_modes": remote_control_modes,
+            "blank_remote_value": blank_remote_value,
         },
         "aerial_only": {
             "per_scene": {scene: aerial_per_scene[scene] for scene in paired_scenes},
@@ -925,6 +1038,42 @@ def benchmark(args):
                 ),
             },
         },
+        "remote_controls": {
+            "joint_aerial": {
+                mode: {
+                    "per_scene": {
+                        scene: remote_control_per_scene[mode][scene]
+                        for scene in paired_scenes
+                        if scene in remote_control_per_scene[mode]
+                    },
+                    "average": aggregate_scene_metrics(
+                        {
+                            scene: remote_control_per_scene[mode][scene]
+                            for scene in paired_scenes
+                            if scene in remote_control_per_scene[mode]
+                        }
+                    ),
+                }
+                for mode in remote_control_modes
+            },
+            "aerial_vs_aerial_only": {
+                mode: {
+                    "per_scene": {
+                        scene: remote_control_improvement_aerial[mode][scene]
+                        for scene in paired_scenes
+                        if scene in remote_control_improvement_aerial[mode]
+                    },
+                    "average": aggregate_scene_metrics(
+                        {
+                            scene: remote_control_improvement_aerial[mode][scene]
+                            for scene in paired_scenes
+                            if scene in remote_control_improvement_aerial[mode]
+                        }
+                    ),
+                }
+                for mode in remote_control_modes
+            },
+        },
         "per_scene_results": per_scene_results,
     }
 
@@ -949,6 +1098,17 @@ def benchmark(args):
     print("Improvement over rs-only:")
     for metric_name, metric_value in result["improvement"]["rs_vs_rs_only"]["average"].items():
         print(f"{metric_name}: {metric_value}")
+    if remote_control_modes:
+        print("Remote-control joint aerial averages:")
+        for control_mode, control_result in result["remote_controls"]["joint_aerial"].items():
+            print(f"[{control_mode}]")
+            for metric_name, metric_value in control_result["average"].items():
+                print(f"{metric_name}: {metric_value}")
+        print("Remote-control improvement over aerial-only:")
+        for control_mode, control_result in result["remote_controls"]["aerial_vs_aerial_only"].items():
+            print(f"[{control_mode}]")
+            for metric_name, metric_value in control_result["average"].items():
+                print(f"{metric_name}: {metric_value}")
     print("Benchmark metadata:")
     print(json.dumps(result["metadata"], indent=4))
 

@@ -229,11 +229,15 @@ class Aggregator(nn.Module):
     def forward(
         self,
         images: torch.Tensor,
+        view_type_ids: torch.Tensor = None,
+        view_type_embedding: torch.Tensor = None,
     ) -> Tuple[List[torch.Tensor], int]:
         """
         Args:
             images (torch.Tensor): Input images with shape [B, S, 3, H, W], in range [0, 1].
                 B: batch size, S: sequence length, 3: RGB channels, H: height, W: width
+            view_type_ids (torch.Tensor, optional): Integer modality ids with shape [S] or [B, S].
+            view_type_embedding (torch.Tensor, optional): Embedding table with shape [num_types, C].
 
         Returns:
             (list[torch.Tensor], int):
@@ -256,6 +260,22 @@ class Aggregator(nn.Module):
             patch_tokens = patch_tokens["x_norm_patchtokens"]
 
         _, P, C = patch_tokens.shape
+
+        if view_type_ids is not None or view_type_embedding is not None:
+            if view_type_ids is None or view_type_embedding is None:
+                raise ValueError(
+                    "view_type_ids and view_type_embedding must be provided together"
+                )
+            if view_type_ids.dim() == 1:
+                view_type_ids = view_type_ids.view(1, S).expand(B, S)
+            elif view_type_ids.shape != (B, S):
+                raise ValueError(
+                    f"Expected view_type_ids shape [S] or [B, S], got {tuple(view_type_ids.shape)}"
+                )
+            view_type_ids = view_type_ids.to(device=patch_tokens.device, dtype=torch.long)
+            token_bias = view_type_embedding.to(dtype=patch_tokens.dtype)[view_type_ids]
+            token_bias = token_bias.reshape(B * S, 1, C)
+            patch_tokens = patch_tokens + token_bias
 
         # Expand camera and register tokens to match batch size and sequence length
         camera_token = slice_expand_and_flatten(self.camera_token, B, S)
