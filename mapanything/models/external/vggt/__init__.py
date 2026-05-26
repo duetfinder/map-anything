@@ -45,6 +45,12 @@ class VGGTWrapper(torch.nn.Module):
         use_remote_to_aerial_gated_residual=False,
         remote_to_aerial_residual_hidden_scale=0.25,
         remote_to_aerial_gate_init=0.0,
+        use_split_remote_aggregator=False,
+        remote_to_aerial_late_fusion_type="none",
+        remote_to_aerial_late_fusion_hidden_scale=0.25,
+        remote_to_aerial_late_fusion_gate_init=0.0,
+        remote_to_aerial_cross_attention_heads=8,
+        remote_to_aerial_max_remote_tokens=256,
     ):
         super().__init__()
         self.name = name
@@ -62,6 +68,12 @@ class VGGTWrapper(torch.nn.Module):
         self.use_remote_to_aerial_gated_residual = use_remote_to_aerial_gated_residual
         self.remote_to_aerial_residual_hidden_scale = remote_to_aerial_residual_hidden_scale
         self.remote_to_aerial_gate_init = remote_to_aerial_gate_init
+        self.use_split_remote_aggregator = use_split_remote_aggregator
+        self.remote_to_aerial_late_fusion_type = remote_to_aerial_late_fusion_type
+        self.remote_to_aerial_late_fusion_hidden_scale = remote_to_aerial_late_fusion_hidden_scale
+        self.remote_to_aerial_late_fusion_gate_init = remote_to_aerial_late_fusion_gate_init
+        self.remote_to_aerial_cross_attention_heads = remote_to_aerial_cross_attention_heads
+        self.remote_to_aerial_max_remote_tokens = remote_to_aerial_max_remote_tokens
         self.embed_dim = 1024
 
         if load_pretrained_weights:
@@ -125,6 +137,35 @@ class VGGTWrapper(torch.nn.Module):
             )
             self.remote_to_aerial_gate = torch.nn.Parameter(
                 torch.tensor(float(remote_to_aerial_gate_init))
+            )
+
+        token_dim = 2 * self.embed_dim
+        if self.remote_to_aerial_late_fusion_type not in {"none", "film", "cross_attention"}:
+            raise ValueError(
+                "remote_to_aerial_late_fusion_type must be one of "
+                "{'none', 'film', 'cross_attention'}"
+            )
+        if self.remote_to_aerial_late_fusion_type == "film":
+            hidden_dim = max(1, int(token_dim * remote_to_aerial_late_fusion_hidden_scale))
+            self.remote_to_aerial_late_film = torch.nn.Sequential(
+                torch.nn.LayerNorm(token_dim),
+                torch.nn.Linear(token_dim, hidden_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_dim, 2 * token_dim),
+            )
+            self.remote_to_aerial_late_gate = torch.nn.Parameter(
+                torch.tensor(float(remote_to_aerial_late_fusion_gate_init))
+            )
+        elif self.remote_to_aerial_late_fusion_type == "cross_attention":
+            self.remote_to_aerial_late_query_norm = torch.nn.LayerNorm(token_dim)
+            self.remote_to_aerial_late_key_value_norm = torch.nn.LayerNorm(token_dim)
+            self.remote_to_aerial_late_cross_attention = torch.nn.MultiheadAttention(
+                embed_dim=token_dim,
+                num_heads=remote_to_aerial_cross_attention_heads,
+                batch_first=True,
+            )
+            self.remote_to_aerial_late_gate = torch.nn.Parameter(
+                torch.tensor(float(remote_to_aerial_late_fusion_gate_init))
             )
 
         if self.use_remote_private_point_head:
@@ -225,6 +266,126 @@ class VGGTWrapper(torch.nn.Module):
 
         return updated_tokens_list
 
+    def _aggregator_kwargs(self, views, images):
+        if not self.use_pre_aggregator_view_type_bias:
+            return {}
+        return {
+            "view_type_ids": self._view_type_ids(views, images.device),
+            "view_type_embedding": self.pre_aggregator_view_type_embedding.weight,
+        }
+
+    def _run_aggregator(self, images, views):
+        return self.model.aggregator(images, **self._aggregator_kwargs(views, images))
+
+    def _combine_split_aggregated_tokens(
+        self, aerial_tokens_list, remote_tokens_list, remote_mask, num_views
+    ):
+        combined_tokens_list = []
+        aerial_mask = ~remote_mask
+        for aerial_tokens, remote_tokens in zip(aerial_tokens_list, remote_tokens_list):
+            combined_tokens = aerial_tokens.new_empty(
+                aerial_tokens.shape[0],
+                num_views,
+                aerial_tokens.shape[2],
+                aerial_tokens.shape[3],
+            )
+            combined_tokens[:, aerial_mask, :, :] = aerial_tokens
+            combined_tokens[:, remote_mask, :, :] = remote_tokens
+            combined_tokens_list.append(combined_tokens)
+        return combined_tokens_list
+
+    def _aggregate_views(self, images, views):
+        remote_mask = self._remote_view_mask(views, device=images.device)
+        has_remote = bool(remote_mask.any())
+        has_aerial = bool((~remote_mask).any())
+        if not self.use_split_remote_aggregator or not (has_remote and has_aerial):
+            return self._run_aggregator(images, views)
+
+        aerial_mask = ~remote_mask
+        aerial_images = images[:, aerial_mask, ...]
+        remote_images = images[:, remote_mask, ...]
+        aerial_views = [view for view in views if not self._is_remote_view(view)]
+        remote_views = [view for view in views if self._is_remote_view(view)]
+
+        aerial_tokens_list, ps_idx = self._run_aggregator(aerial_images, aerial_views)
+        remote_tokens_list, remote_ps_idx = self._run_aggregator(remote_images, remote_views)
+        if ps_idx != remote_ps_idx:
+            raise RuntimeError(
+                f"Split VGGT aggregators returned different patch starts: {ps_idx} vs {remote_ps_idx}"
+            )
+        return (
+            self._combine_split_aggregated_tokens(
+                aerial_tokens_list, remote_tokens_list, remote_mask, len(views)
+            ),
+            ps_idx,
+        )
+
+    def _downsample_remote_tokens(self, remote_tokens):
+        max_tokens = int(self.remote_to_aerial_max_remote_tokens or 0)
+        if max_tokens <= 0 or remote_tokens.shape[1] <= max_tokens:
+            return remote_tokens
+        stride = max(1, (remote_tokens.shape[1] + max_tokens - 1) // max_tokens)
+        return remote_tokens[:, ::stride, :][:, :max_tokens, :]
+
+    def _apply_late_remote_to_aerial_fusion(self, aggregated_tokens_list, views):
+        if self.remote_to_aerial_late_fusion_type == "none":
+            return aggregated_tokens_list
+
+        remote_mask = self._remote_view_mask(
+            views, device=aggregated_tokens_list[0].device
+        )
+        if not bool(remote_mask.any()) or bool(remote_mask.all()):
+            return aggregated_tokens_list
+
+        aerial_mask = ~remote_mask
+        patch_start_idx = getattr(self.model.aggregator, "patch_start_idx", 0)
+        updated_tokens_list = []
+        for tokens in aggregated_tokens_list:
+            if tokens.shape[2] <= patch_start_idx:
+                updated_tokens_list.append(tokens)
+                continue
+
+            aerial_patch_tokens = tokens[:, aerial_mask, patch_start_idx:, :]
+            remote_patch_tokens = tokens[:, remote_mask, patch_start_idx:, :]
+            batch_size, num_aerial, num_patches, token_dim = aerial_patch_tokens.shape
+            remote_context_tokens = remote_patch_tokens.reshape(batch_size, -1, token_dim)
+
+            if self.remote_to_aerial_late_fusion_type == "film":
+                remote_context = remote_context_tokens.mean(dim=1)
+                scale_bias = self.remote_to_aerial_late_film(remote_context)
+                scale, bias = torch.chunk(scale_bias, chunks=2, dim=-1)
+                delta = (
+                    aerial_patch_tokens * scale.view(batch_size, 1, 1, token_dim)
+                    + bias.view(batch_size, 1, 1, token_dim)
+                )
+            elif self.remote_to_aerial_late_fusion_type == "cross_attention":
+                query_tokens = aerial_patch_tokens.reshape(batch_size, -1, token_dim)
+                key_value_tokens = self._downsample_remote_tokens(remote_context_tokens)
+                query_tokens = self.remote_to_aerial_late_query_norm(query_tokens)
+                key_value_tokens = self.remote_to_aerial_late_key_value_norm(key_value_tokens)
+                delta, _ = self.remote_to_aerial_late_cross_attention(
+                    query_tokens,
+                    key_value_tokens,
+                    key_value_tokens,
+                    need_weights=False,
+                )
+                delta = delta.reshape(batch_size, num_aerial, num_patches, token_dim)
+            else:
+                raise RuntimeError(
+                    f"Unsupported late fusion type: {self.remote_to_aerial_late_fusion_type}"
+                )
+
+            gate = self.remote_to_aerial_late_gate.to(
+                device=tokens.device, dtype=tokens.dtype
+            )
+            updated_tokens = tokens.clone()
+            updated_tokens[:, aerial_mask, patch_start_idx:, :] = (
+                updated_tokens[:, aerial_mask, patch_start_idx:, :] + gate * delta
+            )
+            updated_tokens_list.append(updated_tokens)
+
+        return updated_tokens_list
+
     def forward(self, views):
         """
         Forward pass wrapper for VGGT
@@ -258,14 +419,9 @@ class VGGTWrapper(torch.nn.Module):
 
         # Run the VGGT aggregator
         with torch.autocast("cuda", dtype=self.dtype):
-            aggregator_kwargs = {}
-            if self.use_pre_aggregator_view_type_bias:
-                aggregator_kwargs = {
-                    "view_type_ids": self._view_type_ids(views, images.device),
-                    "view_type_embedding": self.pre_aggregator_view_type_embedding.weight,
-                }
-            aggregated_tokens_list, ps_idx = self.model.aggregator(
-                images, **aggregator_kwargs
+            aggregated_tokens_list, ps_idx = self._aggregate_views(images, views)
+            aggregated_tokens_list = self._apply_late_remote_to_aerial_fusion(
+                aggregated_tokens_list, views
             )
             aggregated_tokens_list = self._apply_remote_to_aerial_gated_residual(
                 aggregated_tokens_list, views

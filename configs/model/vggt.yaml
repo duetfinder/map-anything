@@ -29,6 +29,14 @@ model_config:
   use_remote_to_aerial_gated_residual: false
   remote_to_aerial_residual_hidden_scale: 0.25
   remote_to_aerial_gate_init: 0.0
+  # P5g: encode ordinary and remote views separately, then fuse remote late.
+  use_split_remote_aggregator: false
+  # One of: none, film, cross_attention.
+  remote_to_aerial_late_fusion_type: "none"
+  remote_to_aerial_late_fusion_hidden_scale: 0.25
+  remote_to_aerial_late_fusion_gate_init: 0.0
+  remote_to_aerial_cross_attention_heads: 8
+  remote_to_aerial_max_remote_tokens: 256
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

@@ -161,8 +161,21 @@ python scripts/export_pointcloud_ply.py \
     --vggt_joint_remote_export \
     --vggt_ordinary_output_head depth \
     --vggt_remote_output_head point \
-    --vggt_use_remote_private_point_head
+    --vggt_use_remote_private_point_head \
     --remote_view_names image.png
+
+# p5f-lite: early view-type embedding + remote-to-aerial gated residual.
+# If --export_remote_control_modes is set, one PLY is written per mode with
+# suffixes such as *_same.ply and *_blank.ply. shuffled also requires
+# --shuffled_remote_image_path.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5f_vggt_lite_early_bias_gated_residual/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p5f_lite_mixed \
+    --vggt_p5f_lite_export \
+    --remote_view_names image.png \
+    --export_remote_control_modes same blank
 """
 
 import argparse
@@ -385,6 +398,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--vggt_p5f_lite_export",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the p5f-lite VGGT export preset: mixed ordinary/remote heads, "
+            "remote private point head, pre-aggregator view-type embedding, and "
+            "remote-to-aerial gated residual. This is also auto-enabled when "
+            "checkpoint_path contains p5f_vggt_lite."
+        ),
+    )
+    parser.add_argument(
         "--force_remote_instance",
         action="store_true",
         default=False,
@@ -517,6 +541,30 @@ def parse_args() -> argparse.Namespace:
         default=0.01,
         help="Adaptive voxel size fraction used when voxel_size is not set.",
     )
+    parser.add_argument(
+        "--export_remote_control_modes",
+        nargs="*",
+        choices=["same", "blank", "shuffled"],
+        default=None,
+        help=(
+            "Optional remote-control visualization modes. same uses the marked "
+            "remote image, blank replaces marked remote views with a constant image, "
+            "and shuffled replaces them with --shuffled_remote_image_path. When set, "
+            "one PLY is exported per mode."
+        ),
+    )
+    parser.add_argument(
+        "--blank_remote_value",
+        type=float,
+        default=0.5,
+        help="Pixel value used for blank remote-control exports after identity conversion.",
+    )
+    parser.add_argument(
+        "--shuffled_remote_image_path",
+        type=str,
+        default=None,
+        help="Image path used to replace marked remote views in shuffled control exports.",
+    )
     return parser.parse_args()
 
 
@@ -545,6 +593,19 @@ def is_raw_vggt_checkpoint(args: argparse.Namespace) -> bool:
     )
 
 
+def is_p5f_lite_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = str(args.checkpoint_path).lower()
+    return "p5f_vggt_lite" in checkpoint_path
+
+
+def use_p5f_lite_export(args: argparse.Namespace) -> bool:
+    return args.model == "vggt" and (
+        args.vggt_p5f_lite_export or is_p5f_lite_checkpoint(args)
+    )
+
+
 def resolve_vggt_output_heads(args: argparse.Namespace):
     if args.model != "vggt":
         return None, None
@@ -552,7 +613,7 @@ def resolve_vggt_output_heads(args: argparse.Namespace):
     ordinary_head = args.vggt_ordinary_output_head
     remote_head = args.vggt_remote_output_head
 
-    if args.vggt_export_mode == "mixed":
+    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args):
         ordinary_head = ordinary_head or "depth"
         remote_head = remote_head or "point"
     elif args.vggt_export_mode == "depth_all":
@@ -583,9 +644,10 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
-    if args.vggt_joint_remote_export:
+    use_vggt_joint_remote_export = args.vggt_joint_remote_export or use_p5f_lite_export(args)
+    if use_vggt_joint_remote_export:
         if args.model != "vggt":
-            raise ValueError("--vggt_joint_remote_export is only supported with --model vggt")
+            raise ValueError("VGGT joint remote export presets are only supported with --model vggt")
         overrides.extend(
             [
                 "model.model_config.load_pretrained_weights=false",
@@ -594,12 +656,24 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
+    if use_p5f_lite_export(args):
+        overrides.extend(
+            [
+                "model.model_config.use_pre_aggregator_view_type_bias=true",
+                "model.model_config.use_remote_to_aerial_gated_residual=true",
+                "model.model_config.remote_to_aerial_residual_hidden_scale=0.25",
+                "model.model_config.remote_to_aerial_gate_init=0.0",
+            ]
+        )
+
     ordinary_head, remote_head = resolve_vggt_output_heads(args)
     if ordinary_head is not None:
         overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
     if remote_head is not None:
         overrides.append(f"model.model_config.remote_output_head={remote_head}")
-    if args.model == "vggt" and args.vggt_use_remote_private_point_head:
+    if args.model == "vggt" and (
+        args.vggt_use_remote_private_point_head or use_p5f_lite_export(args)
+    ):
         overrides.extend(
             [
                 "model.model_config.use_remote_private_point_head=true",
@@ -803,6 +877,8 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     use_joint_remote_logic = (
         args.force_remote_instance
         or args.vggt_joint_remote_export
+        or args.vggt_p5f_lite_export
+        or is_p5f_lite_checkpoint(args)
         or args.model == "mapanything_rs_joint"
         or bool(args.remote_view_indices)
         or bool(args.remote_view_names)
@@ -814,7 +890,9 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     remote_names = {name for name in (args.remote_view_names or [])}
 
     if args.force_remote_instance or (
-        args.vggt_joint_remote_export and not remote_indices and not remote_names
+        (args.vggt_joint_remote_export or use_p5f_lite_export(args))
+        and not remote_indices
+        and not remote_names
     ):
         remote_indices = set(range(len(views)))
 
@@ -839,6 +917,96 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         print("No views were marked as remote; export will use ordinary view logic.")
 
     return forced_views
+
+
+def is_remote_view(view) -> bool:
+    instance = view.get("instance")
+    if isinstance(instance, (list, tuple)) and len(instance) > 0:
+        instance = instance[0]
+    return instance == REMOTE_INSTANCE_VALUE
+
+
+def get_remote_view_indices(views):
+    return [idx for idx, view in enumerate(views) if is_remote_view(view)]
+
+
+def copy_views(views):
+    return [dict(view) for view in views]
+
+
+def make_blank_remote_control_views(views, remote_indices, blank_value: float):
+    control_views = copy_views(views)
+    for idx in remote_indices:
+        control_views[idx] = dict(control_views[idx])
+        control_views[idx]["img"] = torch.full_like(
+            control_views[idx]["img"], fill_value=float(blank_value)
+        )
+        control_views[idx]["source_name"] = f"blank::{control_views[idx].get('source_name', idx)}"
+    return control_views
+
+
+def load_shuffled_remote_view_like(args, remote_view, model_name: str):
+    if args.shuffled_remote_image_path is None:
+        raise ValueError(
+            "--shuffled_remote_image_path is required when exporting shuffled remote controls"
+        )
+    if not Path(args.shuffled_remote_image_path).exists():
+        raise FileNotFoundError(
+            f"shuffled remote image not found: {args.shuffled_remote_image_path}"
+        )
+
+    _, _, height, width = remote_view["img"].shape
+    loaded = load_images(
+        [args.shuffled_remote_image_path],
+        resize_mode="fixed_size",
+        size=(width, height),
+        resolution_set=args.resolution_set,
+    )
+    loaded = convert_views_to_identity_if_needed(loaded, model_name)
+    replacement = loaded[0]
+    replacement["source_name"] = Path(args.shuffled_remote_image_path).name
+    return replacement
+
+
+def make_shuffled_remote_control_views(views, remote_indices, args, model_name: str):
+    control_views = copy_views(views)
+    for idx in remote_indices:
+        replacement = load_shuffled_remote_view_like(args, control_views[idx], model_name)
+        control_view = dict(control_views[idx])
+        control_view["img"] = replacement["img"]
+        control_view["true_shape"] = replacement.get("true_shape", control_view.get("true_shape"))
+        control_view["source_name"] = f"shuffled::{replacement.get('source_name', idx)}"
+        control_views[idx] = control_view
+    return control_views
+
+
+def build_remote_control_view_variants(views, args: argparse.Namespace, model_name: str):
+    modes = args.export_remote_control_modes
+    if not modes:
+        return [(None, views)]
+
+    remote_indices = get_remote_view_indices(views)
+    if not remote_indices:
+        raise ValueError(
+            "--export_remote_control_modes requires at least one marked remote view. "
+            "Use --remote_view_names, --remote_view_indices, or --force_remote_instance."
+        )
+
+    variants = []
+    for mode in modes:
+        if mode == "same":
+            variants.append((mode, views))
+        elif mode == "blank":
+            variants.append(
+                (mode, make_blank_remote_control_views(views, remote_indices, args.blank_remote_value))
+            )
+        elif mode == "shuffled":
+            variants.append(
+                (mode, make_shuffled_remote_control_views(views, remote_indices, args, model_name))
+            )
+        else:
+            raise ValueError(f"Unsupported remote control mode: {mode}")
+    return variants
 
 
 def strip_export_only_view_keys(views):
@@ -955,6 +1123,52 @@ def resolve_output_path(output_path_str: str) -> Path:
     return output_path.with_suffix(".ply")
 
 
+def resolve_variant_output_path(output_path_str: str, variant_name: str | None) -> Path:
+    output_path = resolve_output_path(output_path_str)
+    if variant_name is None:
+        return output_path
+    return output_path.with_name(f"{output_path.stem}_{variant_name}{output_path.suffix}")
+
+
+def export_point_cloud_for_views(model, views, args: argparse.Namespace, output_path: Path, label: str | None):
+    if label:
+        print(f"Running inference for remote-control mode: {label}")
+    else:
+        print("Running inference...")
+    start_time = time()
+    with torch.inference_mode():
+        outputs = run_model_inference(model, views, args)
+    duration = time() - start_time
+    print(f"Inference finished in {duration:.3f}s")
+
+    print("Collecting unified world-space point cloud...")
+    points, colors, per_view_stats = collect_world_space_point_cloud(
+        outputs,
+        views,
+        apply_confidence_mask=args.apply_confidence_mask,
+        confidence_percentile=args.confidence_percentile,
+    )
+    for stat in per_view_stats:
+        print(
+            f"View {stat['view_idx']}: kept {stat['points']} points "
+            f"(head={stat['head']})"
+        )
+    print(f"Total points before downsampling: {points.shape[0]}")
+
+    if args.voxel_downsample:
+        points, colors = voxel_downsample_point_cloud(
+            points,
+            colors,
+            voxel_fraction=args.voxel_fraction,
+            voxel_size=args.voxel_size,
+        )
+        print(f"Total points after downsampling: {points.shape[0]}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    trimesh.PointCloud(vertices=points, colors=colors).export(output_path)
+    print(f"Saved unified point cloud PLY to: {output_path}")
+
+
 def main() -> None:
     args = parse_args()
     effective_model_name = resolve_effective_model_name(args)
@@ -996,40 +1210,16 @@ def main() -> None:
     views = convert_views_to_identity_if_needed(views, model_name)
     views = maybe_assign_remote_instances(views, args)
 
-    print("Running inference...")
-    start_time = time()
-    with torch.inference_mode():
-        outputs = run_model_inference(model, views, args)
-    duration = time() - start_time
-    print(f"Inference finished in {duration:.3f}s")
-
-    print("Collecting unified world-space point cloud...")
-    points, colors, per_view_stats = collect_world_space_point_cloud(
-        outputs,
-        views,
-        apply_confidence_mask=args.apply_confidence_mask,
-        confidence_percentile=args.confidence_percentile,
-    )
-    for stat in per_view_stats:
-        print(
-            f"View {stat['view_idx']}: kept {stat['points']} points "
-            f"(head={stat['head']})"
+    variants = build_remote_control_view_variants(views, args, model_name)
+    for variant_name, variant_views in variants:
+        output_path = resolve_variant_output_path(args.output_path, variant_name)
+        export_point_cloud_for_views(
+            model=model,
+            views=variant_views,
+            args=args,
+            output_path=output_path,
+            label=variant_name,
         )
-    print(f"Total points before downsampling: {points.shape[0]}")
-
-    if args.voxel_downsample:
-        points, colors = voxel_downsample_point_cloud(
-            points,
-            colors,
-            voxel_fraction=args.voxel_fraction,
-            voxel_size=args.voxel_size,
-        )
-        print(f"Total points after downsampling: {points.shape[0]}")
-
-    output_path = resolve_output_path(args.output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    trimesh.PointCloud(vertices=points, colors=colors).export(output_path)
-    print(f"Saved unified point cloud PLY to: {output_path}")
 
 
 if __name__ == "__main__":
