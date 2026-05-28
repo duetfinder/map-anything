@@ -30,7 +30,11 @@ import mapanything.utils.train_tools as train_tools
 from mapanything.datasets import get_test_data_loader, get_train_data_loader
 from mapanything.models import init_model
 from mapanything.train.losses import *  # noqa
-from mapanything.utils.inference import loss_of_one_batch_multi_view
+from mapanything.utils.inference import (
+    build_remote_supervision_views,
+    has_joint_remote_supervision,
+    loss_of_one_batch_multi_view,
+)
 from mapanything.utils.train_tools import NativeScalerWithGradNormCount as NativeScaler
 
 # Enable TF32 precision if supported (for GPU >= Ampere and PyTorch >= 1.12)
@@ -383,6 +387,161 @@ def build_dataset(
     return loader
 
 
+def _resolve_amp_dtype(use_amp, amp_dtype):
+    if not use_amp:
+        return torch.float32
+    if amp_dtype == "fp16":
+        return torch.float16
+    if amp_dtype == "bf16":
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    if amp_dtype == "fp32":
+        return torch.float32
+    return amp_dtype
+
+
+def _get_train_param(args, name, default):
+    return getattr(args.train_params, name, default)
+
+
+def _make_remote_control_inputs(remote_gt_views, mode, blank_value):
+    control_inputs = []
+    for remote_gt_view in remote_gt_views:
+        image = remote_gt_view['img']
+        if mode == 'same':
+            control_image = image
+        elif mode == 'blank':
+            control_image = torch.full_like(image, fill_value=float(blank_value))
+        elif mode == 'shuffled':
+            if image.ndim < 1 or image.shape[0] <= 1:
+                return None
+            control_image = torch.roll(image, shifts=1, dims=0)
+        else:
+            raise ValueError(f'Unsupported remote control ranking mode: {mode}')
+        control_inputs.append({
+            'img': control_image,
+            'data_norm_type': remote_gt_view['data_norm_type'],
+            'instance': 'remote',
+        })
+    return control_inputs
+
+
+
+
+def _unwrap_train_model(model):
+    return model.module if hasattr(model, "module") else model
+
+
+def _compute_remote_blank_preserve_loss(
+    batch,
+    model,
+    criterion,
+    use_amp,
+    amp_dtype,
+    blank_value,
+):
+    if not has_joint_remote_supervision(batch):
+        return None, {}
+    aerial_criterion = getattr(criterion, 'aerial_criterion', None)
+    if aerial_criterion is None:
+        return None, {}
+
+    remote_gt_views = build_remote_supervision_views(batch)
+    if not remote_gt_views:
+        return None, {}
+
+    remote_inputs = _make_remote_control_inputs(remote_gt_views, 'blank', blank_value)
+    if remote_inputs is None:
+        return None, {}
+
+    n_remote = len(remote_inputs)
+    amp_dtype = _resolve_amp_dtype(use_amp, amp_dtype)
+    with torch.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
+        preds = model(list(batch) + remote_inputs)
+        aerial_preds = preds[:-n_remote]
+        with torch.autocast('cuda', enabled=False):
+            preserve_loss, _ = aerial_criterion(list(batch), aerial_preds)
+
+    details = {
+        'remote_blank_preserve_aerial_loss': float(preserve_loss.detach()),
+    }
+    return preserve_loss, details
+
+
+def _compute_remote_adapter_regularization(model):
+    unwrapped = _unwrap_train_model(model)
+    if not hasattr(unwrapped, 'get_remote_to_aerial_regularization_terms'):
+        return {}
+    return unwrapped.get_remote_to_aerial_regularization_terms()
+
+def _compute_remote_control_ranking_loss(
+    batch,
+    model,
+    criterion,
+    use_amp,
+    amp_dtype,
+    margin,
+    modes,
+    blank_value,
+    same_loss,
+):
+    if same_loss is None or not has_joint_remote_supervision(batch):
+        return None, {}
+    aerial_criterion = getattr(criterion, 'aerial_criterion', None)
+    if aerial_criterion is None:
+        return None, {}
+
+    remote_gt_views = build_remote_supervision_views(batch)
+    if not remote_gt_views:
+        return None, {}
+
+    model_aerial_views = list(batch)
+    aerial_gts = list(batch)
+    n_remote = len(remote_gt_views)
+    amp_dtype = _resolve_amp_dtype(use_amp, amp_dtype)
+
+    def control_aerial_loss_for(control_mode):
+        remote_inputs = _make_remote_control_inputs(
+            remote_gt_views, control_mode, blank_value
+        )
+        if remote_inputs is None:
+            return None
+        model_batch = model_aerial_views + remote_inputs
+        was_training = model.training
+        try:
+            model.eval()
+            with torch.no_grad():
+                with torch.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
+                    preds = model(model_batch)
+                    aerial_preds = preds[:-n_remote]
+                    with torch.autocast('cuda', enabled=False):
+                        control_loss, _ = aerial_criterion(aerial_gts, aerial_preds)
+        finally:
+            model.train(was_training)
+        return control_loss.detach()
+
+    ranking_terms = []
+    details = {
+        'remote_control_same_aerial_loss': float(same_loss.detach()),
+    }
+    for mode in modes:
+        if mode == 'same':
+            continue
+        control_loss = control_aerial_loss_for(mode)
+        if control_loss is None:
+            continue
+        term = torch.relu(same_loss - control_loss + float(margin))
+        ranking_terms.append(term)
+        details[f'remote_control_{mode}_aerial_loss'] = float(control_loss.detach())
+        details[f'remote_control_ranking_{mode}_loss'] = float(term.detach())
+
+    if not ranking_terms:
+        return None, details
+
+    ranking_loss = torch.stack(ranking_terms).mean()
+    details['remote_control_ranking_loss'] = float(ranking_loss.detach())
+    return ranking_loss, details
+
+
 def train_one_epoch(
     model: torch.nn.Module,
     criterion: torch.nn.Module,
@@ -471,6 +630,76 @@ def train_one_epoch(
             ret="loss",
         )
         loss, loss_details = loss_tuple  # criterion returns two values
+        primary_same_loss = loss
+
+        blank_value = float(_get_train_param(args, "remote_control_blank_value", 0.5))
+
+        adapter_reg_terms = _compute_remote_adapter_regularization(model)
+        adapter_reg_weights = {
+            "remote_to_aerial_late_gate_l1": float(
+                _get_train_param(args, "remote_late_gate_l1_weight", 0.0)
+            ),
+            "remote_to_aerial_late_gate_l2": float(
+                _get_train_param(args, "remote_late_gate_l2_weight", 0.0)
+            ),
+            "late_weighted_delta_l2": float(
+                _get_train_param(args, "remote_late_weighted_delta_l2_weight", 0.0)
+            ),
+        }
+        for reg_name, reg_value in adapter_reg_terms.items():
+            loss_details[reg_name] = float(reg_value.detach())
+            reg_weight = adapter_reg_weights.get(reg_name, 0.0)
+            if reg_weight > 0:
+                weighted_reg = reg_weight * reg_value
+                loss = loss + weighted_reg
+                loss_details[f"{reg_name}_weighted"] = float(weighted_reg.detach())
+
+        blank_preserve_weight = float(
+            _get_train_param(args, "remote_blank_preserve_loss_weight", 0.0)
+        )
+        if blank_preserve_weight > 0:
+            preserve_loss, preserve_details = _compute_remote_blank_preserve_loss(
+                batch=batch,
+                model=model,
+                criterion=criterion,
+                use_amp=bool(args.train_params.amp),
+                amp_dtype=args.train_params.amp_dtype,
+                blank_value=blank_value,
+            )
+            if preserve_loss is not None:
+                weighted_preserve_loss = blank_preserve_weight * preserve_loss
+                loss = loss + weighted_preserve_loss
+                loss_details.update(preserve_details)
+                loss_details["remote_blank_preserve_loss_weighted"] = float(
+                    weighted_preserve_loss.detach()
+                )
+
+        ranking_loss_weight = float(
+            _get_train_param(args, "remote_control_ranking_loss_weight", 0.0)
+        )
+        if ranking_loss_weight > 0:
+            ranking_modes = _get_train_param(
+                args, "remote_control_ranking_modes", ["blank", "shuffled"]
+            )
+            if isinstance(ranking_modes, str):
+                ranking_modes = [ranking_modes]
+            ranking_loss, ranking_details = _compute_remote_control_ranking_loss(
+                batch=batch,
+                model=model,
+                criterion=criterion,
+                use_amp=bool(args.train_params.amp),
+                amp_dtype=args.train_params.amp_dtype,
+                margin=float(_get_train_param(args, "remote_control_ranking_margin", 0.0)),
+                modes=ranking_modes,
+                blank_value=blank_value,
+                same_loss=primary_same_loss,
+            )
+            if ranking_loss is not None:
+                loss = loss + ranking_loss_weight * ranking_loss
+                loss_details.update(ranking_details)
+                loss_details["remote_control_ranking_loss_weighted"] = float(
+                    (ranking_loss_weight * ranking_loss).detach()
+                )
         if n_views > 2:
             loss = loss * (
                 2 / n_views

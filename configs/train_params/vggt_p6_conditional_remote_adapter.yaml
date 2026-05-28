@@ -1,0 +1,17 @@
+defaults:
+  - vggt_p5h_frozen_late_fusion
+
+# P6 trains a protected conditional remote adapter. The default objective does
+# not use same/blank/shuffled ranking; those controls remain an evaluation
+# protocol. Blank-preserve and small adapter regularization keep the remote path
+# conditional and easy to ignore when remote evidence is unhelpful.
+remote_blank_preserve_loss_weight: 0.05
+remote_late_gate_l1_weight: 1e-03
+remote_late_gate_l2_weight: 0.0
+remote_late_weighted_delta_l2_weight: 1e-04
+
+# Weak-ranking is intentionally disabled by default. Enable only for ablations.
+remote_control_ranking_loss_weight: 0.0
+remote_control_ranking_margin: 0.0
+remote_control_ranking_modes: [blank, shuffled]
+remote_control_blank_value: 0.5
