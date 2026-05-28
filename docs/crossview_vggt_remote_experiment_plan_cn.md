@@ -347,7 +347,7 @@ ordinary patch tokens += gate * cross_attn(ordinary patch tokens, remote patch t
 - ordinary 和 remote 使用 split aggregator，remote 不进入早期 ordinary self-attention。
 - `protect_ordinary_heads_from_remote=true`，ordinary camera/depth/point head 不直接看到 remote tokens。
 - 只训练 late adapter/gate，原始 VGGT trunk 和普通输出路径冻结。
-- `LATE_GATE_INIT=0.0`，初始行为接近 base；remote 影响必须通过训练逐步产生。
+- `LATE_GATE_INIT=1e-3`，初始行为仍接近 base，但避免精确 0 gate 让 cross-attn 分支初始没有梯度。
 - remote pointmap/height loss 默认仍为 0，避免再次把目标变成“让正射图像按透视 view 重建”。
 
 ### P6A 训练目标
@@ -425,11 +425,7 @@ bash_scripts/train/Crossview/vggt/p6a_vggt_p5e_base_conditional_remote_adapter.s
 bash_scripts/train/Crossview/vggt/p6a_vggt_conditional_remote_adapter_weak_ranking.sh
 ```
 
-其中 `p6a_vggt_conditional_remote_adapter.sh` 和 `p6a_vggt_raw_base_conditional_remote_adapter.sh` 默认使用 raw/map-anything benchmark checkpoint：
-
-```text
-/root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth
-```
+其中 `p6a_vggt_conditional_remote_adapter.sh` 和 `p6a_vggt_raw_base_conditional_remote_adapter.sh` 默认使用本地 VGGT 官方权重：`/root/autodl-tmp/outputs/checkpoints/vggt/model.pt`。加载方式是 `BASE_CKPT=null`、`LOAD_PRETRAINED_WEIGHTS=false`、`LOAD_CUSTOM_CKPT=true`、`CUSTOM_CKPT_PATH=/root/autodl-tmp/outputs/checkpoints/vggt/model.pt`，即通过 `VGGTWrapper.model.load_state_dict(...)` 加载内层 VGGT 权重。注意不要使用 `/root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth` 作为 VGGT raw base；它是 MapAnything checkpoint，key 为 `encoder.model.*`，不能正确加载到 `VGGTWrapper.model.aggregator.*`。
 
 `p6a_vggt_p5e_base_conditional_remote_adapter.sh` 只作为历史对照，使用：
 
@@ -459,7 +455,7 @@ late_weighted_delta_l2_weighted
 
 ### 推荐运行
 
-主实验：raw/map-anything benchmark base。这个是 P6A 默认主线，用来验证 remote adapter 能否在较干净的普通视角能力上产生增益。
+主实验：VGGT 官方 raw base。这个是 P6A 默认主线，用来验证 remote adapter 能否在较干净的普通视角能力上产生增益。
 
 ```bash
 NUM_GPUS=4 CUDA_DEVICES=1,2,3,4 BATCH_SIZE=8 EPOCHS=40 \
@@ -494,7 +490,7 @@ P6A 不应默认依赖 p5e。p5e 的价值只是历史对照，因为它本身�
 
 因此 base 优先级为：
 
-1. `raw/map-anything benchmark base`：主实验。结论最干净，能直接判断 conditional remote adapter 是否在强 ordinary baseline 上有效。
+1. `VGGT official raw base`：主实验。结论最干净，能直接判断 conditional remote adapter 是否在强 ordinary baseline 上有效。
 2. `p5e base`：对照实验。只回答“在已有 remote finetune 痕迹上，P6A 是否还能补一点”。
 
 判读时也要分开：

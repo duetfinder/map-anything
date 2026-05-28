@@ -34,6 +34,9 @@ REMOTE_COMPARE_IN_VIEW0=${REMOTE_COMPARE_IN_VIEW0:-false}
 REMOTE_COMPARE_GT_IN_VIEW0_ONLY=${REMOTE_COMPARE_GT_IN_VIEW0_ONLY:-true}
 REMOTE_DETACH_POSE_ALIGN=${REMOTE_DETACH_POSE_ALIGN:-false}
 BASE_CKPT=${BASE_CKPT:-/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5e_vggt_remote_head_attention_viewtype/checkpoint-best.pth}
+LOAD_PRETRAINED_WEIGHTS=${LOAD_PRETRAINED_WEIGHTS:-false}
+LOAD_CUSTOM_CKPT=${LOAD_CUSTOM_CKPT:-false}
+CUSTOM_CKPT_PATH=${CUSTOM_CKPT_PATH:-null}
 RESUME=${RESUME:-false}
 FUSION_TYPE=${FUSION_TYPE:-cross_attention}
 LATE_GATE_INIT=${LATE_GATE_INIT:-0.0}
@@ -44,9 +47,14 @@ PROTECT_ORDINARY_HEADS=${PROTECT_ORDINARY_HEADS:-true}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-p5h_vggt_p5e_base_${FUSION_TYPE}_protected}
 OUTPUT_DIR=${OUTPUT_DIR:-"\${root_experiments_dir}/mapanything/training/Crossview/vggt/${EXPERIMENT_NAME}"}
 
-if [ -n "${BASE_CKPT}" ] && [ ! -f "${BASE_CKPT}" ]; then
+if [ -n "${BASE_CKPT}" ] && [ "${BASE_CKPT}" != "null" ] && [ ! -f "${BASE_CKPT}" ]; then
     echo "BASE_CKPT does not exist: ${BASE_CKPT}" >&2
     exit 1
+fi
+
+MODEL_PRETRAINED_ARG="model.pretrained=${BASE_CKPT}"
+if [ -z "${BASE_CKPT}" ] || [ "${BASE_CKPT}" = "null" ]; then
+    MODEL_PRETRAINED_ARG="model.pretrained=null"
 fi
 
 if [ "${BATCH_SIZE}" -lt "${NUM_VIEWS}" ]; then
@@ -68,6 +76,9 @@ EXTRA_CLI_ARGS=("${@:2}")
 
 echo "P5h p5e-base split remote late fusion"
 echo "BASE_CKPT=${BASE_CKPT}"
+echo "LOAD_PRETRAINED_WEIGHTS=${LOAD_PRETRAINED_WEIGHTS}"
+echo "LOAD_CUSTOM_CKPT=${LOAD_CUSTOM_CKPT}"
+echo "CUSTOM_CKPT_PATH=${CUSTOM_CKPT_PATH}"
 echo "FUSION_TYPE=${FUSION_TYPE}"
 echo "PROTECT_ORDINARY_HEADS=${PROTECT_ORDINARY_HEADS}"
 echo "REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE}"
@@ -116,9 +127,10 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     loss.branch_consistency_norm_mode=${BRANCH_CONSISTENCY_NORM_MODE} \
     loss.branch_consistency_detach_depth_target=${BRANCH_CONSISTENCY_DETACH_DEPTH} \
     model=vggt \
-    model.pretrained=${BASE_CKPT} \
-    model.model_config.load_pretrained_weights=false \
-    model.model_config.load_custom_ckpt=false \
+    ${MODEL_PRETRAINED_ARG} \
+    model.model_config.load_pretrained_weights=${LOAD_PRETRAINED_WEIGHTS} \
+    model.model_config.load_custom_ckpt=${LOAD_CUSTOM_CKPT} \
+    model.model_config.custom_ckpt_path=${CUSTOM_CKPT_PATH} \
     model.model_config.use_point_head_for_remote=true \
     model.model_config.use_view_type_bias=true \
     model.model_config.use_pre_aggregator_view_type_bias=false \
