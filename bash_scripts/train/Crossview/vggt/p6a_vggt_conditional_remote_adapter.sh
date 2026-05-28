@@ -4,7 +4,7 @@ set -euo pipefail
 # P6A: protected conditional remote adapter. No ranking by default;
 # same/blank/shuffled controls should be run as evaluation.
 FUSION_TYPE=${FUSION_TYPE:-cross_attention}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-p6a_vggt_conditional_remote_adapter}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-p6a_vggt_raw_base_conditional_remote_adapter}
 LATE_GATE_INIT=${LATE_GATE_INIT:-0.0}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-0.0}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
@@ -15,8 +15,9 @@ RANKING_WEIGHT=${RANKING_WEIGHT:-0.0}
 RANKING_MARGIN=${RANKING_MARGIN:-0.0}
 PROTECT_ORDINARY_HEADS=${PROTECT_ORDINARY_HEADS:-true}
 TRAIN_PARAMS=${TRAIN_PARAMS:-vggt_p6_conditional_remote_adapter}
+BASE_CKPT=${BASE_CKPT:-/root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth}
 
-export FUSION_TYPE EXPERIMENT_NAME LATE_GATE_INIT LAMBDA_REMOTE_PM LAMBDA_REMOTE_H PROTECT_ORDINARY_HEADS
+export FUSION_TYPE EXPERIMENT_NAME LATE_GATE_INIT LAMBDA_REMOTE_PM LAMBDA_REMOTE_H PROTECT_ORDINARY_HEADS BASE_CKPT
 
 BASE_NUM_GPUS=${NUM_GPUS:-${1:-4}}
 

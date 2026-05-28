@@ -315,3 +315,207 @@ mini controls benchmark：
 3. 更值得做的是让 remote 进入方式带有几何选择性，例如基于 ground token query 的局部 remote token cross-attn、top-k remote token selection、或显式位置/方位编码；否则模型容易只学到 remote 的全局先验。
 4. 评估上继续以 `same_gain`、`specific_gain_blank`、`specific_gain_shuffled`、`pass same>shuffled` 为主要判据；若 `specific_gain_shuffled <= 0`，即使 same 比 aerial-only 好，也不能认为 remote 真正提供了场景级互补信息。
 
+## 2026-05-28 修正：P6A Conditional Remote Adapter
+
+上一轮对 p5h cross-attn 和 ranking ablation 的结果说明，`same > blank/shuffled` 更适合作为 remote 是否有效的验证协议，而不应该直接作为主训练出发点。原因是如果把它强行写进主要 loss，模型可能通过让 blank/shuffled 变差、识别空图或错配分布、利用额外 token 的模式偏置来满足目标，而不一定学到真实的场景互补信息。
+
+因此 P6A 的目标改为：训练一个受限的 conditional remote adapter，使模型默认接近 p5e/VGGT 普通视角能力；只有当 remote 信息能被 late adapter 转化为有用修正时，才对 ordinary tokens 产生小幅影响。`same/blank/shuffled` 仍然用于评估，而不是默认训练目标。
+
+### P6A 要解决的问题
+
+P5 系列暴露出的核心问题不是 remote loss 不下降，而是 remote 没有稳定成为 ordinary reconstruction 的有效条件信息：
+
+1. p5f early mixing 会明显破坏普通视角重建，说明 remote 过早进入 VGGT 全局表征风险很大。
+2. p5h protected late fusion 能减少普通 head 污染，但 same 相比 blank/shuffled 的优势很弱，说明模型可能只学到了 joint 模式偏置。
+3. 直接 ranking ablation 没有改善 shuffled specificity，说明简单把评估关系写入 loss 不足以解决 remote 匹配问题。
+
+P6A 因此不再追求 remote 分支自身重建得更准，也不默认追求 same 在训练中压过 blank/shuffled，而是先建立一个更稳的条件注入机制。
+
+### P6A 结构
+
+P6A 继续沿用 p5h 的 protected late cross-attn 结构：
+
+```text
+ordinary images -> frozen p5e/VGGT ordinary path -> ordinary tokens
+remote image    -> split remote aggregator/head       -> remote tokens
+
+ordinary patch tokens += gate * cross_attn(ordinary patch tokens, remote patch tokens)
+```
+
+关键约束：
+
+- ordinary 和 remote 使用 split aggregator，remote 不进入早期 ordinary self-attention。
+- `protect_ordinary_heads_from_remote=true`，ordinary camera/depth/point head 不直接看到 remote tokens。
+- 只训练 late adapter/gate，原始 VGGT trunk 和普通输出路径冻结。
+- `LATE_GATE_INIT=0.0`，初始行为接近 base；remote 影响必须通过训练逐步产生。
+- remote pointmap/height loss 默认仍为 0，避免再次把目标变成“让正射图像按透视 view 重建”。
+
+### P6A 训练目标
+
+P6A 默认目标是：
+
+```text
+L_total = L_ordinary_same
+        + lambda_preserve * L_blank_preserve
+        + lambda_gate * L_gate
+        + lambda_delta * L_weighted_delta
+```
+
+各项含义：
+
+- `L_ordinary_same`：使用正确 remote 输入时，对普通视角输出计算原有 aerial reconstruction loss。这是主任务，仍然要求 joint forward 的普通视角输出变好。
+- `L_blank_preserve`：将 remote 替换成 blank 后，再计算普通视角 aerial loss。它不是为了让 blank 变强，而是约束模型在 remote 无信息时不能明显偏离可用 ordinary path。
+- `L_gate`：对 late fusion gate 做 L1/L2 正则，防止 remote adapter 无条件变成强扰动。
+- `L_weighted_delta`：对 `gate * remote_delta` 的幅度做正则，约束 remote 修正量小而可控，避免用 remote delta 覆盖 ordinary token。
+
+默认参数：
+
+```yaml
+remote_blank_preserve_loss_weight: 0.05
+remote_late_gate_l1_weight: 1e-03
+remote_late_gate_l2_weight: 0.0
+remote_late_weighted_delta_l2_weight: 1e-04
+remote_control_ranking_loss_weight: 0.0
+```
+
+这里最重要的是最后一项：P6A 默认关闭 ranking。`same > blank/shuffled` 只作为 benchmark 结果来判断 remote 是否自然有效。
+
+### 为什么 blank-preserve 合理
+
+`blank-preserve` 和 `same > blank/shuffled` 的性质不同。它不是要求 same 赢 blank，而是给模型一个退化路径：当 remote 没有可用信息时，joint 架构应该尽量保持 ordinary reconstruction，而不是因为多了一个 remote slot 就改变普通视角输出。
+
+因此它约束的是鲁棒性和普通路径保护：
+
+```text
+blank remote -> 不应破坏 ordinary path
+same remote  -> 如果有用，可以在受限 gate 下提供增益
+shuffled remote -> 不参与默认训练，只在评估中检查是否被错误使用
+```
+
+这比直接 ranking 更不容易泄漏评估目标，也更符合最终需求：remote 是可忽略的辅助条件，而不是必须被使用的输入。
+
+### Ranking 的位置
+
+P6A 仍保留 weak ranking 脚本，但只作为诊断 ablation：
+
+```bash
+bash bash_scripts/train/Crossview/vggt/p6a_vggt_conditional_remote_adapter_weak_ranking.sh
+```
+
+解释规则：
+
+- 如果 P6A 无 ranking 已经 `same > blank/shuffled`，说明结构和普通 reconstruction 目标足以自然利用 remote。
+- 如果只有 weak ranking 有效，要谨慎，因为可能是训练目标贴合了评估协议，而不是 remote 真正变成稳定几何条件。
+- 如果 weak ranking 仍无效，说明问题不在 loss 权重，而在 remote token 表达、错配负样本质量或正射几何建模。
+
+### 已实现代码
+
+新增配置：
+
+```text
+configs/train_params/vggt_p6_conditional_remote_adapter.yaml
+```
+
+新增训练脚本：
+
+```text
+bash_scripts/train/Crossview/vggt/p6a_vggt_conditional_remote_adapter.sh
+bash_scripts/train/Crossview/vggt/p6a_vggt_raw_base_conditional_remote_adapter.sh
+bash_scripts/train/Crossview/vggt/p6a_vggt_p5e_base_conditional_remote_adapter.sh
+bash_scripts/train/Crossview/vggt/p6a_vggt_conditional_remote_adapter_weak_ranking.sh
+```
+
+其中 `p6a_vggt_conditional_remote_adapter.sh` 和 `p6a_vggt_raw_base_conditional_remote_adapter.sh` 默认使用 raw/map-anything benchmark checkpoint：
+
+```text
+/root/autodl-tmp/outputs/checkpoints/mapanything/map-anything_benchmark.pth
+```
+
+`p6a_vggt_p5e_base_conditional_remote_adapter.sh` 只作为历史对照，使用：
+
+```text
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5e_vggt_remote_head_attention_viewtype/checkpoint-best.pth
+```
+
+训练代码新增日志项：
+
+```text
+remote_blank_preserve_aerial_loss
+remote_blank_preserve_loss_weighted
+remote_to_aerial_late_gate_l1
+remote_to_aerial_late_gate_l1_weighted
+late_gate_abs
+late_delta_l2
+late_weighted_delta_l2
+late_weighted_delta_l2_weighted
+```
+
+这些日志的判读方式：
+
+- `remote_blank_preserve_aerial_loss` 应稳定，不应随训练明显恶化。
+- `remote_to_aerial_late_gate_l1` / `late_gate_abs` 不应快速变成很大，否则说明 remote adapter 变成强扰动。
+- `late_weighted_delta_l2` 应保持小量级；如果很大且可视化变差，说明 remote delta 覆盖了 ordinary token。
+- 这些正则项本身下降不代表成功，成功仍要看 benchmark controls 和可视化。
+
+### 推荐运行
+
+主实验：raw/map-anything benchmark base。这个是 P6A 默认主线，用来验证 remote adapter 能否在较干净的普通视角能力上产生增益。
+
+```bash
+NUM_GPUS=4 CUDA_DEVICES=1,2,3,4 BATCH_SIZE=8 EPOCHS=40 \
+  bash bash_scripts/train/Crossview/vggt/p6a_vggt_raw_base_conditional_remote_adapter.sh
+```
+
+更保守的 raw-base gate 版本：
+
+```bash
+NUM_GPUS=4 CUDA_DEVICES=1,2,3,4 BATCH_SIZE=8 EPOCHS=40 \
+PRESERVE_WEIGHT=0.1 GATE_L1_WEIGHT=3e-03 WEIGHTED_DELTA_L2_WEIGHT=3e-04 \
+  bash bash_scripts/train/Crossview/vggt/p6a_vggt_raw_base_conditional_remote_adapter.sh
+```
+
+p5e-base 历史对照：只用于判断 p5e 预训练痕迹是否影响结论，不作为默认主实验。
+
+```bash
+NUM_GPUS=4 CUDA_DEVICES=1,2,3,4 BATCH_SIZE=8 EPOCHS=40 \
+  bash bash_scripts/train/Crossview/vggt/p6a_vggt_p5e_base_conditional_remote_adapter.sh
+```
+
+弱 ranking 诊断：
+
+```bash
+NUM_GPUS=4 CUDA_DEVICES=1,2,3,4 BATCH_SIZE=6 EPOCHS=20 \
+  bash bash_scripts/train/Crossview/vggt/p6a_vggt_conditional_remote_adapter_weak_ranking.sh
+```
+
+### Base 选择原则
+
+P6A 不应默认依赖 p5e。p5e 的价值只是历史对照，因为它本身已经经过 remote 相关训练，普通视角能力和 remote bias 都可能被改变。若以 p5e 为唯一 base，后续结果很难区分是 P6A adapter 有效，还是 p5e 预训练痕迹在起作用。
+
+因此 base 优先级为：
+
+1. `raw/map-anything benchmark base`：主实验。结论最干净，能直接判断 conditional remote adapter 是否在强 ordinary baseline 上有效。
+2. `p5e base`：对照实验。只回答“在已有 remote finetune 痕迹上，P6A 是否还能补一点”。
+
+判读时也要分开：
+
+```text
+P6A raw-base 成功：最有价值，说明结构本身有希望。
+P6A p5e-base 成功但 raw-base 失败：结论不干净，可能依赖 p5e bias。
+两者都 same≈blank≈shuffled：问题更可能在 remote 表达/几何建模。
+raw-base ordinary-only 明显差于 raw VGGT：保护机制仍不足，不能继续加 remote。
+```
+
+### P6A 成功标准
+
+训练日志只用于确认实验没有失控，不能作为最终结论。最终仍看 mini controls：
+
+1. `ordinary_damage_vs_reference__pointmaps_abs_rel` 接近 0 或为负。
+2. `same_gain__pointmaps_abs_rel > 0`。
+3. `specific_gain_blank__pointmaps_abs_rel > 0`。
+4. `specific_gain_shuffled__pointmaps_abs_rel > 0`，且优先级高于 blank。
+5. `pass_rate_same_better_than_shuffled__pointmaps_abs_rel > 0.6` 才能认为有初步 scene-specific remote 使用。
+6. 可视化中 ordinary-only 和 joint-same 都不能比 p5e/raw VGGT 明显崩坏。
+
+如果 P6A 仍然表现为 `same≈blank≈shuffled`，下一步不应继续调 remote loss 权重，而应转向 remote 表达方式：例如 geometry-aware remote prior、位置/方位编码、hard negative 采样，或把正射图像编码为 BEV/footprint/height prior，而不是普通 VGGT view。
+
