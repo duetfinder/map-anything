@@ -51,6 +51,7 @@ class VGGTWrapper(torch.nn.Module):
         remote_to_aerial_late_fusion_gate_init=0.0,
         remote_to_aerial_cross_attention_heads=8,
         remote_to_aerial_max_remote_tokens=256,
+        protect_ordinary_heads_from_remote=False,
     ):
         super().__init__()
         self.name = name
@@ -74,7 +75,9 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_to_aerial_late_fusion_gate_init = remote_to_aerial_late_fusion_gate_init
         self.remote_to_aerial_cross_attention_heads = remote_to_aerial_cross_attention_heads
         self.remote_to_aerial_max_remote_tokens = remote_to_aerial_max_remote_tokens
+        self.protect_ordinary_heads_from_remote = protect_ordinary_heads_from_remote
         self.embed_dim = 1024
+        self.latest_remote_to_aerial_stats = {}
 
         if load_pretrained_weights:
             # Load pre-trained weights
@@ -294,6 +297,167 @@ class VGGTWrapper(torch.nn.Module):
             combined_tokens_list.append(combined_tokens)
         return combined_tokens_list
 
+    def _select_tokens_by_mask(self, aggregated_tokens_list, view_mask):
+        return [tokens[:, view_mask, :, :] for tokens in aggregated_tokens_list]
+
+    def _scatter_view_tensor(
+        self, aerial_value, remote_value, aerial_mask, remote_mask, num_views
+    ):
+        ref_value = aerial_value if aerial_value is not None else remote_value
+        if ref_value is None:
+            return None
+
+        output = ref_value.new_empty(ref_value.shape[0], num_views, *ref_value.shape[2:])
+        if aerial_value is not None:
+            output[:, aerial_mask, ...] = aerial_value
+        if remote_value is not None:
+            output[:, remote_mask, ...] = remote_value
+        return output
+
+    def _run_prediction_heads(self, aggregated_tokens_list, images, ps_idx, views):
+        remote_mask = self._remote_view_mask(views, device=images.device)
+        has_remote = bool(remote_mask.any())
+        has_aerial = bool((~remote_mask).any())
+        protect_heads = (
+            self.protect_ordinary_heads_from_remote
+            and self.use_split_remote_aggregator
+            and has_remote
+            and has_aerial
+        )
+
+        need_shared_point_head = self.output_point_head_for_consistency or any(
+            self._output_head_for_view(view) == "point"
+            and not (
+                self.use_remote_private_point_head and self._is_remote_view(view)
+            )
+            for view in views
+        )
+        need_remote_private_point_head = self.use_remote_private_point_head and any(
+            self._output_head_for_view(view) == "point" and self._is_remote_view(view)
+            for view in views
+        )
+
+        if not protect_heads:
+            pose_enc = self.model.camera_head(aggregated_tokens_list)[-1]
+            extrinsic, intrinsic = pose_encoding_to_extri_intri(
+                pose_enc, images.shape[-2:]
+            )
+            depth_map, depth_conf = self.model.depth_head(
+                aggregated_tokens_list, images, ps_idx
+            )
+
+            point_map = None
+            point_conf = None
+            if need_shared_point_head:
+                point_map, point_conf = self.model.point_head(
+                    aggregated_tokens_list, images, ps_idx
+                )
+
+            remote_point_map = None
+            remote_point_conf = None
+            if need_remote_private_point_head:
+                remote_point_map, remote_point_conf = self.remote_point_head(
+                    aggregated_tokens_list, images, ps_idx
+                )
+
+            return (
+                extrinsic,
+                intrinsic,
+                depth_map,
+                depth_conf,
+                point_map,
+                point_conf,
+                remote_point_map,
+                remote_point_conf,
+            )
+
+        aerial_mask = ~remote_mask
+        num_views = len(views)
+        aerial_images = images[:, aerial_mask, ...]
+        remote_images = images[:, remote_mask, ...]
+        aerial_tokens_list = self._select_tokens_by_mask(
+            aggregated_tokens_list, aerial_mask
+        )
+        remote_tokens_list = self._select_tokens_by_mask(
+            aggregated_tokens_list, remote_mask
+        )
+
+        aerial_pose_enc = self.model.camera_head(aerial_tokens_list)[-1]
+        remote_pose_enc = self.model.camera_head(remote_tokens_list)[-1]
+        aerial_extrinsic, aerial_intrinsic = pose_encoding_to_extri_intri(
+            aerial_pose_enc, images.shape[-2:]
+        )
+        remote_extrinsic, remote_intrinsic = pose_encoding_to_extri_intri(
+            remote_pose_enc, images.shape[-2:]
+        )
+        extrinsic = self._scatter_view_tensor(
+            aerial_extrinsic, remote_extrinsic, aerial_mask, remote_mask, num_views
+        )
+        intrinsic = self._scatter_view_tensor(
+            aerial_intrinsic, remote_intrinsic, aerial_mask, remote_mask, num_views
+        )
+
+        aerial_depth_map, aerial_depth_conf = self.model.depth_head(
+            aerial_tokens_list, aerial_images, ps_idx
+        )
+        remote_depth_map, remote_depth_conf = self.model.depth_head(
+            remote_tokens_list, remote_images, ps_idx
+        )
+        depth_map = self._scatter_view_tensor(
+            aerial_depth_map, remote_depth_map, aerial_mask, remote_mask, num_views
+        )
+        depth_conf = self._scatter_view_tensor(
+            aerial_depth_conf, remote_depth_conf, aerial_mask, remote_mask, num_views
+        )
+
+        point_map = None
+        point_conf = None
+        if need_shared_point_head:
+            aerial_point_map, aerial_point_conf = self.model.point_head(
+                aerial_tokens_list, aerial_images, ps_idx
+            )
+            remote_point_map_shared, remote_point_conf_shared = self.model.point_head(
+                remote_tokens_list, remote_images, ps_idx
+            )
+            point_map = self._scatter_view_tensor(
+                aerial_point_map,
+                remote_point_map_shared,
+                aerial_mask,
+                remote_mask,
+                num_views,
+            )
+            point_conf = self._scatter_view_tensor(
+                aerial_point_conf,
+                remote_point_conf_shared,
+                aerial_mask,
+                remote_mask,
+                num_views,
+            )
+
+        remote_point_map = None
+        remote_point_conf = None
+        if need_remote_private_point_head:
+            remote_private_point_map, remote_private_point_conf = self.remote_point_head(
+                remote_tokens_list, remote_images, ps_idx
+            )
+            remote_point_map = self._scatter_view_tensor(
+                None, remote_private_point_map, aerial_mask, remote_mask, num_views
+            )
+            remote_point_conf = self._scatter_view_tensor(
+                None, remote_private_point_conf, aerial_mask, remote_mask, num_views
+            )
+
+        return (
+            extrinsic,
+            intrinsic,
+            depth_map,
+            depth_conf,
+            point_map,
+            point_conf,
+            remote_point_map,
+            remote_point_conf,
+        )
+
     def _aggregate_views(self, images, views):
         remote_mask = self._remote_view_mask(views, device=images.device)
         has_remote = bool(remote_mask.any())
@@ -328,6 +492,7 @@ class VGGTWrapper(torch.nn.Module):
         return remote_tokens[:, ::stride, :][:, :max_tokens, :]
 
     def _apply_late_remote_to_aerial_fusion(self, aggregated_tokens_list, views):
+        self.latest_remote_to_aerial_stats = {}
         if self.remote_to_aerial_late_fusion_type == "none":
             return aggregated_tokens_list
 
@@ -378,13 +543,35 @@ class VGGTWrapper(torch.nn.Module):
             gate = self.remote_to_aerial_late_gate.to(
                 device=tokens.device, dtype=tokens.dtype
             )
+            weighted_delta = gate * delta
+            stats = self.latest_remote_to_aerial_stats
+            stats.setdefault("late_gate_abs", []).append(gate.abs().float())
+            stats.setdefault("late_delta_l2", []).append(
+                delta.float().pow(2).mean().sqrt()
+            )
+            stats.setdefault("late_weighted_delta_l2", []).append(
+                weighted_delta.float().pow(2).mean().sqrt()
+            )
             updated_tokens = tokens.clone()
             updated_tokens[:, aerial_mask, patch_start_idx:, :] = (
-                updated_tokens[:, aerial_mask, patch_start_idx:, :] + gate * delta
+                updated_tokens[:, aerial_mask, patch_start_idx:, :] + weighted_delta
             )
             updated_tokens_list.append(updated_tokens)
 
         return updated_tokens_list
+
+    def get_remote_to_aerial_regularization_terms(self):
+        terms = {}
+        if hasattr(self, "remote_to_aerial_late_gate"):
+            gate = self.remote_to_aerial_late_gate.float()
+            terms["remote_to_aerial_late_gate_l1"] = gate.abs()
+            terms["remote_to_aerial_late_gate_l2"] = gate.pow(2)
+
+        stats = getattr(self, "latest_remote_to_aerial_stats", None) or {}
+        for key, values in stats.items():
+            if values:
+                terms[key] = torch.stack([value.float() for value in values]).mean()
+        return terms
 
     def forward(self, views):
         """
@@ -432,45 +619,16 @@ class VGGTWrapper(torch.nn.Module):
 
         # Run the Camera + Pose Branch of VGGT
         with torch.autocast("cuda", enabled=False):
-            # Predict Cameras
-            pose_enc = self.model.camera_head(aggregated_tokens_list)[-1]
-            # Extrinsic and intrinsic matrices, following OpenCV convention (camera from world)
-            # Extrinsics Shape: (B, V, 3, 4)
-            # Intrinsics Shape: (B, V, 3, 3)
-            extrinsic, intrinsic = pose_encoding_to_extri_intri(
-                pose_enc, images.shape[-2:]
-            )
-
-            # Predict Depth Maps
-            # Depth Shape: (B, V, H, W, 1)
-            # Depth Confidence Shape: (B, V, H, W)
-            depth_map, depth_conf = self.model.depth_head(
-                aggregated_tokens_list, images, ps_idx
-            )
-
-            point_map = None
-            point_conf = None
-            need_shared_point_head = self.output_point_head_for_consistency or any(
-                self._output_head_for_view(view) == "point"
-                and not (
-                    self.use_remote_private_point_head and self._is_remote_view(view)
-                )
-                for view in views
-            )
-            if need_shared_point_head:
-                point_map, point_conf = self.model.point_head(
-                    aggregated_tokens_list, images, ps_idx
-                )
-            remote_point_map = None
-            remote_point_conf = None
-            if self.use_remote_private_point_head and any(
-                self._output_head_for_view(view) == "point"
-                and self._is_remote_view(view)
-                for view in views
-            ):
-                remote_point_map, remote_point_conf = self.remote_point_head(
-                    aggregated_tokens_list, images, ps_idx
-                )
+            (
+                extrinsic,
+                intrinsic,
+                depth_map,
+                depth_conf,
+                point_map,
+                point_conf,
+                remote_point_map,
+                remote_point_conf,
+            ) = self._run_prediction_heads(aggregated_tokens_list, images, ps_idx, views)
 
             # Convert the output to MapAnything format
             res = []

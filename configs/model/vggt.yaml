@@ -37,6 +37,8 @@ model_config:
   remote_to_aerial_late_fusion_gate_init: 0.0
   remote_to_aerial_cross_attention_heads: 8
   remote_to_aerial_max_remote_tokens: 256
+  # P5h: keep remote tokens out of ordinary camera/depth heads.
+  protect_ordinary_heads_from_remote: false
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

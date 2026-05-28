@@ -143,6 +143,81 @@ python scripts/summarize_rs_guided_benchmark.py \
 5. `same_gain__z_depth_abs_rel` 和 `same_gain__ray_dirs_err_deg` 可辅助判断 remote 是否只改善局部深度或是否破坏相机/射线估计。
 6. 可视化只作为最后确认。若 PLY 中包含 remote 点，remote 正射投影误差会放大视觉混乱，因此先看 ordinary-only 和 controls 指标。
 
+## 2026-05-27 追加实验：p5g-fixed 与 p5h
+
+上一轮 p5g 结果暴露出两个问题：
+
+1. `vggt_p5g_late_fusion` 继承了 `vggt_finetune`，导致 `model.aggregator.patch_embed` 仍有非零学习率。p5g 的原始设计是冻结 VGGT trunk，只训练 late adapter/remote head，因此这一点已修正为继承 `default`，并通过 `model: lr=0` 冻结原始 VGGT。
+2. split aggregator 只能避免 remote 进入早期 aggregator，但原来的 camera/depth head 仍接收 combined tokens。这样 no-fusion 也可能被 remote pose token 影响。新增 `model.model_config.protect_ordinary_heads_from_remote=true` 后，普通视角 camera/depth head 只看 ordinary tokens；remote head 单独跑 remote tokens。late fusion 只把 remote 信息写入 ordinary patch tokens，不再让 remote token 直接进入 ordinary heads。
+
+### p5g_fixedfreeze_protected
+
+目的：验证修正 freeze 和 protected head 后，no-fusion 是否成为干净 sanity check。
+
+训练：
+
+```bash
+NUM_GPUS=5 CUDA_DEVICES=0,1,2,3,4 BATCH_SIZE=8 EPOCHS=10 \
+  bash bash_scripts/train/Crossview/vggt/p5g_vggt_no_fusion_fixedfreeze_protected.sh
+```
+
+评测：
+
+```bash
+REMOTE_OVERFIT_NUM_SETS=5 \
+  bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5g_no_fusion_fixedfreeze_protected_unified.sh
+```
+
+预期：`same_gain__pointmaps_abs_rel` 应接近 0，same/blank/shuffled 也应接近；如果仍有明显差异，说明评测或 wrapper 仍有 remote 泄漏。
+
+### p5h_p5e_base_protected
+
+目的：不再从原始 VGGT 重新学 ordinary 能力，而是以当前最强的 p5e checkpoint 为 frozen base，只训练 late remote-to-aerial adapter。这样可以直接回答：remote adapter 能不能在 p5e 基础上带来额外 ordinary gain。
+
+训练入口：
+
+```bash
+NUM_GPUS=5 CUDA_DEVICES=0,1,2,3,4 BATCH_SIZE=8 \
+  bash bash_scripts/train/Crossview/vggt/p5h_vggt_p5e_base_film_protected.sh
+
+NUM_GPUS=5 CUDA_DEVICES=0,1,2,3,4 BATCH_SIZE=8 \
+  bash bash_scripts/train/Crossview/vggt/p5h_vggt_p5e_base_crossattn_protected.sh
+```
+
+默认设置：
+
+- `BASE_CKPT` 指向 `p5e_vggt_remote_head_attention_viewtype/checkpoint-best.pth`。
+- `model.pretrained=${BASE_CKPT}` 加载完整 wrapper checkpoint。
+- `load_pretrained_weights=false`、`load_custom_ckpt=false`，避免再加载原始 VGGT。
+- `remote_point_head`、`model.*`、view type embeddings 全部冻结。
+- 只训练 `remote_to_aerial_late_*` adapter 和 gate。
+- `SAVE_FREQ=0`、`KEEP_FREQ=0`，只保留 best/final，避免保存大量中间权重。
+
+评测入口：
+
+```bash
+REMOTE_OVERFIT_NUM_SETS=5 \
+  bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5h_no_fusion_unified.sh
+
+REMOTE_OVERFIT_NUM_SETS=5 \
+  bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5h_film_unified.sh
+
+REMOTE_OVERFIT_NUM_SETS=5 \
+  bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p5h_crossattn_unified.sh
+```
+
+其中 `p5h_no_fusion` 是 benchmark-only sanity check，直接用 p5e checkpoint，不需要训练。
+
+### 本轮成功标准
+
+p5h 的判读要比 p5g 更严格：
+
+1. `p5h_no_fusion` 应接近 p5e，确认 protected wrapper 没破坏 p5e base。
+2. `p5h_crossattn` 或 `p5h_film` 的 `same_gain__pointmaps_abs_rel` 要为正。
+3. `specific_gain_blank__pointmaps_abs_rel` 和 `specific_gain_shuffled__pointmaps_abs_rel` 都要为正，尤其 same 必须优于 shuffled。
+4. `ordinary_damage_vs_reference__pointmaps_abs_rel` 以 p5e 为 reference 时应接近 0 或为负。
+5. 若 p5h 对 p5e 没有提升，但 p5g cross-attn 仍有提升，说明 late adapter 主要在补 raw VGGT 的不足，而不是提供真正的 p5e 级 remote 增强。下一步应转向 ranking/margin loss 或 geometry-aware remote token。
+
 ## 后续可选方案
 
 如果 p5g_crossattn 仍然 same≈blank≈shuffled：
@@ -153,3 +228,90 @@ python scripts/summarize_rs_guided_benchmark.py \
 4. 加 geometry-aware remote prior：把 remote 正射图先转换为粗 BEV/height/context token，减少正射影像与透视影像的投影假设冲突。
 
 当前首轮建议顺序：先跑 `p5g_no_fusion_split_remote` 验证普通路径保护，再跑 `p5g_film_split_remote` 和 `p5g_crossattn_split_remote`，最后用 summary 脚本和可视化一起筛选下一步。
+
+## 2026-05-27 运行记录：p5h protected 后续
+
+当前已完成：
+
+- `p5h_vggt_p5e_base_no_fusion_protected_mini_controls`：same/blank/shuffled 与 aerial-only 完全一致，说明 `protect_ordinary_heads_from_remote=true` 生效，remote 不再直接污染普通视角 head。
+- `p5h_vggt_p5e_base_film_protected`：40 epoch 训练完成；best/final 均已跑 25-scene mini controls。
+
+关键观察：
+
+- p5h-film best：`same_gain(pointmaps_abs_rel)=0.0012188`，但 `specific_gain_blank=-0.0000707`、`specific_gain_shuffled=-0.0000135`。
+- p5h-film final：same 也有表观提升，但 blank 比 same 更好。
+- 因此 p5h-film 的提升目前不能解释为“正确 remote 内容带来的互补信息”，更像 late adapter 或 remote 输入存在非特异性偏置。
+
+继续运行中的实验：
+
+- `p5h_vggt_p5e_base_crossattn_protected`：4 GPU，`BATCH_SIZE=8`，仅训练 cross-attn late adapter，保留 protected heads。
+- `p5h_vggt_p5e_base_film_unfreeze_viewtype_protected`：1 GPU，`BATCH_SIZE=8`，20 epoch，在 p5h-film 基础上额外解冻 `aerial_view_type_embedding` 和 `remote_view_type_embedding`，用于测试“类型偏置是否需要随 late adapter 共同调整”。
+
+工程记录：
+
+- `p5h_vggt_p5e_base_split_late_fusion.sh` 增加 `MASTER_PORT` 环境变量，避免多个 torchrun 并行时抢占默认 `29500` 端口。
+- 当前并行资源分配：GPU0 跑 view-type 解冻对照，GPU1-4 跑 cross-attn；实测显存约 GPU0 38.6GB，GPU1-4 42.7GB。
+
+下一步判据：
+
+- 如果 cross-attn 或 view-type 解冻仍表现为 `same_gain > 0` 但 `same` 不优于 blank/shuffled，则说明普通 aerial loss 不能强迫模型利用正确 remote 内容。下一轮应转向显式控制组训练目标，例如 same-vs-blank/shuffled 的 ranking/contrastive loss。
+- 如果任一实验出现 `specific_gain_blank > 0` 且 `specific_gain_shuffled > 0`，再扩大 benchmark 场景数并导出可视化点云。
+
+## 2026-05-27 运行结果：p5h view-type 与 cross-attn
+
+本轮完成：
+
+- `p5h_vggt_p5e_base_film_unfreeze_viewtype_protected`：20 epoch，GPU0，`BATCH_SIZE=8`，在 p5h-film 基础上解冻 aerial/remote view type embedding。
+- `p5h_vggt_p5e_base_crossattn_protected`：40 epoch，GPU1-4，`BATCH_SIZE=8`，只训练 cross-attn late adapter。
+- 两个实验均使用 `checkpoint-best.pth` 跑 25-scene mini-control benchmark。
+
+关键指标：
+
+| 实验 | aerial-only | same | same gain | blank-specific | shuffled-specific | pass same>aerial | pass same>blank | pass same>shuffled |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| p5h-film best | 0.059353 | 0.058135 | 0.001219 | -0.000071 | -0.000014 | 0.60 | 0.48 | 0.60 |
+| p5h-film final | 0.059353 | 0.056938 | 0.002415 | -0.000603 | -0.000053 | 0.64 | 0.36 | 0.48 |
+| p5h-film + view type unfreeze | 0.058719 | 0.056309 | 0.002410 | -0.000205 | 0.000083 | 0.64 | 0.40 | 0.48 |
+| p5h-crossattn | 0.059353 | 0.056194 | 0.003159 | 0.000752 | 0.000287 | 0.76 | 0.56 | 0.56 |
+
+结论：
+
+- `p5h-crossattn` 是目前唯一同时满足 `same_gain > 0`、`same > blank`、`same > shuffled` 的方案，说明 cross-attn late fusion 比 film 更可能利用到 scene-specific remote 内容。
+- 但 margin 仍然小，`same>blank` 和 `same>shuffled` 的 pass rate 只有 0.56，不能视为稳定成功。
+- `film + view type unfreeze` 的 same gain 变大，但 blank 仍优于 same，说明“更早/可训练的 view type bias”本身不足以让模型学会正确 remote 匹配。
+- no-fusion protected 对照已经确认 ordinary head 保护有效，因此当前瓶颈主要不是 remote 污染普通 head，而是训练目标没有强约束模型使用正确 remote 内容。
+
+下一轮实验建议：
+
+1. 以 `p5h-crossattn` 为主线，增加显式 control ranking loss：同一 batch 内构造 same/blank/shuffled remote，优化 `loss_same + margin(max(0, err_same - err_blank + m), max(0, err_same - err_shuffled + m))`。
+2. 保持 `protect_ordinary_heads_from_remote=true`，继续只训练 late adapter/gate，避免再次破坏 p5e base。
+3. 先做 10-20 epoch 小规模验证；若 `specific_gain_blank`、`specific_gain_shuffled` 和 pass rate 同时上升，再扩大 benchmark 场景数和可视化。
+4. 暂停继续扩展 film/view-type 方向，除非 ranking loss 后需要更轻量的对照结构。
+
+## 2026-05-27 运行结果：p5h cross-attn + remote-control ranking
+
+本轮新增了 `remote_control_ranking_loss`，目标是显式约束真实 remote 输入优于 `blank/shuffled remote` 控制输入。实现上先尝试对 same/blank/shuffled 都保留梯度图，但 BS6/BS4 均 OOM；随后改为复用主 forward 的 same loss，blank/shuffled 控制分支使用 `no_grad` 只提供对照阈值，BS6 可稳定运行，显存约 33.7GB/GPU。
+
+训练脚本：
+
+- `bash_scripts/train/Crossview/vggt/p5h_vggt_p5e_base_crossattn_ranking_protected.sh`
+- 实验目录：`outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p5h_vggt_p5e_base_crossattn_ranking_w02_m001_nograd_bs6_protected`
+- best 日志：`epoch=7`，验证 `40 @ VigorChicagoJointRSAerial_loss_avg=0.3258406222`
+- 提前停止原因：epoch 8 验证回升到约 `0.32998`，继续到 20 epoch 的收益不明显。
+
+mini controls benchmark：
+
+| experiment | aerial_only | joint_same | same_gain | specific_gain_blank | specific_gain_shuffled | pass same>aerial | pass same>blank | pass same>shuffled | joint_global |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| p5h cross-attn protected | 0.059353 | 0.056194 | 0.003159 | 0.000752 | 0.000287 | 0.76 | 0.56 | 0.56 | 0.146032 |
+| p5h cross-attn ranking w0.2 m0.01 no-grad | 0.059353 | 0.057052 | 0.002301 | 0.000384 | -0.000101 | 0.68 | 0.56 | 0.44 | 0.146054 |
+
+结论：ranking 版没有改进，反而弱于原始 p5h cross-attn protected。训练日志里 blank 控制有时能被拉开，但 shuffled 控制长期贴近 same；benchmark 中 shuffled 甚至略优于 same，`specific_gain_shuffled < 0`。这说明当前 ranking 约束主要让模型对“是否有 remote 图像”有反应，但没有让模型学到稳定的“remote 与当前地面场景是否匹配”。因此，继续调这个轻量 ranking loss 的权重优先级不高。
+
+下一步优先级调整：
+
+1. 保留 p5h cross-attn protected 作为当前最好结构基线，不采用 ranking w0.2/m0.01 作为默认。
+2. 如果继续做 ranking，应改成更强的错配负样本：同 batch hard negative、同城市近邻负样本、相似外观但不同位置负样本，而不是简单 shuffled。
+3. 更值得做的是让 remote 进入方式带有几何选择性，例如基于 ground token query 的局部 remote token cross-attn、top-k remote token selection、或显式位置/方位编码；否则模型容易只学到 remote 的全局先验。
+4. 评估上继续以 `same_gain`、`specific_gain_blank`、`specific_gain_shuffled`、`pass same>shuffled` 为主要判据；若 `specific_gain_shuffled <= 0`，即使 same 比 aerial-only 好，也不能认为 remote 真正提供了场景级互补信息。
+
