@@ -183,7 +183,7 @@ python scripts/export_pointcloud_ply.py \
 # split frame. Add --include_remote_points only for debugging that remote branch.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6a_vggt_official_raw_conditional_remote_adapter/checkpoint-best.pth \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6a_vggt_raw_base_conditional_remote_adapter/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/125 \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p6a_raw_ordinary \
     --vggt_p6a_export \
