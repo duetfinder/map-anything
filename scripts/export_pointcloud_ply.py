@@ -176,6 +176,16 @@ python scripts/export_pointcloud_ply.py \
     --vggt_p5f_lite_export \
     --remote_view_names image.png \
     --export_remote_control_modes same blank
+
+# p6a conditional remote adapter: official raw VGGT base + split late cross-attn.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6a_vggt_official_raw_conditional_remote_adapter/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p6a_raw_mixed \
+    --vggt_p6a_export \
+    --remote_view_names image.png \
+    --export_remote_control_modes same blank
 """
 
 import argparse
@@ -409,6 +419,42 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--vggt_p6a_export",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the P6A VGGT export preset: mixed ordinary/remote heads, "
+            "remote private point head, split remote aggregator, late remote-to-aerial "
+            "cross-attention, and protected ordinary heads. This is also auto-enabled "
+            "when checkpoint_path contains p6a_vggt."
+        ),
+    )
+    parser.add_argument(
+        "--vggt_late_fusion_type",
+        type=str,
+        default="cross_attention",
+        choices=["none", "film", "cross_attention"],
+        help="Late remote-to-aerial fusion type used by P5h/P6A VGGT exports.",
+    )
+    parser.add_argument(
+        "--vggt_late_gate_init",
+        type=float,
+        default=1e-3,
+        help="Late fusion gate init used to build P6A export wrapper before loading checkpoint.",
+    )
+    parser.add_argument(
+        "--vggt_max_remote_tokens",
+        type=int,
+        default=256,
+        help="Maximum remote tokens for VGGT late cross-attention exports.",
+    )
+    parser.add_argument(
+        "--vggt_cross_attention_heads",
+        type=int,
+        default=8,
+        help="Number of heads for VGGT late remote-to-aerial cross-attention exports.",
+    )
+    parser.add_argument(
         "--force_remote_instance",
         action="store_true",
         default=False,
@@ -600,9 +646,22 @@ def is_p5f_lite_checkpoint(args: argparse.Namespace) -> bool:
     return "p5f_vggt_lite" in checkpoint_path
 
 
+def is_p6a_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = str(args.checkpoint_path).lower()
+    return "p6a_vggt" in checkpoint_path
+
+
 def use_p5f_lite_export(args: argparse.Namespace) -> bool:
     return args.model == "vggt" and (
         args.vggt_p5f_lite_export or is_p5f_lite_checkpoint(args)
+    )
+
+
+def use_p6a_export(args: argparse.Namespace) -> bool:
+    return args.model == "vggt" and (
+        args.vggt_p6a_export or is_p6a_checkpoint(args)
     )
 
 
@@ -613,7 +672,7 @@ def resolve_vggt_output_heads(args: argparse.Namespace):
     ordinary_head = args.vggt_ordinary_output_head
     remote_head = args.vggt_remote_output_head
 
-    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args):
+    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args) or use_p6a_export(args):
         ordinary_head = ordinary_head or "depth"
         remote_head = remote_head or "point"
     elif args.vggt_export_mode == "depth_all":
@@ -644,7 +703,9 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
-    use_vggt_joint_remote_export = args.vggt_joint_remote_export or use_p5f_lite_export(args)
+    use_vggt_joint_remote_export = (
+        args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args)
+    )
     if use_vggt_joint_remote_export:
         if args.model != "vggt":
             raise ValueError("VGGT joint remote export presets are only supported with --model vggt")
@@ -666,13 +727,27 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
+    if use_p6a_export(args):
+        overrides.extend(
+            [
+                "model.model_config.use_view_type_bias=true",
+                "model.model_config.use_split_remote_aggregator=true",
+                f"model.model_config.remote_to_aerial_late_fusion_type={args.vggt_late_fusion_type}",
+                "model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+                f"model.model_config.remote_to_aerial_late_fusion_gate_init={args.vggt_late_gate_init}",
+                f"model.model_config.remote_to_aerial_cross_attention_heads={args.vggt_cross_attention_heads}",
+                f"model.model_config.remote_to_aerial_max_remote_tokens={args.vggt_max_remote_tokens}",
+                "model.model_config.protect_ordinary_heads_from_remote=true",
+            ]
+        )
+
     ordinary_head, remote_head = resolve_vggt_output_heads(args)
     if ordinary_head is not None:
         overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
     if remote_head is not None:
         overrides.append(f"model.model_config.remote_output_head={remote_head}")
     if args.model == "vggt" and (
-        args.vggt_use_remote_private_point_head or use_p5f_lite_export(args)
+        args.vggt_use_remote_private_point_head or use_p5f_lite_export(args) or use_p6a_export(args)
     ):
         overrides.extend(
             [
@@ -878,7 +953,9 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         args.force_remote_instance
         or args.vggt_joint_remote_export
         or args.vggt_p5f_lite_export
+        or args.vggt_p6a_export
         or is_p5f_lite_checkpoint(args)
+        or is_p6a_checkpoint(args)
         or args.model == "mapanything_rs_joint"
         or bool(args.remote_view_indices)
         or bool(args.remote_view_names)
@@ -890,7 +967,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     remote_names = {name for name in (args.remote_view_names or [])}
 
     if args.force_remote_instance or (
-        (args.vggt_joint_remote_export or use_p5f_lite_export(args))
+        (args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args))
         and not remote_indices
         and not remote_names
     ):
