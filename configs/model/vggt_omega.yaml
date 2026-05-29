@@ -1,0 +1,23 @@
+# String for model factory
+model_str: "vggt_omega"
+# Model config
+model_config:
+  name: "vggt_omega"
+  # VGGT-Omega checkpoints are gated and must be supplied as a local file.
+  load_pretrained_weights: false
+  load_custom_ckpt: false
+  custom_ckpt_path: null
+  strict_ckpt_load: true
+  patch_size: 16
+  embed_dim: 1024
+  enable_camera: true
+  enable_depth: true
+  enable_alignment: false
+  remote_instance_value: "remote"
+  # VGGT-Omega has no native point head; both ordinary and remote views use depth+camera.
+  ordinary_output_head: "depth"
+  remote_output_head: "depth"
+# VGGT-Omega expects images in [0, 1], then applies ResNet mean/std internally.
+data_norm_type: "identity"
+pretrained: null
+torch_hub_force_reload: false
