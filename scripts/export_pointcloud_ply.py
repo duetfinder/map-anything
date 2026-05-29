@@ -178,11 +178,14 @@ python scripts/export_pointcloud_ply.py \
     --export_remote_control_modes same blank
 
 # p6a conditional remote adapter: official raw VGGT base + split late cross-attn.
+# P6A uses remote as a conditioning input. By default this exports ordinary-view
+# points only, because protected split heads predict remote points in a separate
+# split frame. Add --include_remote_points only for debugging that remote branch.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
     --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6a_vggt_official_raw_conditional_remote_adapter/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/125 \
-    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p6a_raw_mixed \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p6a_raw_ordinary \
     --vggt_p6a_export \
     --remote_view_names image.png \
     --export_remote_control_modes same blank
@@ -427,6 +430,16 @@ def parse_args() -> argparse.Namespace:
             "remote private point head, split remote aggregator, late remote-to-aerial "
             "cross-attention, and protected ordinary heads. This is also auto-enabled "
             "when checkpoint_path contains p6a_vggt."
+        ),
+    )
+    parser.add_argument(
+        "--include_remote_points",
+        action="store_true",
+        default=False,
+        help=(
+            "Also write marked remote-view points to the PLY. For P6A/split-protected "
+            "exports, remote points are skipped by default because they are predicted "
+            "in a separate split frame and are not directly aligned with ordinary points."
         ),
     )
     parser.add_argument(
@@ -1007,6 +1020,10 @@ def get_remote_view_indices(views):
     return [idx for idx, view in enumerate(views) if is_remote_view(view)]
 
 
+def should_skip_remote_points(args: argparse.Namespace) -> bool:
+    return use_p6a_export(args) and not args.include_remote_points
+
+
 def copy_views(views):
     return [dict(view) for view in views]
 
@@ -1127,12 +1144,24 @@ def collect_world_space_point_cloud(
     views,
     apply_confidence_mask=False,
     confidence_percentile=50.0,
+    skip_remote_points=False,
 ):
     all_points = []
     all_colors = []
     per_view_stats = []
 
     for view_idx, pred in enumerate(outputs):
+        if skip_remote_points and view_idx < len(views) and is_remote_view(views[view_idx]):
+            per_view_stats.append(
+                {
+                    "view_idx": view_idx,
+                    "points": 0,
+                    "head": pred.get("vggt_output_head", "default"),
+                    "skipped": "remote_split_frame",
+                }
+            )
+            continue
+
         if "pts3d" in pred:
             pts3d_np = pred["pts3d"][0].cpu().numpy()
             export_mask = np.isfinite(pts3d_np).all(axis=-1)
@@ -1218,18 +1247,32 @@ def export_point_cloud_for_views(model, views, args: argparse.Namespace, output_
     duration = time() - start_time
     print(f"Inference finished in {duration:.3f}s")
 
+    skip_remote_points = should_skip_remote_points(args)
+    if skip_remote_points:
+        print(
+            "P6A split/protected export: skipping remote-view points by default; "
+            "remote views still condition ordinary-view predictions. Use "
+            "--include_remote_points only for branch debugging."
+        )
     print("Collecting unified world-space point cloud...")
     points, colors, per_view_stats = collect_world_space_point_cloud(
         outputs,
         views,
         apply_confidence_mask=args.apply_confidence_mask,
         confidence_percentile=args.confidence_percentile,
+        skip_remote_points=skip_remote_points,
     )
     for stat in per_view_stats:
-        print(
-            f"View {stat['view_idx']}: kept {stat['points']} points "
-            f"(head={stat['head']})"
-        )
+        skipped = stat.get("skipped")
+        if skipped:
+            print(
+                f"View {stat['view_idx']}: skipped ({skipped}, head={stat['head']})"
+            )
+        else:
+            print(
+                f"View {stat['view_idx']}: kept {stat['points']} points "
+                f"(head={stat['head']})"
+            )
     print(f"Total points before downsampling: {points.shape[0]}")
 
     if args.voxel_downsample:
