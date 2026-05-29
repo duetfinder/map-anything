@@ -59,6 +59,14 @@ def parse_args():
         choices=sorted(LOWER_IS_BETTER | HIGHER_IS_BETTER),
         help="Primary aerial metric used for pass-rate diagnostics.",
     )
+    parser.add_argument(
+        "--output_dir",
+        default=None,
+        help=(
+            "Optional directory for summary artifacts. Writes summary.csv, "
+            "summary.json, summary.md, and summary.png when matplotlib is available."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -211,7 +219,24 @@ def write_csv(rows, output_path):
         writer.writerows(rows)
 
 
-def print_table(rows):
+def format_value(value):
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "nan"
+        return f"{value:.6g}"
+    return str(value)
+
+
+def write_markdown(rows, output_path):
+    columns = summary_columns(rows)
+    with Path(output_path).open("w") as f:
+        f.write("| " + " | ".join(columns) + " |\n")
+        f.write("| " + " | ".join(["---"] * len(columns)) + " |\n")
+        for row in rows:
+            f.write("| " + " | ".join(format_value(row.get(col, "")) for col in columns) + " |\n")
+
+
+def summary_columns(rows=None):
     columns = [
         "name",
         "paired_scene_count",
@@ -229,9 +254,66 @@ def print_table(rows):
         "remote_damage__rs_height_mae_affine",
         "joint_global_pointmaps_abs_rel",
     ]
+    if rows is None:
+        return columns
+    return [col for col in columns if any(col in row for row in rows)]
+
+
+def write_plot(rows, output_path):
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"Skipping PNG summary because matplotlib is unavailable: {exc}")
+        return False
+
+    metrics = [
+        "same_gain__pointmaps_abs_rel",
+        "specific_gain_blank__pointmaps_abs_rel",
+        "specific_gain_shuffled__pointmaps_abs_rel",
+        "pass_rate_same_better_than_shuffled__pointmaps_abs_rel",
+    ]
+    labels = [
+        "same gain",
+        "same vs blank",
+        "same vs shuffled",
+        "pass > shuffled",
+    ]
+    names = [row.get("name", f"run{i}") for i, row in enumerate(rows)]
+    fig, axes = plt.subplots(len(metrics), 1, figsize=(max(8, len(rows) * 1.6), 9), constrained_layout=True)
+    if len(metrics) == 1:
+        axes = [axes]
+    for ax, metric, label in zip(axes, metrics, labels):
+        values = [row.get(metric, float("nan")) for row in rows]
+        ax.bar(names, values)
+        ax.axhline(0.0, color="black", linewidth=0.8)
+        if metric.startswith("pass_rate"):
+            ax.axhline(0.5, color="gray", linewidth=0.8, linestyle="--")
+            ax.axhline(0.6, color="green", linewidth=0.8, linestyle=":")
+            ax.set_ylim(0, 1)
+        ax.set_ylabel(label)
+        ax.tick_params(axis="x", rotation=25)
+    fig.suptitle("RS-guided dense MV benchmark summary")
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+    return True
+
+
+def write_output_dir(rows, output_dir):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_csv(rows, output_dir / "summary.csv")
+    with (output_dir / "summary.json").open("w") as f:
+        json.dump(rows, f, indent=2)
+    write_markdown(rows, output_dir / "summary.md")
+    write_plot(rows, output_dir / "summary.png")
+    print(f"Wrote summary artifacts to {output_dir}")
+
+
+def print_table(rows):
+    columns = summary_columns(rows)
     print("	".join(columns))
     for row in rows:
-        print("	".join(str(row.get(col, "")) for col in columns))
+        print("	".join(format_value(row.get(col, "")) for col in columns))
 
 
 def main():
@@ -255,6 +337,8 @@ def main():
         )
 
     print_table(rows)
+    if args.output_dir:
+        write_output_dir(rows, args.output_dir)
     if args.output_csv:
         write_csv(rows, args.output_csv)
     if args.output_json:
