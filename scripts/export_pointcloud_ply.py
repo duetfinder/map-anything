@@ -189,6 +189,18 @@ python scripts/export_pointcloud_ply.py \
     --vggt_p6a_export \
     --remote_view_names image.png \
     --export_remote_control_modes same blank
+
+# p6b joint remote alignment: ordinary views use camera+depth, remote views use
+# the trained remote point path. Private-head and shared-head checkpoints are
+# auto-detected from the checkpoint path; use --vggt_p6b_export for clarity.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p6b_private_mixed \
+    --vggt_p6b_export \
+    --remote_view_names image.png \
+    --export_remote_control_modes same blank
 """
 
 import argparse
@@ -433,6 +445,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--vggt_p6b_export",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the P6B VGGT export preset: mixed ordinary/remote heads and "
+            "P6B-specific remote point routing. Private-head, shared-head, and "
+            "viewtype variants are auto-detected from checkpoint_path when possible. "
+            "This is also auto-enabled when checkpoint_path contains p6b_vggt."
+        ),
+    )
+    parser.add_argument(
         "--include_remote_points",
         action="store_true",
         default=False,
@@ -673,6 +696,18 @@ def is_p6b_checkpoint(args: argparse.Namespace) -> bool:
     return "p6b_vggt" in checkpoint_path
 
 
+def is_p6b_shared_head_checkpoint(args: argparse.Namespace) -> bool:
+    if not is_p6b_checkpoint(args):
+        return False
+    return "shared_head" in str(args.checkpoint_path).lower()
+
+
+def is_p6b_viewtype_checkpoint(args: argparse.Namespace) -> bool:
+    if not is_p6b_checkpoint(args):
+        return False
+    return "viewtype" in str(args.checkpoint_path).lower()
+
+
 def use_p5f_lite_export(args: argparse.Namespace) -> bool:
     return args.model == "vggt" and (
         args.vggt_p5f_lite_export or is_p5f_lite_checkpoint(args)
@@ -686,7 +721,21 @@ def use_p6a_export(args: argparse.Namespace) -> bool:
 
 
 def use_p6b_export(args: argparse.Namespace) -> bool:
-    return args.model == "vggt" and is_p6b_checkpoint(args)
+    return args.model == "vggt" and (
+        args.vggt_p6b_export or is_p6b_checkpoint(args)
+    )
+
+
+def use_vggt_remote_private_point_head(args: argparse.Namespace) -> bool:
+    if args.model != "vggt":
+        return False
+    if args.vggt_use_remote_private_point_head:
+        return True
+    if use_p5f_lite_export(args) or use_p6a_export(args):
+        return True
+    if use_p6b_export(args):
+        return not is_p6b_shared_head_checkpoint(args)
+    return False
 
 
 def resolve_vggt_output_heads(args: argparse.Namespace):
@@ -765,14 +814,15 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
+    if use_p6b_export(args) and is_p6b_viewtype_checkpoint(args):
+        overrides.append("model.model_config.use_view_type_bias=true")
+
     ordinary_head, remote_head = resolve_vggt_output_heads(args)
     if ordinary_head is not None:
         overrides.append(f"model.model_config.ordinary_output_head={ordinary_head}")
     if remote_head is not None:
         overrides.append(f"model.model_config.remote_output_head={remote_head}")
-    if args.model == "vggt" and (
-        args.vggt_use_remote_private_point_head or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args)
-    ):
+    if use_vggt_remote_private_point_head(args):
         overrides.extend(
             [
                 "model.model_config.use_remote_private_point_head=true",
@@ -978,6 +1028,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         or args.vggt_joint_remote_export
         or args.vggt_p5f_lite_export
         or args.vggt_p6a_export
+        or args.vggt_p6b_export
         or is_p5f_lite_checkpoint(args)
         or is_p6a_checkpoint(args)
         or is_p6b_checkpoint(args)
