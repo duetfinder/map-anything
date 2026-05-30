@@ -515,3 +515,206 @@ raw-base ordinary-only 明显差于 raw VGGT：保护机制仍不足，不能继
 
 如果 P6A 仍然表现为 `same≈blank≈shuffled`，下一步不应继续调 remote loss 权重，而应转向 remote 表达方式：例如 geometry-aware remote prior、位置/方位编码、hard negative 采样，或把正射图像编码为 BEV/footprint/height prior，而不是普通 VGGT view。
 
+
+
+## P6B：Joint Frame Remote Alignment（2026-05-30 更新）
+
+P6A 废弃。P6A 的 split/protected 结构适合验证 remote 是否能作为条件输入影响 ordinary branch，但它不保证 remote branch 点云和普通视角点云处在同一坐标系，因此不满足当前目标。
+
+P6B 的目标改为：remote view 的 `pts3d` 必须直接表示 ordinary view0 坐标系下的场景点，并且 remote 点云应能和普通视角点云一起导出到同一个 PLY 中可视化对齐。
+
+硬约束：
+
+- 不使用 `use_split_remote_aggregator`。
+- 不使用 `protect_ordinary_heads_from_remote`。
+- remote view 使用 point output head。
+- remote point loss 显式对齐 `remote_pointmap_view0`。
+- `remote_pointmap_loss_weight` 必须大于 0。
+
+首轮实验：
+
+- `p6b_vggt_joint_remote_alignment_shared_head_w03`：remote 使用共享 point head，验证 joint frame 最小可行性。
+- `p6b_vggt_joint_remote_alignment_private_head_w03`：remote 使用 private point head，避免 remote 成像差异直接污染共享 point head。
+- `p6b_vggt_joint_remote_alignment_private_head_viewtype_w03`：private head 加 post-aggregator view type bias，给模型一个轻量模态提示。
+
+默认主实验为 private head，`remote_pointmap_loss_weight=0.3`。后续根据 remote PLY 对齐情况扫 `0.1 / 0.3 / 1.0`。
+
+成功判据：
+
+- `--include_remote_points` 导出的 remote 点云和 ordinary 点云大体对齐。
+- benchmark 中 `rs_pointmap_loss` / `rs_pointmap_loss_raw_metric` 相对 P5F/P6A 明显改善。
+- same remote 优于 blank/shuffled remote，但这是评估结果，不直接作为训练损失。
+- ordinary branch 不明显劣于 raw VGGT/P5B。
+
+运行入口：
+
+```bash
+NUM_GPUS=2 CUDA_DEVICES=0,1 BATCH_SIZE=8 EPOCHS=50 \
+LAMBDA_REMOTE_PM=0.3 \
+bash bash_scripts/train/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head.sh
+```
+
+mini benchmark：
+
+```bash
+CUDA_DEVICE=0 REMOTE_OVERFIT_NUM_SETS=10 \
+EXPERIMENT_NAME=p6b_vggt_joint_remote_alignment_private_head_w03 \
+bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p6b_mini_controls.sh
+```
+
+
+### P6B 训练实现备注
+
+2026-05-30 首次启动时 `BATCH_SIZE=10` 在 2x3090 上 OOM。P6B 同时运行 ordinary depth、shared point consistency 和 remote private point head，显存高于 P6A，因此默认使用 `BATCH_SIZE=8`。`model.track_head` 已显式冻结，避免无关参数进入优化器。
+
+## 2026-05-30 规划更新：丢弃 P6A，转向 P6B remote branch alignment
+
+P6A 已丢弃。原因不是简单实现问题，而是目标错位：P6A 把 remote 分支拆成 private frame 后，导出的 remote 点云与普通视角点云存在整体角度/坐标错乱；而当前真正关心的是 `remote branch point cloud alignment`，即 remote 视图预测出的点云要直接落在 ordinary/view0 对齐空间中。继续优化 P6A 的普通视角 conditioning 或 remote 点云可视化没有意义。
+
+P6B 的目标更窄：保留 VGGT joint forward 的共享坐标系，让 remote view 输出 `pts3d`，并用数据里的 `remote_pointmap_view0` 监督它。这个实验不追求 remote 自身绝对 metric 准，而是先验证 remote branch 是否能学到和 ordinary/view0 一致的点云空间。如果这一点失败，后续任何 remote-to-ordinary 增强都缺少几何基础。
+
+### P6B 当前实现
+
+新增训练入口：
+
+```bash
+bash bash_scripts/train/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head.sh
+bash bash_scripts/train/Crossview/vggt/p6b_vggt_joint_remote_alignment_shared_head.sh
+bash bash_scripts/train/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head_viewtype.sh
+```
+
+当前主实验使用 private remote point head：
+
+```bash
+NUM_GPUS=2 CUDA_DEVICES=0,1 BATCH_SIZE=5 NUM_VIEWS=4 EPOCHS=50 \
+LAMBDA_REMOTE_PM=0.3 SAVE_FREQ=0 KEEP_FREQ=0 PRINT_FREQ=20 \
+EXPERIMENT_NAME=p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly \
+bash bash_scripts/train/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head.sh
+```
+
+关键配置：
+
+- official VGGT 权重：`/root/autodl-tmp/outputs/checkpoints/vggt/model.pt`。
+- `use_split_remote_aggregator=false`，避免再进入 P6A 式 private frame。
+- `ordinary_output_head=depth`，普通视角仍走 depth/camera 路径。
+- `remote_output_head=point`，remote 只训练 point 输出。
+- `use_remote_private_point_head=true`，普通 `model.point_head` 冻结，remote 用独立 point head。
+- `output_point_head_for_consistency=false`，没有 branch consistency 时不再额外跑 shared point head。
+- `remote_compare_in_view0_frame=false` 且 `remote_compare_gt_in_view0_frame_only=true`，直接使用 view0-frame 的 remote GT。
+- same/blank/shuffled 仍只用于评估，不写入训练 loss。
+
+### 工程修正
+
+P6B private head 的显存瓶颈主要来自 DPT head。已做三处修正：
+
+1. remote private point head 只在 remote views 上运行，然后 scatter 回输出列表；不再对所有 ordinary+remote views 运行 remote head。
+2. DPT head 训练时使用 activation checkpoint，降低 head backward 显存。
+3. DDP 增加 `train_params.ddp_static_graph` 和 `train_params.ddp_find_unused_parameters`。P6B private wrapper 默认 `static_graph=true`、`find_unused_parameters=false`，解决 reentrant checkpoint 下的 `mark variable ready twice` 问题。
+
+显存边界：
+
+- `BATCH_SIZE=8`：backward OOM，约 47.4GB 被打满。
+- `BATCH_SIZE=6`：backward OOM，仍约 47.3GB。
+- `BATCH_SIZE=5`：已稳定进入训练，`max mem` 约 46.8GB，两张 RTX 3090 48GB 基本吃满。
+- `BATCH_SIZE=4`：可稳定，但显存利用率略低；仅作为 fallback。
+
+### 当前运行状态
+
+当前正在运行：
+
+```text
+outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly
+```
+
+第 0 个 epoch 已完成并保存 `checkpoint-best.pth`。早期训练表现正常：
+
+- train loss 从首步约 `24.57` 下降到 epoch0 末约 `0.92`。
+- train `remote_loss` 从约 `0.0657` 下降到约 `0.0099`。
+- val loss epoch1 约 `1.5244`，val `remote_loss` 约 `0.0146`。
+- `rs_pointmap_loss_raw_metric` 暂时没有明显下降趋势，这符合归一化训练设定下的预期；它只作为诊断，不作为 checkpoint 主目标。
+
+### P6B 评估计划
+
+训练完成后先跑 mini controls：
+
+```bash
+CUDA_DEVICE=0 REMOTE_OVERFIT_NUM_SETS=10 \
+EXPERIMENT_NAME=p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly \
+OUTPUT_DIR=/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly_mini_controls \
+bash bash_scripts/benchmark/rs_guided_dense_mv/vggt_crossview_p6b_mini_controls.sh
+```
+
+再汇总：
+
+```bash
+python scripts/summarize_rs_guided_benchmark.py \
+  /root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly_mini_controls \
+  --output_dir /root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly_mini_controls
+```
+
+主要看两类结果：
+
+1. remote branch alignment：remote point/height 指标是否比 raw VGGT 和 P5 系列更合理，PLY 中 remote 点云是否能和 ordinary 点云落到同一 view0 空间。
+2. ordinary path damage：`aerial_only` 和 `joint_same` 的普通视角指标是否明显差于 raw VGGT/P5B。如果 P6B 只改善 remote branch 但伤普通路径，下一步需要 teacher preservation 或冻结更多 ordinary trunk。
+
+如果 P6B private head 有效，下一步做两个小对照：
+
+- `private_head_viewtype`：打开 view type bias，判断类型偏置是否能让 remote head 更稳定。
+- `shared_head`：不用 private remote head，测试共享 point head 是否足以对齐 remote；若效果差，说明 remote 的正射投影差异确实需要专门 head。
+
+### P6B 首轮训练与 mini benchmark 结果
+
+实际执行：
+
+```bash
+NUM_GPUS=2 CUDA_DEVICES=0,1 BATCH_SIZE=5 NUM_VIEWS=4 EPOCHS=50 \
+LAMBDA_REMOTE_PM=0.3 SAVE_FREQ=0 KEEP_FREQ=0 PRINT_FREQ=20 \
+EXPERIMENT_NAME=p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly \
+bash bash_scripts/train/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head.sh
+```
+
+训练跑到 epoch10 后手动停止，原因是第 10 个验证点没有超过当前 best，且已有足够信息进入 mini benchmark。`checkpoint-best.pth` 保留在：
+
+```text
+outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly/checkpoint-best.pth
+```
+
+best checkpoint 的保存时间为 2026-05-30 02:44，对应早期验证最优 median。训练过程中 `BATCH_SIZE=5` 稳定运行，`max mem` 约 46835 MiB，基本吃满 48GB GPU；`BATCH_SIZE=6/8` 都在 backward OOM。
+
+10-scene mini controls 输出目录：
+
+```text
+outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly_mini_controls
+```
+
+summary 关键结果：
+
+| metric | value |
+| --- | ---: |
+| aerial_only pointmaps_abs_rel | 0.0674151 |
+| joint_same pointmaps_abs_rel | 0.0705461 |
+| same_gain pointmaps_abs_rel | -0.00313103 |
+| specific_gain_blank pointmaps_abs_rel | +0.00371139 |
+| specific_gain_shuffled pointmaps_abs_rel | +0.00116381 |
+| pass_rate same better than aerial | 0.20 |
+| pass_rate same better than blank | 0.80 |
+| pass_rate same better than shuffled | 0.60 |
+| same_gain z_depth_abs_rel | -0.00137855 |
+| same_gain ray_dirs_err_deg | +0.0761856 |
+| remote_damage rs_height_mae_affine | -1.42882 |
+| joint_global_pointmaps_abs_rel | 0.0669546 |
+
+判读：
+
+1. P6B private head 确实让 remote branch 更有用：`remote_damage__rs_height_mae_affine=-1.42882`，joint remote height 比 rs-only 更好。
+2. same remote 对 ordinary path 仍不是正向增强：`same_gain__pointmaps_abs_rel=-0.00313`，`pass_rate_same_better_than_aerial=0.20`。
+3. 但 same 相比 blank/shuffled 有特异性优势：`specific_gain_blank>0`、`specific_gain_shuffled>0`，pass rate 分别为 0.80/0.60。这说明模型不是完全忽略 remote 内容，而是 remote 内容带来的信息还不足以抵消 joint forward 对 ordinary path 的扰动。
+4. 当前 P6B 比 P6A 更合理，因为它没有追求 split private frame 下的无意义 remote PLY 对齐，而是在 joint frame 中学习 remote 点云；但它还不是最终方案。
+
+下一步优先级：
+
+1. 跑 `private_head_viewtype` 小对照。目标是让模型更早区分 remote/ordinary token，降低正射图像对 ordinary token 的表示污染，同时保留 P6B 的 remote branch alignment。
+2. 跑 `shared_head` 小对照。若 shared head 的 remote alignment 明显差于 private head，说明正射 remote 需要专门 head；若接近，则 private head 不是必要复杂度。
+3. 给 P6B 加 ordinary teacher preservation：用 raw VGGT 或冻结 ordinary-only 输出约束 ordinary path，不让 joint same 为了 remote alignment 损伤 aerial-only。这个比直接把 same/blank/shuffled 写进训练 loss 更合理，因为 same 优于 controls 应该是评估结果，而不是硬编码出发点。
+4. 若 viewtype + preservation 仍不能让 `same_gain>0`，再考虑更强的 late/gated fusion，而不是回到 P6A split frame。
+

@@ -19,6 +19,9 @@ weight_decay: 0.05
 schedule_type: "linear_warmup_half_cycle_cosine_decay"
 # Warn if model params are not in the below submodule_configs
 warn_not_in_submodule: False
+# DDP graph options. Enable static_graph for fixed-graph checkpointed heads.
+ddp_static_graph: False
+ddp_find_unused_parameters: True
 # Optimizer parameters specific to submodules
 submodule_configs: {}
 # Use Automatic Mixed Precision for pretraining

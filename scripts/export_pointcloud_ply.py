@@ -666,6 +666,13 @@ def is_p6a_checkpoint(args: argparse.Namespace) -> bool:
     return "p6a_vggt" in checkpoint_path
 
 
+def is_p6b_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = str(args.checkpoint_path).lower()
+    return "p6b_vggt" in checkpoint_path
+
+
 def use_p5f_lite_export(args: argparse.Namespace) -> bool:
     return args.model == "vggt" and (
         args.vggt_p5f_lite_export or is_p5f_lite_checkpoint(args)
@@ -678,6 +685,10 @@ def use_p6a_export(args: argparse.Namespace) -> bool:
     )
 
 
+def use_p6b_export(args: argparse.Namespace) -> bool:
+    return args.model == "vggt" and is_p6b_checkpoint(args)
+
+
 def resolve_vggt_output_heads(args: argparse.Namespace):
     if args.model != "vggt":
         return None, None
@@ -685,7 +696,7 @@ def resolve_vggt_output_heads(args: argparse.Namespace):
     ordinary_head = args.vggt_ordinary_output_head
     remote_head = args.vggt_remote_output_head
 
-    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args) or use_p6a_export(args):
+    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args):
         ordinary_head = ordinary_head or "depth"
         remote_head = remote_head or "point"
     elif args.vggt_export_mode == "depth_all":
@@ -717,7 +728,7 @@ def resolve_config_overrides(args: argparse.Namespace):
         )
 
     use_vggt_joint_remote_export = (
-        args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args)
+        args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args)
     )
     if use_vggt_joint_remote_export:
         if args.model != "vggt":
@@ -760,7 +771,7 @@ def resolve_config_overrides(args: argparse.Namespace):
     if remote_head is not None:
         overrides.append(f"model.model_config.remote_output_head={remote_head}")
     if args.model == "vggt" and (
-        args.vggt_use_remote_private_point_head or use_p5f_lite_export(args) or use_p6a_export(args)
+        args.vggt_use_remote_private_point_head or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args)
     ):
         overrides.extend(
             [
@@ -969,6 +980,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         or args.vggt_p6a_export
         or is_p5f_lite_checkpoint(args)
         or is_p6a_checkpoint(args)
+        or is_p6b_checkpoint(args)
         or args.model == "mapanything_rs_joint"
         or bool(args.remote_view_indices)
         or bool(args.remote_view_names)
@@ -980,7 +992,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     remote_names = {name for name in (args.remote_view_names or [])}
 
     if args.force_remote_instance or (
-        (args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args))
+        (args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args))
         and not remote_indices
         and not remote_names
     ):

@@ -10,6 +10,7 @@ Inference wrapper for VGGT
 from copy import deepcopy
 
 import torch
+import torch.utils.checkpoint
 
 from mapanything.models.external.vggt.models.vggt import VGGT
 from mapanything.models.external.vggt.utils.geometry import closed_form_inverse_se3
@@ -314,6 +315,17 @@ class VGGTWrapper(torch.nn.Module):
             output[:, remote_mask, ...] = remote_value
         return output
 
+    def _run_dpt_head(self, head, tokens_list, head_images, ps_idx):
+        if not self.training:
+            return head(tokens_list, head_images, ps_idx)
+
+        def run_head(*tokens):
+            return head(list(tokens), head_images, ps_idx)
+
+        return torch.utils.checkpoint.checkpoint(
+            run_head, *tokens_list, use_reentrant=True
+        )
+
     def _run_prediction_heads(self, aggregated_tokens_list, images, ps_idx, views):
         remote_mask = self._remote_view_mask(views, device=images.device)
         has_remote = bool(remote_mask.any())
@@ -342,22 +354,32 @@ class VGGTWrapper(torch.nn.Module):
             extrinsic, intrinsic = pose_encoding_to_extri_intri(
                 pose_enc, images.shape[-2:]
             )
-            depth_map, depth_conf = self.model.depth_head(
-                aggregated_tokens_list, images, ps_idx
+            depth_map, depth_conf = self._run_dpt_head(
+                self.model.depth_head, aggregated_tokens_list, images, ps_idx
             )
 
             point_map = None
             point_conf = None
             if need_shared_point_head:
-                point_map, point_conf = self.model.point_head(
-                    aggregated_tokens_list, images, ps_idx
+                point_map, point_conf = self._run_dpt_head(
+                    self.model.point_head, aggregated_tokens_list, images, ps_idx
                 )
 
             remote_point_map = None
             remote_point_conf = None
             if need_remote_private_point_head:
-                remote_point_map, remote_point_conf = self.remote_point_head(
-                    aggregated_tokens_list, images, ps_idx
+                remote_tokens_list = self._select_tokens_by_mask(
+                    aggregated_tokens_list, remote_mask
+                )
+                remote_images = images[:, remote_mask, ...]
+                remote_private_point_map, remote_private_point_conf = self._run_dpt_head(
+                    self.remote_point_head, remote_tokens_list, remote_images, ps_idx
+                )
+                remote_point_map = self._scatter_view_tensor(
+                    None, remote_private_point_map, ~remote_mask, remote_mask, len(views)
+                )
+                remote_point_conf = self._scatter_view_tensor(
+                    None, remote_private_point_conf, ~remote_mask, remote_mask, len(views)
                 )
 
             return (
@@ -397,11 +419,11 @@ class VGGTWrapper(torch.nn.Module):
             aerial_intrinsic, remote_intrinsic, aerial_mask, remote_mask, num_views
         )
 
-        aerial_depth_map, aerial_depth_conf = self.model.depth_head(
-            aerial_tokens_list, aerial_images, ps_idx
+        aerial_depth_map, aerial_depth_conf = self._run_dpt_head(
+            self.model.depth_head, aerial_tokens_list, aerial_images, ps_idx
         )
-        remote_depth_map, remote_depth_conf = self.model.depth_head(
-            remote_tokens_list, remote_images, ps_idx
+        remote_depth_map, remote_depth_conf = self._run_dpt_head(
+            self.model.depth_head, remote_tokens_list, remote_images, ps_idx
         )
         depth_map = self._scatter_view_tensor(
             aerial_depth_map, remote_depth_map, aerial_mask, remote_mask, num_views
@@ -413,11 +435,11 @@ class VGGTWrapper(torch.nn.Module):
         point_map = None
         point_conf = None
         if need_shared_point_head:
-            aerial_point_map, aerial_point_conf = self.model.point_head(
-                aerial_tokens_list, aerial_images, ps_idx
+            aerial_point_map, aerial_point_conf = self._run_dpt_head(
+                self.model.point_head, aerial_tokens_list, aerial_images, ps_idx
             )
-            remote_point_map_shared, remote_point_conf_shared = self.model.point_head(
-                remote_tokens_list, remote_images, ps_idx
+            remote_point_map_shared, remote_point_conf_shared = self._run_dpt_head(
+                self.model.point_head, remote_tokens_list, remote_images, ps_idx
             )
             point_map = self._scatter_view_tensor(
                 aerial_point_map,

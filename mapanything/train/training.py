@@ -142,11 +142,23 @@ def train(args):
 
     # Init model for DDP training
     if args.distributed.distributed:
+        ddp_static_graph = bool(
+            getattr(args.train_params, "ddp_static_graph", False)
+        )
+        ddp_find_unused_parameters = bool(
+            getattr(args.train_params, "ddp_find_unused_parameters", True)
+        )
+        if ddp_static_graph and ddp_find_unused_parameters:
+            print(
+                "DDP static_graph=True; disabling find_unused_parameters to "
+                "avoid duplicate autograd-ready hooks with checkpointed heads."
+            )
+            ddp_find_unused_parameters = False
         model = torch.nn.parallel.DistributedDataParallel(
             model,
             device_ids=[args.distributed.gpu],
-            find_unused_parameters=True,
-            static_graph=False,
+            find_unused_parameters=ddp_find_unused_parameters,
+            static_graph=ddp_static_graph,
         )
         model_without_ddp = model.module
 
