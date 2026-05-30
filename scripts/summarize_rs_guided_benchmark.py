@@ -222,18 +222,40 @@ def write_csv(rows, output_path):
 def format_value(value):
     if isinstance(value, float):
         if math.isnan(value):
-            return "nan"
+            return "-"
+        abs_value = abs(value)
+        if abs_value != 0 and (abs_value < 1e-4 or abs_value >= 1e4):
+            return f"{value:.3e}"
         return f"{value:.6g}"
+    if value is None:
+        return "-"
     return str(value)
 
 
-def write_markdown(rows, output_path):
-    columns = summary_columns(rows)
-    with Path(output_path).open("w") as f:
-        f.write("| " + " | ".join(columns) + " |\n")
-        f.write("| " + " | ".join(["---"] * len(columns)) + " |\n")
-        for row in rows:
-            f.write("| " + " | ".join(format_value(row.get(col, "")) for col in columns) + " |\n")
+def markdown_escape(value):
+    return format_value(value).replace("|", "\\|")
+
+
+def write_markdown_table(f, columns, rows):
+    f.write("| " + " | ".join(columns) + " |\n")
+    f.write("| " + " | ".join(["---"] * len(columns)) + " |\n")
+    for row in rows:
+        f.write("| " + " | ".join(markdown_escape(row.get(col, "")) for col in columns) + " |\n")
+    f.write("\n")
+
+
+def concise_verdict(row):
+    same_gain = row.get("same_gain__pointmaps_abs_rel", float("nan"))
+    blank_gain = row.get("specific_gain_blank__pointmaps_abs_rel", float("nan"))
+    shuffled_gain = row.get("specific_gain_shuffled__pointmaps_abs_rel", float("nan"))
+    pass_aerial = row.get("pass_rate_same_better_than_aerial__pointmaps_abs_rel", float("nan"))
+    if finite(same_gain) and same_gain > 0 and finite(blank_gain) and blank_gain > 0 and finite(shuffled_gain) and shuffled_gain > 0:
+        return "same improves aerial and beats controls"
+    if finite(blank_gain) and blank_gain > 0 and finite(shuffled_gain) and shuffled_gain > 0:
+        return "remote-specific signal exists, but aerial path is not improved"
+    if finite(pass_aerial) and pass_aerial >= 0.5:
+        return "mixed; scene-level gains exist but averages are weak"
+    return "no reliable same-remote gain"
 
 
 def summary_columns(rows=None):
@@ -259,6 +281,101 @@ def summary_columns(rows=None):
     return [col for col in columns if any(col in row for row in rows)]
 
 
+def write_markdown(rows, output_path):
+    overview_columns = [
+        "name",
+        "paired_scene_count",
+        "same_gain__pointmaps_abs_rel",
+        "specific_gain_blank__pointmaps_abs_rel",
+        "specific_gain_shuffled__pointmaps_abs_rel",
+        "pass_rate_same_better_than_aerial__pointmaps_abs_rel",
+        "verdict",
+    ]
+    aerial_columns = [
+        "name",
+        "aerial_only__pointmaps_abs_rel",
+        "joint_same__pointmaps_abs_rel",
+        "joint_blank__pointmaps_abs_rel",
+        "joint_shuffled__pointmaps_abs_rel",
+        "same_gain__z_depth_abs_rel",
+        "same_gain__ray_dirs_err_deg",
+    ]
+    control_columns = [
+        "name",
+        "pass_rate_same_better_than_aerial__pointmaps_abs_rel",
+        "pass_rate_same_better_than_blank__pointmaps_abs_rel",
+        "pass_rate_same_better_than_shuffled__pointmaps_abs_rel",
+        "specific_gain_blank__pointmaps_abs_rel",
+        "specific_gain_shuffled__pointmaps_abs_rel",
+    ]
+    rs_columns = [
+        "name",
+        "rs_only__rs_height_mae_affine",
+        "joint_rs__rs_height_mae_affine",
+        "remote_damage__rs_height_mae_affine",
+        "rs_only__rs_height_rmse_affine",
+        "joint_rs__rs_height_rmse_affine",
+        "remote_damage__rs_height_rmse_affine",
+        "joint_global_pointmaps_abs_rel",
+    ]
+
+    rows_with_verdict = []
+    for row in rows:
+        row_copy = dict(row)
+        row_copy["verdict"] = concise_verdict(row)
+        rows_with_verdict.append(row_copy)
+
+    with Path(output_path).open("w") as f:
+        f.write("# RS-guided Dense MV Summary\n\n")
+        f.write("Positive `same_gain` means same remote improves over aerial-only for lower-is-better metrics. ")
+        f.write("Positive `specific_gain_*` means same remote beats that control. ")
+        f.write("Positive `remote_damage` means joint RS is worse than RS-only; negative means better.\n\n")
+
+        f.write("## Overview\n\n")
+        write_markdown_table(f, [c for c in overview_columns if any(c in r for r in rows_with_verdict)], rows_with_verdict)
+
+        f.write("## Aerial Reconstruction\n\n")
+        write_markdown_table(f, [c for c in aerial_columns if any(c in r for r in rows)], rows)
+
+        f.write("## Remote-Control Specificity\n\n")
+        write_markdown_table(f, [c for c in control_columns if any(c in r for r in rows)], rows)
+
+        if any(any(c in row for c in rs_columns) for row in rows):
+            f.write("## RS Branch / Global Metrics\n\n")
+            write_markdown_table(f, [c for c in rs_columns if any(c in r for r in rows)], rows)
+
+        if len(rows) <= 6:
+            f.write("## Per-Experiment Details\n\n")
+            for row in rows:
+                f.write(f"### {markdown_escape(row.get('name', 'run'))}\n\n")
+                detail_rows = [
+                    {"metric": key, "value": value}
+                    for key, value in row.items()
+                    if key not in {"name", "path"}
+                ]
+                write_markdown_table(f, ["metric", "value"], detail_rows)
+
+
+def _plot_values_for_metric(rows, metric):
+    values = []
+    for row in rows:
+        value = row.get(metric, float("nan"))
+        values.append(value if finite(value) else float("nan"))
+    return values
+
+
+def _bar_colors(values):
+    colors = []
+    for value in values:
+        if not finite(value):
+            colors.append("#b8b8b8")
+        elif value >= 0:
+            colors.append("#2c7fb8")
+        else:
+            colors.append("#d95f0e")
+    return colors
+
+
 def write_plot(rows, output_path):
     try:
         import matplotlib.pyplot as plt
@@ -267,36 +384,51 @@ def write_plot(rows, output_path):
         return False
 
     metrics = [
-        "same_gain__pointmaps_abs_rel",
-        "specific_gain_blank__pointmaps_abs_rel",
-        "specific_gain_shuffled__pointmaps_abs_rel",
-        "pass_rate_same_better_than_shuffled__pointmaps_abs_rel",
+        ("same_gain__pointmaps_abs_rel", "Same remote gain vs aerial", 0.0, None),
+        ("specific_gain_blank__pointmaps_abs_rel", "Specific gain vs blank", 0.0, None),
+        ("specific_gain_shuffled__pointmaps_abs_rel", "Specific gain vs shuffled", 0.0, None),
+        ("pass_rate_same_better_than_aerial__pointmaps_abs_rel", "Pass rate: same > aerial", 0.5, (0, 1)),
+        ("pass_rate_same_better_than_blank__pointmaps_abs_rel", "Pass rate: same > blank", 0.5, (0, 1)),
+        ("remote_damage__rs_height_mae_affine", "RS height damage: joint - RS-only", 0.0, None),
     ]
-    labels = [
-        "same gain",
-        "same vs blank",
-        "same vs shuffled",
-        "pass > shuffled",
-    ]
-    names = [row.get("name", f"run{i}") for i, row in enumerate(rows)]
-    fig, axes = plt.subplots(len(metrics), 1, figsize=(max(8, len(rows) * 1.6), 9), constrained_layout=True)
-    if len(metrics) == 1:
+    metrics = [item for item in metrics if any(item[0] in row for row in rows)]
+    if not metrics:
+        print("Skipping PNG summary because no plottable metrics were found")
+        return False
+
+    names = [str(row.get("name", f"run{i}")) for i, row in enumerate(rows)]
+    short_names = [name if len(name) <= 42 else name[:19] + "..." + name[-20:] for name in names]
+
+    n_metrics = len(metrics)
+    fig_height = max(7.0, 1.7 * n_metrics + 0.28 * max(1, len(rows)))
+    fig, axes = plt.subplots(n_metrics, 1, figsize=(13, fig_height), constrained_layout=True)
+    if n_metrics == 1:
         axes = [axes]
-    for ax, metric, label in zip(axes, metrics, labels):
-        values = [row.get(metric, float("nan")) for row in rows]
-        ax.bar(names, values)
-        ax.axhline(0.0, color="black", linewidth=0.8)
+
+    y_positions = list(range(len(rows)))
+    for ax, (metric, title, reference, xlim) in zip(axes, metrics):
+        values = _plot_values_for_metric(rows, metric)
+        ax.barh(y_positions, values, color=_bar_colors(values), height=0.62)
+        ax.axvline(reference, color="#222222", linewidth=0.9)
         if metric.startswith("pass_rate"):
-            ax.axhline(0.5, color="gray", linewidth=0.8, linestyle="--")
-            ax.axhline(0.6, color="green", linewidth=0.8, linestyle=":")
-            ax.set_ylim(0, 1)
-        ax.set_ylabel(label)
-        ax.tick_params(axis="x", rotation=25)
-    fig.suptitle("RS-guided dense MV benchmark summary")
-    fig.savefig(output_path, dpi=180)
+            ax.axvline(0.6, color="#238b45", linewidth=0.9, linestyle=":")
+        ax.set_yticks(y_positions)
+        ax.set_yticklabels(short_names, fontsize=8)
+        ax.invert_yaxis()
+        ax.set_title(title, loc="left", fontsize=10, pad=6)
+        ax.grid(axis="x", color="#dddddd", linewidth=0.6)
+        if xlim is not None:
+            ax.set_xlim(*xlim)
+        for spine in ["top", "right", "left"]:
+            ax.spines[spine].set_visible(False)
+        for y, value in zip(y_positions, values):
+            if finite(value):
+                ax.text(value, y, "  " + format_value(value), va="center", fontsize=7)
+
+    fig.suptitle("RS-guided dense MV benchmark summary", fontsize=13)
+    fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     return True
-
 
 def write_output_dir(rows, output_dir):
     output_dir = Path(output_dir)
