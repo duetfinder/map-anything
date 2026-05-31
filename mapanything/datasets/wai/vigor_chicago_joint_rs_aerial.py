@@ -22,7 +22,9 @@ from mapanything.datasets.wai.vigor_chicago import VigorChicagoWAI
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
     available_providers,
     load_pointmap_modalities,
+    load_projection_aux_modalities,
     normalize_providers,
+    preprocess_projection_aux_modalities,
     preprocess_rs_modalities,
 )
 
@@ -220,6 +222,8 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         remote_pointmap, remote_valid_mask, remote_height_map = load_pointmap_modalities(
             remote_scene_dir / 'pixel_to_point_map.npz'
         )
+        projection_aux_path = remote_scene_dir / 'projection_aux.npz'
+        remote_projection_aux = load_projection_aux_modalities(projection_aux_path)
 
         with open(remote_scene_dir / 'info.json', 'r', encoding='utf-8') as f:
             info = json.load(f)
@@ -242,9 +246,15 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             label_resize_mode=self.remote_label_resize_mode,
             rng=self._rng,
         )
+        remote_projection_aux = preprocess_projection_aux_modalities(
+            remote_projection_aux,
+            crop_box,
+            self.remote_resolution,
+            label_resize_mode=self.remote_label_resize_mode,
+        )
         remote_image = self.remote_transform(remote_image)
 
-        return {
+        sample = {
             'remote_scene_dir': str(remote_scene_dir),
             'remote_provider': remote_provider,
             'remote_projection_type': str(
@@ -258,6 +268,10 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             'remote_crop_box_xyxy': np.asarray(crop_box, dtype=np.int32),
             'remote_aug_variant': int(aug_variant),
         }
+        if remote_projection_aux is not None:
+            sample['remote_projection_aux_path'] = str(projection_aux_path)
+            sample.update(remote_projection_aux)
+        return sample
 
     @staticmethod
     def _pack_remote_samples(remote_samples: list[dict]) -> dict:

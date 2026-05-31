@@ -120,6 +120,33 @@ def load_pointmap_modalities(pointmap_path: Path):
     return pointmap, valid_mask, height_map
 
 
+def load_projection_aux_modalities(projection_aux_path: Path):
+    if projection_aux_path is None or not Path(projection_aux_path).exists():
+        return None
+    aux_npz = np.load(projection_aux_path)
+    required = {
+        'valid_mask',
+        'rel_height',
+        'offset_xy',
+        'building_mask',
+        'tilt_projected_mask',
+        'global_dir_xy',
+        'global_slope',
+    }
+    missing = required - set(aux_npz.files)
+    if missing:
+        raise KeyError(f'Missing projection aux keys in {projection_aux_path}: {sorted(missing)}')
+    return {
+        'remote_projection_valid_mask': aux_npz['valid_mask'].astype(bool),
+        'remote_projection_rel_height': aux_npz['rel_height'].astype(np.float32),
+        'remote_projection_offset_xy': aux_npz['offset_xy'].astype(np.float32),
+        'remote_projection_building_mask': aux_npz['building_mask'].astype(bool),
+        'remote_projection_tilt_mask': aux_npz['tilt_projected_mask'].astype(bool),
+        'remote_projection_global_dir_xy': aux_npz['global_dir_xy'].astype(np.float32),
+        'remote_projection_global_slope': aux_npz['global_slope'].astype(np.float32),
+    }
+
+
 def pil_resample_mode(mode: str):
     mode = str(mode).lower()
     if mode == 'nearest':
@@ -179,6 +206,58 @@ def sample_crop_box(shape_hw, resolution_hw, crop_mode: str, crop_scale_range, r
         raise ValueError(f'Unsupported crop_mode: {crop_mode}')
 
     return (left, top, left + crop_size, top + crop_size)
+
+
+def _resize_label_array(array, resolution, mode='nearest'):
+    if array.shape[:2] == resolution:
+        return array
+    tensor = torch.from_numpy(array.astype(np.float32))
+    if tensor.ndim == 2:
+        tensor = tensor.unsqueeze(0)
+        squeeze_channel = True
+    else:
+        tensor = tensor.permute(2, 0, 1)
+        squeeze_channel = False
+    tensor = tensor.unsqueeze(0)
+    mode = torch_resample_mode(mode)
+    if mode == 'nearest':
+        tensor = torch.nn.functional.interpolate(tensor, size=resolution, mode=mode)
+    else:
+        tensor = torch.nn.functional.interpolate(tensor, size=resolution, mode=mode, align_corners=False)
+    tensor = tensor[0]
+    if squeeze_channel:
+        return tensor[0].numpy()
+    return tensor.permute(1, 2, 0).numpy()
+
+
+def preprocess_projection_aux_modalities(projection_aux, box, resolution, label_resize_mode='nearest'):
+    if projection_aux is None:
+        return None
+    left, top, right, bottom = box
+    result = {}
+    map_keys = {
+        'remote_projection_valid_mask',
+        'remote_projection_rel_height',
+        'remote_projection_offset_xy',
+        'remote_projection_building_mask',
+        'remote_projection_tilt_mask',
+    }
+    mask_keys = {
+        'remote_projection_valid_mask',
+        'remote_projection_building_mask',
+        'remote_projection_tilt_mask',
+    }
+    for key, value in projection_aux.items():
+        if key in map_keys:
+            cropped = value[top:bottom, left:right]
+            if key in mask_keys:
+                resized = _resize_label_array(cropped.astype(np.float32), resolution, mode='nearest') > 0.5
+            else:
+                resized = _resize_label_array(cropped.astype(np.float32), resolution, mode=label_resize_mode)
+            result[key] = resized
+        else:
+            result[key] = value.astype(np.float32) if hasattr(value, 'astype') else value
+    return result
 
 
 def preprocess_rs_modalities(

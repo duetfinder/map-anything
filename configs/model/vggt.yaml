@@ -39,6 +39,10 @@ model_config:
   remote_to_aerial_max_remote_tokens: 256
   # P5h: keep remote tokens out of ordinary camera/depth heads.
   protect_ordinary_heads_from_remote: false
+  # P7: train lightweight remote projection auxiliary heads.
+  use_remote_projection_aux_head: false
+  remote_projection_aux_hidden_dim: 64
+  remote_projection_aux_detach_pointmap: false
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

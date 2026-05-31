@@ -103,6 +103,16 @@ def build_remote_supervision_view(batch, remote_idx=0):
     remote_scene_dir_key = _remote_key('remote_scene_dir', remote_idx)
     remote_crop_box_key = _remote_key('remote_crop_box_xyxy', remote_idx)
     remote_aug_variant_key = _remote_key('remote_aug_variant', remote_idx)
+    remote_projection_keys = [
+        'remote_projection_aux_path',
+        'remote_projection_valid_mask',
+        'remote_projection_rel_height',
+        'remote_projection_offset_xy',
+        'remote_projection_building_mask',
+        'remote_projection_tilt_mask',
+        'remote_projection_global_dir_xy',
+        'remote_projection_global_slope',
+    ]
 
     remote_view = {
         'img': remote_source[remote_image_key],
@@ -126,6 +136,10 @@ def build_remote_supervision_view(batch, remote_idx=0):
         remote_view['remote_crop_box_xyxy'] = remote_source[remote_crop_box_key]
     if remote_aug_variant_key in remote_source:
         remote_view['remote_aug_variant'] = remote_source[remote_aug_variant_key]
+    for base_key in remote_projection_keys:
+        source_key = _remote_key(base_key, remote_idx)
+        if source_key in remote_source:
+            remote_view[base_key] = remote_source[source_key]
     return remote_view
 
 

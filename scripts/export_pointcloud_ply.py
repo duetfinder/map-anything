@@ -201,6 +201,29 @@ python scripts/export_pointcloud_ply.py \
     --vggt_p6b_export \
     --remote_view_names image.png \
     --export_remote_control_modes same blank
+
+# p7 projection-aux: split late fusion plus remote projection auxiliary heads.
+# Default export writes ordinary-view reconstruction under remote conditioning;
+# add --include_remote_points only to inspect the remote branch itself.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_vggt_projection_aux_split_late_fusion/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p7_projection_aux_ordinary \
+    --vggt_p7_projection_aux_export \
+    --remote_view_names image.png \
+    --export_remote_control_modes same blank
+
+# p7 remote-head projection-aux: p5d-style separate remote point head plus
+# projection auxiliary multitask learning, without split/late fusion.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_vggt_remote_head_projection_aux/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p7_remote_head_projection_aux_mixed \
+    --vggt_p7_remote_head_projection_aux_export \
+    --remote_view_names image.png \
+    --export_remote_control_modes same blank
 """
 
 import argparse
@@ -456,11 +479,47 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--vggt_p7_projection_aux_export",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the P7 VGGT projection-aux export preset: mixed ordinary/remote "
+            "heads, split remote aggregator, late remote-to-aerial fusion, protected "
+            "ordinary heads, and remote projection auxiliary heads. This is also "
+            "auto-enabled when checkpoint_path contains p7_vggt_projection_aux or "
+            "p7_projection_aux."
+        ),
+    )
+    parser.add_argument(
+        "--vggt_p7_remote_head_projection_aux_export",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the P7 remote-head projection-aux export preset: mixed "
+            "ordinary/remote heads, remote private point head, and remote projection "
+            "auxiliary heads, without split aggregator or late fusion. This is also "
+            "auto-enabled when checkpoint_path contains "
+            "p7_vggt_remote_head_projection_aux or p7_remote_head_projection_aux."
+        ),
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_hidden_dim",
+        type=int,
+        default=64,
+        help="Hidden dimension for P7 remote projection auxiliary heads.",
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_detach_pointmap",
+        action="store_true",
+        default=False,
+        help="Detach the pointmap input before the P7 projection auxiliary heads.",
+    )
+    parser.add_argument(
         "--include_remote_points",
         action="store_true",
         default=False,
         help=(
-            "Also write marked remote-view points to the PLY. For P6A/split-protected "
+            "Also write marked remote-view points to the PLY. For P6A/P7 split-protected "
             "exports, remote points are skipped by default because they are predicted "
             "in a separate split frame and are not directly aligned with ordinary points."
         ),
@@ -470,7 +529,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="cross_attention",
         choices=["none", "film", "cross_attention"],
-        help="Late remote-to-aerial fusion type used by P5h/P6A VGGT exports.",
+        help="Late remote-to-aerial fusion type used by P5h/P6A/P7 VGGT exports.",
     )
     parser.add_argument(
         "--vggt_late_gate_init",
@@ -696,6 +755,27 @@ def is_p6b_checkpoint(args: argparse.Namespace) -> bool:
     return "p6b_vggt" in checkpoint_path
 
 
+def is_p7_split_projection_aux_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = str(args.checkpoint_path).lower()
+    return "p7_vggt_projection_aux" in checkpoint_path or "p7_projection_aux" in checkpoint_path
+
+
+def is_p7_remote_head_projection_aux_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt" or not args.checkpoint_path:
+        return False
+    checkpoint_path = str(args.checkpoint_path).lower()
+    return (
+        "p7_vggt_remote_head_projection_aux" in checkpoint_path
+        or "p7_remote_head_projection_aux" in checkpoint_path
+    )
+
+
+def is_p7_projection_aux_checkpoint(args: argparse.Namespace) -> bool:
+    return is_p7_split_projection_aux_checkpoint(args) or is_p7_remote_head_projection_aux_checkpoint(args)
+
+
 def is_p6b_shared_head_checkpoint(args: argparse.Namespace) -> bool:
     if not is_p6b_checkpoint(args):
         return False
@@ -726,12 +806,41 @@ def use_p6b_export(args: argparse.Namespace) -> bool:
     )
 
 
+def use_p7_projection_aux_export(args: argparse.Namespace) -> bool:
+    return args.model == "vggt" and (
+        args.vggt_p7_projection_aux_export or is_p7_split_projection_aux_checkpoint(args)
+    )
+
+
+def use_p7_remote_head_projection_aux_export(args: argparse.Namespace) -> bool:
+    return args.model == "vggt" and (
+        args.vggt_p7_remote_head_projection_aux_export
+        or is_p7_remote_head_projection_aux_checkpoint(args)
+    )
+
+
+def use_any_p7_projection_aux_export(args: argparse.Namespace) -> bool:
+    return use_p7_projection_aux_export(args) or use_p7_remote_head_projection_aux_export(args)
+
+
+def resolve_vggt_late_fusion_type(args: argparse.Namespace) -> str:
+    checkpoint_path = str(args.checkpoint_path or "").lower()
+    if use_p7_projection_aux_export(args):
+        if "no_fusion" in checkpoint_path:
+            return "none"
+        if "film" in checkpoint_path:
+            return "film"
+        if "crossattn" in checkpoint_path or "cross_attention" in checkpoint_path:
+            return "cross_attention"
+    return args.vggt_late_fusion_type
+
+
 def use_vggt_remote_private_point_head(args: argparse.Namespace) -> bool:
     if args.model != "vggt":
         return False
     if args.vggt_use_remote_private_point_head:
         return True
-    if use_p5f_lite_export(args) or use_p6a_export(args):
+    if use_p5f_lite_export(args) or use_p6a_export(args) or use_any_p7_projection_aux_export(args):
         return True
     if use_p6b_export(args):
         return not is_p6b_shared_head_checkpoint(args)
@@ -745,7 +854,7 @@ def resolve_vggt_output_heads(args: argparse.Namespace):
     ordinary_head = args.vggt_ordinary_output_head
     remote_head = args.vggt_remote_output_head
 
-    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args):
+    if args.vggt_export_mode == "mixed" or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args) or use_any_p7_projection_aux_export(args):
         ordinary_head = ordinary_head or "depth"
         remote_head = remote_head or "point"
     elif args.vggt_export_mode == "depth_all":
@@ -777,7 +886,7 @@ def resolve_config_overrides(args: argparse.Namespace):
         )
 
     use_vggt_joint_remote_export = (
-        args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args)
+        args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args) or use_any_p7_projection_aux_export(args)
     )
     if use_vggt_joint_remote_export:
         if args.model != "vggt":
@@ -814,6 +923,37 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
+    if use_p7_projection_aux_export(args):
+        overrides.extend(
+            [
+                "model.model_config.use_view_type_bias=true",
+                "model.model_config.use_split_remote_aggregator=true",
+                f"model.model_config.remote_to_aerial_late_fusion_type={resolve_vggt_late_fusion_type(args)}",
+                "model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+                f"model.model_config.remote_to_aerial_late_fusion_gate_init={args.vggt_late_gate_init}",
+                f"model.model_config.remote_to_aerial_cross_attention_heads={args.vggt_cross_attention_heads}",
+                f"model.model_config.remote_to_aerial_max_remote_tokens={args.vggt_max_remote_tokens}",
+                "model.model_config.protect_ordinary_heads_from_remote=true",
+                "model.model_config.use_remote_projection_aux_head=true",
+                f"model.model_config.remote_projection_aux_hidden_dim={args.vggt_projection_aux_hidden_dim}",
+                f"model.model_config.remote_projection_aux_detach_pointmap={str(args.vggt_projection_aux_detach_pointmap).lower()}",
+            ]
+        )
+
+    if use_p7_remote_head_projection_aux_export(args):
+        overrides.extend(
+            [
+                "model.model_config.use_view_type_bias=false",
+                "model.model_config.use_pre_aggregator_view_type_bias=false",
+                "model.model_config.use_remote_to_aerial_gated_residual=false",
+                "model.model_config.use_split_remote_aggregator=false",
+                "model.model_config.output_point_head_for_consistency=false",
+                "model.model_config.use_remote_projection_aux_head=true",
+                f"model.model_config.remote_projection_aux_hidden_dim={args.vggt_projection_aux_hidden_dim}",
+                f"model.model_config.remote_projection_aux_detach_pointmap={str(args.vggt_projection_aux_detach_pointmap).lower()}",
+            ]
+        )
+
     if use_p6b_export(args) and is_p6b_viewtype_checkpoint(args):
         overrides.append("model.model_config.use_view_type_bias=true")
 
@@ -823,12 +963,9 @@ def resolve_config_overrides(args: argparse.Namespace):
     if remote_head is not None:
         overrides.append(f"model.model_config.remote_output_head={remote_head}")
     if use_vggt_remote_private_point_head(args):
-        overrides.extend(
-            [
-                "model.model_config.use_remote_private_point_head=true",
-                "model.model_config.output_point_head_for_consistency=true",
-            ]
-        )
+        overrides.append("model.model_config.use_remote_private_point_head=true")
+        if not use_p7_remote_head_projection_aux_export(args):
+            overrides.append("model.model_config.output_point_head_for_consistency=true")
 
     return overrides
 
@@ -1029,9 +1166,12 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         or args.vggt_p5f_lite_export
         or args.vggt_p6a_export
         or args.vggt_p6b_export
+        or args.vggt_p7_projection_aux_export
+        or args.vggt_p7_remote_head_projection_aux_export
         or is_p5f_lite_checkpoint(args)
         or is_p6a_checkpoint(args)
         or is_p6b_checkpoint(args)
+        or is_p7_projection_aux_checkpoint(args)
         or args.model == "mapanything_rs_joint"
         or bool(args.remote_view_indices)
         or bool(args.remote_view_names)
@@ -1043,7 +1183,7 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
     remote_names = {name for name in (args.remote_view_names or [])}
 
     if args.force_remote_instance or (
-        (args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args))
+        (args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args) or use_any_p7_projection_aux_export(args))
         and not remote_indices
         and not remote_names
     ):
@@ -1084,7 +1224,7 @@ def get_remote_view_indices(views):
 
 
 def should_skip_remote_points(args: argparse.Namespace) -> bool:
-    return use_p6a_export(args) and not args.include_remote_points
+    return (use_p6a_export(args) or use_p7_projection_aux_export(args)) and not args.include_remote_points
 
 
 def copy_views(views):
@@ -1313,7 +1453,7 @@ def export_point_cloud_for_views(model, views, args: argparse.Namespace, output_
     skip_remote_points = should_skip_remote_points(args)
     if skip_remote_points:
         print(
-            "P6A split/protected export: skipping remote-view points by default; "
+            "P6A/P7 split/protected export: skipping remote-view points by default; "
             "remote views still condition ordinary-view predictions. Use "
             "--include_remote_points only for branch debugging."
         )
