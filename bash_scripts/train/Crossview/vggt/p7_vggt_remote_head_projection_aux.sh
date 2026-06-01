@@ -33,6 +33,7 @@ PRETRAINED_CKPT=${PRETRAINED_CKPT:-/root/autodl-tmp/outputs/checkpoints/vggt/mod
 LOAD_PRETRAINED_WEIGHTS=${LOAD_PRETRAINED_WEIGHTS:-false}
 LOAD_CUSTOM_CKPT=${LOAD_CUSTOM_CKPT:-auto}
 RESUME=${RESUME:-false}
+TRAIN_PARAMS=${TRAIN_PARAMS:-vggt_p7_remote_head_projection_aux}
 
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/Crossview/vggt/p7_vggt_remote_head_projection_aux'}
 
@@ -83,6 +84,7 @@ echo "P7 remote-head projection auxiliary multitask"
 echo "REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE}"
 echo "REMOTE_NUM_VIEWS=${REMOTE_NUM_VIEWS}"
 echo "REMOTE_PROJECTION_AUX_HIDDEN_DIM=${REMOTE_PROJECTION_AUX_HIDDEN_DIM:-64}"
+echo "TRAIN_PARAMS=${TRAIN_PARAMS}"
 
 PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
@@ -143,7 +145,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     model.model_config.use_remote_projection_aux_head=true \
     model.model_config.remote_projection_aux_hidden_dim=${REMOTE_PROJECTION_AUX_HIDDEN_DIM:-64} \
     model.model_config.remote_projection_aux_detach_pointmap=${REMOTE_PROJECTION_AUX_DETACH_POINTMAP:-false} \
-    train_params=vggt_p7_remote_head_projection_aux \
+    train_params=${TRAIN_PARAMS} \
     train_params.epochs=${EPOCHS} \
     train_params.warmup_epochs=${WARMUP_EPOCHS} \
     train_params.eval_freq=${EVAL_FREQ} \

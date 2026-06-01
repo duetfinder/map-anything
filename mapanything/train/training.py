@@ -317,6 +317,11 @@ def train(args):
             param_groups_idx_to_name_map=param_groups_idx_to_name_map,
             model_without_ddp=model_without_ddp,
         )
+        if log_writer is not None:
+            epoch_1000x = int((epoch + 1) * 1000)
+            for name, val in train_stats.items():
+                log_writer.add_scalar("train_epoch_" + name, val, epoch_1000x)
+            log_writer.flush()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
