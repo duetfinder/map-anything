@@ -43,6 +43,11 @@ model_config:
   use_remote_projection_aux_head: false
   remote_projection_aux_hidden_dim: 64
   remote_projection_aux_detach_pointmap: false
+  remote_projection_aux_use_rgb: false
+  remote_projection_aux_use_coord: false
+  remote_projection_aux_positive_slope: false
+  remote_projection_aux_slope_init: 0.1
+  remote_projection_aux_num_blocks: 0
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

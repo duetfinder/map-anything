@@ -44,7 +44,19 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "remote_head", "split"],
         help="Export/model preset used to instantiate VGGT p7 checkpoint.",
     )
+    parser.add_argument("--config-path", default="configs/train.yaml", help="Hydra config path used for local checkpoint loading.")
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--detach-aux", action="store_true", help="Instantiate P7 aux head with detached pointmap input.")
+    parser.add_argument("--use-rgb-aux", action="store_true", help="Instantiate P7 aux head with RGB-conditioned pixel input.")
+    parser.add_argument("--aux-num-blocks", type=int, default=0, help="Residual conv blocks in the P7 aux pixel head.")
+    parser.add_argument("--use-coord-aux", action="store_true", help="Instantiate P7 aux head with normalized coordinate input.")
+    parser.add_argument("--positive-slope-aux", action="store_true", help="Instantiate P7 aux head with positive global slope output.")
+    parser.add_argument("--slope-init", type=float, default=0.1, help="Initial positive global slope for the P7 aux head.")
+    parser.add_argument(
+        "--field-dir-from-offset",
+        action="store_true",
+        help="Compute the projection direction used for consistency from the mean predicted offset field.",
+    )
     return parser.parse_args()
 
 
@@ -63,7 +75,7 @@ def make_export_args(args: argparse.Namespace) -> SimpleNamespace:
         checkpoint_path=str(args.checkpoint_path),
         image_folder=str(args.remote_dir),
         output_path=str(args.output_dir),
-        config_path=None,
+        config_path=args.config_path,
         config_json_path=None,
         model_str=None,
         config_overrides=None,
@@ -81,7 +93,12 @@ def make_export_args(args: argparse.Namespace) -> SimpleNamespace:
         vggt_p7_projection_aux_export=args.preset == "split",
         vggt_p7_remote_head_projection_aux_export=args.preset == "remote_head",
         vggt_projection_aux_hidden_dim=64,
-        vggt_projection_aux_detach_pointmap=False,
+        vggt_projection_aux_detach_pointmap=args.detach_aux,
+        vggt_projection_aux_use_rgb=args.use_rgb_aux,
+        vggt_projection_aux_use_coord=args.use_coord_aux,
+        vggt_projection_aux_positive_slope=args.positive_slope_aux,
+        vggt_projection_aux_slope_init=args.slope_init,
+        vggt_projection_aux_num_blocks=args.aux_num_blocks,
         include_remote_points=False,
         vggt_late_fusion_type="cross_attention",
         vggt_late_gate_init=1e-3,
@@ -229,7 +246,16 @@ def main() -> int:
     dir_pred = to_numpy(pred["remote_projection_global_dir_xy_pred"])[0].reshape(-1)[:2]
     slope_pred = to_numpy(pred["remote_projection_global_slope_pred"])[0].reshape(-1)[:1]
 
-    offset_from_field = rel_pred[..., None] * float(slope_pred[0]) * dir_pred.reshape(1, 1, 2)
+    finite_offset = np.isfinite(offset_pred).all(axis=-1)
+    field_dir_mask = mask & finite_offset & (np.linalg.norm(offset_pred, axis=-1) > 1e-6)
+    if field_dir_mask.any():
+        field_dir_pred = offset_pred[field_dir_mask].mean(axis=0)
+    else:
+        field_dir_pred = np.zeros(2, dtype=np.float32)
+    field_dir_pred = field_dir_pred.astype(np.float32)
+    field_dir_pred = field_dir_pred / (np.linalg.norm(field_dir_pred) + 1e-8)
+    consistency_dir_pred = field_dir_pred if args.field_dir_from_offset else dir_pred
+    offset_from_field = rel_pred[..., None] * float(slope_pred[0]) * consistency_dir_pred.reshape(1, 1, 2)
 
     panels = [
         make_panel("rel_height GT", rel_gt, mask),
@@ -257,8 +283,19 @@ def main() -> int:
         "global_dir_gt": dir_gt.tolist(),
         "global_dir_pred": dir_pred.tolist(),
         "global_dir_cosine": float(np.dot(dir_gt, dir_pred) / (np.linalg.norm(dir_gt) * np.linalg.norm(dir_pred) + 1e-8)),
+        "field_dir_from_offset_pred": field_dir_pred.tolist(),
+        "field_dir_from_offset_cosine": float(
+            np.dot(dir_gt, field_dir_pred) / (np.linalg.norm(dir_gt) * np.linalg.norm(field_dir_pred) + 1e-8)
+        ),
+        "consistency_dir_source": "offset_field" if args.field_dir_from_offset else "global_dir_head",
         "global_slope_gt": slope_gt.tolist(),
         "global_slope_pred": slope_pred.tolist(),
+        "rel_height_gt_mean": float(rel_gt[mask].mean()) if mask.any() else None,
+        "rel_height_pred_mean": float(rel_pred[mask].mean()) if mask.any() else None,
+        "rel_height_gt_std": float(rel_gt[mask].std()) if mask.any() else None,
+        "rel_height_pred_std": float(rel_pred[mask].std()) if mask.any() else None,
+        "offset_gt_abs_mean": float(np.linalg.norm(offset_gt, axis=-1)[mask].mean()) if mask.any() else None,
+        "offset_pred_abs_mean": float(np.linalg.norm(offset_pred, axis=-1)[mask].mean()) if mask.any() else None,
     }
     with (args.output_dir / "projection_aux_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

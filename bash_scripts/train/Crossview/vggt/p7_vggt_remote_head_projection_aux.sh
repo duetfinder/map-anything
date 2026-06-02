@@ -34,6 +34,7 @@ LOAD_PRETRAINED_WEIGHTS=${LOAD_PRETRAINED_WEIGHTS:-false}
 LOAD_CUSTOM_CKPT=${LOAD_CUSTOM_CKPT:-auto}
 RESUME=${RESUME:-false}
 TRAIN_PARAMS=${TRAIN_PARAMS:-vggt_p7_remote_head_projection_aux}
+LOSS_CONFIG=${LOSS_CONFIG:-vggt_loss_rs_joint_p7_remote_head_projection_aux}
 
 OUTPUT_DIR=${OUTPUT_DIR:-'${root_experiments_dir}/mapanything/training/Crossview/vggt/p7_vggt_remote_head_projection_aux'}
 
@@ -84,7 +85,14 @@ echo "P7 remote-head projection auxiliary multitask"
 echo "REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE}"
 echo "REMOTE_NUM_VIEWS=${REMOTE_NUM_VIEWS}"
 echo "REMOTE_PROJECTION_AUX_HIDDEN_DIM=${REMOTE_PROJECTION_AUX_HIDDEN_DIM:-64}"
+echo "REMOTE_PROJECTION_AUX_USE_COORD=${REMOTE_PROJECTION_AUX_USE_COORD:-false}"
+echo "REMOTE_PROJECTION_AUX_POSITIVE_SLOPE=${REMOTE_PROJECTION_AUX_POSITIVE_SLOPE:-false}"
+echo "REMOTE_PROJECTION_AUX_SLOPE_INIT=${REMOTE_PROJECTION_AUX_SLOPE_INIT:-0.1}"
+echo "PROJ_GLOBAL_DIR_FROM_OFFSET=${PROJ_GLOBAL_DIR_FROM_OFFSET:-false}"
+echo "LAMBDA_PROJ_OFFSET_MAG=${LAMBDA_PROJ_OFFSET_MAG:-0.0}"
+echo "LAMBDA_PROJ_OFFSET_DIR=${LAMBDA_PROJ_OFFSET_DIR:-0.0}"
 echo "TRAIN_PARAMS=${TRAIN_PARAMS}"
+echo "LOSS_CONFIG=${LOSS_CONFIG}"
 
 PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
@@ -116,7 +124,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     dataset.vigor_chicago_joint_rs_aerial.train.remote_num_views=${REMOTE_NUM_VIEWS} \
     dataset.vigor_chicago_joint_rs_aerial.val.remote_num_views=${REMOTE_NUM_VIEWS} \
     dataset.vigor_chicago_joint_rs_aerial.test.remote_num_views=${REMOTE_NUM_VIEWS} \
-    loss=vggt_loss_rs_joint_p7_remote_head_projection_aux \
+    loss=${LOSS_CONFIG} \
     loss.remote_pointmap_loss_weight=${LAMBDA_REMOTE_PM} \
     loss.remote_height_loss_weight=${LAMBDA_REMOTE_H} \
     loss.remote_pointmap_norm_mode=${REMOTE_POINTMAP_NORM_MODE} \
@@ -126,9 +134,18 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     loss.remote_detach_pose_for_view0_align=${REMOTE_DETACH_POSE_ALIGN} \
     loss.remote_projection_rel_height_loss_weight=${LAMBDA_PROJ_REL_HEIGHT:-0.2} \
     loss.remote_projection_offset_loss_weight=${LAMBDA_PROJ_OFFSET:-0.5} \
+    loss.remote_projection_offset_mag_loss_weight=${LAMBDA_PROJ_OFFSET_MAG:-0.0} \
+    loss.remote_projection_offset_dir_loss_weight=${LAMBDA_PROJ_OFFSET_DIR:-0.0} \
     loss.remote_projection_global_dir_loss_weight=${LAMBDA_PROJ_GLOBAL_DIR:-0.05} \
     loss.remote_projection_global_slope_loss_weight=${LAMBDA_PROJ_GLOBAL_SLOPE:-0.05} \
     loss.remote_projection_consistency_loss_weight=${LAMBDA_PROJ_CONSISTENCY:-0.2} \
+    loss.remote_projection_global_dir_from_offset=${PROJ_GLOBAL_DIR_FROM_OFFSET:-false} \
+    loss.remote_projection_rel_height_scale=${PROJ_REL_HEIGHT_SCALE:-1.0} \
+    loss.remote_projection_rel_height_clip=${PROJ_REL_HEIGHT_CLIP:-0.0} \
+    loss.remote_projection_offset_use_tilt_mask=${PROJ_OFFSET_USE_TILT_MASK:-false} \
+    loss.remote_projection_consistency_use_tilt_mask=${PROJ_CONSISTENCY_USE_TILT_MASK:-false} \
+    loss.remote_projection_offset_min_magnitude=${PROJ_OFFSET_MIN_MAGNITUDE:-0.0} \
+    loss.remote_projection_consistency_min_magnitude=${PROJ_CONSISTENCY_MIN_MAGNITUDE:-0.0} \
     model=vggt \
     model.model_config.load_pretrained_weights=${LOAD_PRETRAINED_WEIGHTS} \
     model.model_config.load_custom_ckpt=${LOAD_CUSTOM_CKPT} \
@@ -145,6 +162,11 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     model.model_config.use_remote_projection_aux_head=true \
     model.model_config.remote_projection_aux_hidden_dim=${REMOTE_PROJECTION_AUX_HIDDEN_DIM:-64} \
     model.model_config.remote_projection_aux_detach_pointmap=${REMOTE_PROJECTION_AUX_DETACH_POINTMAP:-false} \
+    model.model_config.remote_projection_aux_use_rgb=${REMOTE_PROJECTION_AUX_USE_RGB:-false} \
+    model.model_config.remote_projection_aux_use_coord=${REMOTE_PROJECTION_AUX_USE_COORD:-false} \
+    model.model_config.remote_projection_aux_positive_slope=${REMOTE_PROJECTION_AUX_POSITIVE_SLOPE:-false} \
+    model.model_config.remote_projection_aux_slope_init=${REMOTE_PROJECTION_AUX_SLOPE_INIT:-0.1} \
+    model.model_config.remote_projection_aux_num_blocks=${REMOTE_PROJECTION_AUX_NUM_BLOCKS:-0} \
     train_params=${TRAIN_PARAMS} \
     train_params.epochs=${EPOCHS} \
     train_params.warmup_epochs=${WARMUP_EPOCHS} \
