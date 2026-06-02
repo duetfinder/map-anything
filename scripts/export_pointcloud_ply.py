@@ -12,6 +12,7 @@ Supported benchmark models from bash_scripts/benchmark/rs_guided_dense_mv:
 - pi3_modality_embedding
 - pi3_modality_embedding_remote_head
 - vggt
+- vggt_omega
 - da3
 - mapanything
 - mapanything_rs_joint
@@ -218,12 +219,31 @@ python scripts/export_pointcloud_ply.py \
 # projection auxiliary multitask learning, without split/late fusion.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
-    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_vggt_remote_head_projection_aux/checkpoint-best.pth \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_vggt_remote_head_projection_aux_trunk/checkpoint-best.pth \
     --image_folder /root/autodl-tmp/test/scence/125 \
     --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_p7_remote_head_projection_aux_mixed \
     --vggt_p7_remote_head_projection_aux_export \
     --remote_view_names image.png \
     --export_remote_control_modes same blank
+
+vggt_omega:
+# Fine-tuned VGGT-Omega Crossview checkpoint. VGGT-Omega uses patch_size=16, so
+# use resolution_set=512 or another 16-aligned fixed_size.
+python scripts/export_pointcloud_ply.py \
+    --model vggt_omega \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt_omega/p1_vggt_omega_joint_depth_512_all/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_omega_finetuned \
+    --resolution_set 512 \
+    --remote_view_names image.png \
+&& \
+# Raw released VGGT-Omega checkpoint before Crossview fine-tuning.
+python scripts/export_pointcloud_ply.py \
+    --model vggt_omega \
+    --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt_omega/vggt_omega_1b_512.pt \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_omega_raw \
+    --resolution_set 512
 """
 
 import argparse
@@ -259,6 +279,7 @@ SUPPORTED_MODELS = [
     "pi3_modality_embedding",
     "pi3_modality_embedding_remote_head",
     "vggt",
+    "vggt_omega",
     "da3",
     "mapanything",
     "mapanything_rs_joint",
@@ -286,6 +307,10 @@ DEFAULT_CONFIG_OVERRIDES = {
         "machine=aws",
         "model=vggt",
     ],
+    "vggt_omega": [
+        "machine=aws",
+        "model=vggt_omega",
+    ],
     "da3": [
         "machine=aws",
         "model=da3",
@@ -311,6 +336,7 @@ IDENTITY_MODELS = {
     "pi3_modality_embedding_remote_head",
     "pi3x",
     "vggt",
+    "vggt_omega",
 }
 CLASH_ENV = {
     "http_proxy": "http://127.0.0.1:7890",
@@ -513,6 +539,36 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Detach the pointmap input before the P7 projection auxiliary heads.",
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_use_rgb",
+        action="store_true",
+        default=False,
+        help="Condition the P7 projection auxiliary pixel head on remote RGB plus pointmap.",
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_use_coord",
+        action="store_true",
+        default=False,
+        help="Condition the P7 projection auxiliary pixel head on normalized image coordinates.",
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_positive_slope",
+        action="store_true",
+        default=False,
+        help="Constrain the P7 projection auxiliary global slope prediction to be positive.",
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_slope_init",
+        type=float,
+        default=0.1,
+        help="Initial positive global slope for the P7 projection auxiliary head.",
+    )
+    parser.add_argument(
+        "--vggt_projection_aux_num_blocks",
+        type=int,
+        default=0,
+        help="Number of residual conv blocks in the P7 projection auxiliary pixel head.",
     )
     parser.add_argument(
         "--include_remote_points",
@@ -734,6 +790,15 @@ def is_raw_vggt_checkpoint(args: argparse.Namespace) -> bool:
     )
 
 
+def is_raw_vggt_omega_checkpoint(args: argparse.Namespace) -> bool:
+    if args.model != "vggt_omega" or not args.checkpoint_path:
+        return False
+    checkpoint_path = Path(args.checkpoint_path)
+    return checkpoint_path.name in {"vggt_omega_1b_512.pt", "model.pt"} and "checkpoints/vggt_omega" in str(
+        checkpoint_path
+    )
+
+
 def is_p5f_lite_checkpoint(args: argparse.Namespace) -> bool:
     if args.model != "vggt" or not args.checkpoint_path:
         return False
@@ -885,6 +950,15 @@ def resolve_config_overrides(args: argparse.Namespace):
             ]
         )
 
+    if is_raw_vggt_omega_checkpoint(args):
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=true",
+                f"model.model_config.custom_ckpt_path={args.checkpoint_path}",
+            ]
+        )
+
     use_vggt_joint_remote_export = (
         args.vggt_joint_remote_export or use_p5f_lite_export(args) or use_p6a_export(args) or use_p6b_export(args) or use_any_p7_projection_aux_export(args)
     )
@@ -937,6 +1011,11 @@ def resolve_config_overrides(args: argparse.Namespace):
                 "model.model_config.use_remote_projection_aux_head=true",
                 f"model.model_config.remote_projection_aux_hidden_dim={args.vggt_projection_aux_hidden_dim}",
                 f"model.model_config.remote_projection_aux_detach_pointmap={str(args.vggt_projection_aux_detach_pointmap).lower()}",
+                f"model.model_config.remote_projection_aux_use_rgb={str(args.vggt_projection_aux_use_rgb).lower()}",
+                f"model.model_config.remote_projection_aux_use_coord={str(args.vggt_projection_aux_use_coord).lower()}",
+                f"model.model_config.remote_projection_aux_positive_slope={str(args.vggt_projection_aux_positive_slope).lower()}",
+                f"model.model_config.remote_projection_aux_slope_init={args.vggt_projection_aux_slope_init}",
+                f"model.model_config.remote_projection_aux_num_blocks={args.vggt_projection_aux_num_blocks}",
             ]
         )
 
@@ -951,6 +1030,11 @@ def resolve_config_overrides(args: argparse.Namespace):
                 "model.model_config.use_remote_projection_aux_head=true",
                 f"model.model_config.remote_projection_aux_hidden_dim={args.vggt_projection_aux_hidden_dim}",
                 f"model.model_config.remote_projection_aux_detach_pointmap={str(args.vggt_projection_aux_detach_pointmap).lower()}",
+                f"model.model_config.remote_projection_aux_use_rgb={str(args.vggt_projection_aux_use_rgb).lower()}",
+                f"model.model_config.remote_projection_aux_use_coord={str(args.vggt_projection_aux_use_coord).lower()}",
+                f"model.model_config.remote_projection_aux_positive_slope={str(args.vggt_projection_aux_positive_slope).lower()}",
+                f"model.model_config.remote_projection_aux_slope_init={args.vggt_projection_aux_slope_init}",
+                f"model.model_config.remote_projection_aux_num_blocks={args.vggt_projection_aux_num_blocks}",
             ]
         )
 
@@ -1223,6 +1307,10 @@ def get_remote_view_indices(views):
     return [idx for idx, view in enumerate(views) if is_remote_view(view)]
 
 
+def get_output_head_name(pred):
+    return pred.get("vggt_output_head", pred.get("vggt_omega_output_head", "default"))
+
+
 def should_skip_remote_points(args: argparse.Namespace) -> bool:
     return (use_p6a_export(args) or use_p7_projection_aux_export(args)) and not args.include_remote_points
 
@@ -1359,7 +1447,7 @@ def collect_world_space_point_cloud(
                 {
                     "view_idx": view_idx,
                     "points": 0,
-                    "head": pred.get("vggt_output_head", "default"),
+                    "head": get_output_head_name(pred),
                     "skipped": "remote_split_frame",
                 }
             )
@@ -1401,7 +1489,7 @@ def collect_world_space_point_cloud(
             {
                 "view_idx": view_idx,
                 "points": int(selected_points.shape[0]),
-                "head": pred.get("vggt_output_head", "default"),
+                "head": get_output_head_name(pred),
             }
         )
 
@@ -1494,6 +1582,12 @@ def export_point_cloud_for_views(model, views, args: argparse.Namespace, output_
 
 def main() -> None:
     args = parse_args()
+    if args.model == "vggt_omega" and args.resize_mode == "fixed_mapping" and args.resolution_set != 512:
+        print(
+            "VGGT-Omega uses patch_size=16; overriding fixed_mapping "
+            f"resolution_set {args.resolution_set} -> 512."
+        )
+        args.resolution_set = 512
     effective_model_name = resolve_effective_model_name(args)
     if effective_model_name == "mapanything_rs_joint" and not args.checkpoint_path:
         raise ValueError(

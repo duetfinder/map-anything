@@ -59,6 +59,7 @@ SUPPORTED_MODEL_INPUTS = {
     "pi3_modality_embedding",
     "pi3_modality_embedding_remote_head",
     "vggt",
+    "vggt_omega",
     "da3",
     "mapanything",
     "mapanything_rs_joint",
@@ -85,6 +86,10 @@ DEFAULT_CONFIG_OVERRIDES = {
     "vggt": [
         "machine=aws",
         "model=vggt",
+    ],
+    "vggt_omega": [
+        "machine=aws",
+        "model=vggt_omega",
     ],
     "da3": [
         "machine=aws",
@@ -137,12 +142,18 @@ def resolve_requested_model_name(args):
 
 def is_raw_vggt_checkpoint(args, model_name):
     checkpoint_path = cfg_get(args, "checkpoint_path")
-    if model_name != "vggt" or not checkpoint_path:
+    if not checkpoint_path:
         return False
     checkpoint_path = Path(str(checkpoint_path))
-    return checkpoint_path.name == "model.pt" and "checkpoints/vggt" in str(
-        checkpoint_path
-    )
+    checkpoint_str = str(checkpoint_path)
+    if model_name == "vggt":
+        return checkpoint_path.name == "model.pt" and "checkpoints/vggt" in checkpoint_str
+    if model_name == "vggt_omega":
+        return (
+            checkpoint_path.name in {"vggt_omega_1b_512.pt", "model.pt"}
+            and "checkpoints/vggt_omega" in checkpoint_str
+        )
+    return False
 
 
 def resolve_vggt_output_heads(args, model_name):
@@ -318,7 +329,7 @@ def initialize_benchmark_model(args, device):
             )
         if is_raw_vggt_checkpoint(args, effective_model_name):
             print(
-                "Detected raw VGGT checkpoint; loading it through "
+                f"Detected raw {effective_model_name} checkpoint; loading it through "
                 "model.model_config.custom_ckpt_path."
             )
         local_config = build_local_config(

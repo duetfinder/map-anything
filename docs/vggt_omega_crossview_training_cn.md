@@ -100,6 +100,40 @@ max mem: 30925
 - `rs_pointmap_pred_norm_factor` / `rs_pointmap_gt_norm_factor`：remote pointmap 损失归一化因子。
 - `max mem`：训练器记录的峰值显存，当前单卡 512/2-view 约 `30925 MB`。
 
+## 点云可视化导出
+
+`scripts/export_pointcloud_ply.py` 已支持 `--model vggt_omega`。训练好的 Crossview checkpoint 可直接导出 PLY：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+
+python scripts/export_pointcloud_ply.py \
+    --model vggt_omega \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt_omega/p1_vggt_omega_joint_depth_512_1gpu_2v/checkpoint-best.pth \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_omega_finetuned \
+    --resolution_set 512 \
+    --remote_view_names image.png
+```
+
+说明：
+
+- `--resolution_set 512` 推荐保留；VGGT-Omega 使用 `patch_size=16`，512 能与模型尺寸约束对齐。
+- `--remote_view_names image.png` 用于把指定文件名标记为 remote view；当前 VGGT-Omega wrapper 的普通视角和 remote 视角都走 `depth` 输出，但保留该标记便于和 Crossview/VGGT 导出习惯一致。
+- 输出路径如果是目录，会写入 `mapanything_pointcloud.ply`；如果是 `.ply` 文件路径，则直接写该文件。
+- 当前训练仍占用 GPU 时，不建议并发导出，以免显存不足。
+
+原始 VGGT-Omega checkpoint 也可以直接导出，用于和 fine-tuned 结果对比：
+
+```bash
+python scripts/export_pointcloud_ply.py \
+    --model vggt_omega \
+    --checkpoint_path /root/autodl-tmp/outputs/checkpoints/vggt_omega/vggt_omega_1b_512.pt \
+    --image_folder /root/autodl-tmp/test/scence/125 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/125/vggt_omega_raw \
+    --resolution_set 512
+```
+
 ## 注意事项
 
 1. `VGGT-Omega` 没有原版 VGGT 的 native `point_head`，当前 wrapper 使用 `camera + depth` 反投影得到全局 `pts3d`，然后复用 `vggt_loss_rs_joint` 的 remote pointmap 监督。
