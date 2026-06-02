@@ -24,6 +24,20 @@ from mapanything.utils.geometry import (
 )
 
 
+class _ProjectionAuxResidualBlock(torch.nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.block = torch.nn.Sequential(
+            torch.nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            torch.nn.GELU(),
+            torch.nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+        )
+        self.activation = torch.nn.GELU()
+
+    def forward(self, x):
+        return self.activation(x + self.block(x))
+
+
 class VGGTWrapper(torch.nn.Module):
     def __init__(
         self,
@@ -56,6 +70,11 @@ class VGGTWrapper(torch.nn.Module):
         use_remote_projection_aux_head=False,
         remote_projection_aux_hidden_dim=64,
         remote_projection_aux_detach_pointmap=False,
+        remote_projection_aux_use_rgb=False,
+        remote_projection_aux_use_coord=False,
+        remote_projection_aux_positive_slope=False,
+        remote_projection_aux_slope_init=0.1,
+        remote_projection_aux_num_blocks=0,
     ):
         super().__init__()
         self.name = name
@@ -83,6 +102,11 @@ class VGGTWrapper(torch.nn.Module):
         self.use_remote_projection_aux_head = use_remote_projection_aux_head
         self.remote_projection_aux_hidden_dim = int(remote_projection_aux_hidden_dim)
         self.remote_projection_aux_detach_pointmap = remote_projection_aux_detach_pointmap
+        self.remote_projection_aux_use_rgb = remote_projection_aux_use_rgb
+        self.remote_projection_aux_use_coord = remote_projection_aux_use_coord
+        self.remote_projection_aux_positive_slope = remote_projection_aux_positive_slope
+        self.remote_projection_aux_slope_init = float(remote_projection_aux_slope_init)
+        self.remote_projection_aux_num_blocks = int(remote_projection_aux_num_blocks)
         self.embed_dim = 1024
         self.latest_remote_to_aerial_stats = {}
 
@@ -183,19 +207,45 @@ class VGGTWrapper(torch.nn.Module):
 
         if self.use_remote_projection_aux_head:
             hidden_dim = max(1, int(remote_projection_aux_hidden_dim))
-            self.remote_projection_aux_pixel_head = torch.nn.Sequential(
-                torch.nn.Conv2d(3, hidden_dim, kernel_size=3, padding=1),
-                torch.nn.GELU(),
-                torch.nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
-                torch.nn.GELU(),
-                torch.nn.Conv2d(hidden_dim, 3, kernel_size=1),
-            )
+            aux_pixel_in_channels = 3
+            if self.remote_projection_aux_use_rgb:
+                aux_pixel_in_channels += 3
+            if self.remote_projection_aux_use_coord:
+                aux_pixel_in_channels += 2
+            if self.remote_projection_aux_num_blocks > 0:
+                pixel_layers = [
+                    torch.nn.Conv2d(aux_pixel_in_channels, hidden_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                ]
+                pixel_layers.extend(
+                    _ProjectionAuxResidualBlock(hidden_dim)
+                    for _ in range(self.remote_projection_aux_num_blocks)
+                )
+                pixel_layers.append(torch.nn.Conv2d(hidden_dim, 3, kernel_size=1))
+                self.remote_projection_aux_pixel_head = torch.nn.Sequential(*pixel_layers)
+            else:
+                self.remote_projection_aux_pixel_head = torch.nn.Sequential(
+                    torch.nn.Conv2d(aux_pixel_in_channels, hidden_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                    torch.nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                    torch.nn.Conv2d(hidden_dim, 3, kernel_size=1),
+                )
             self.remote_projection_aux_global_head = torch.nn.Sequential(
                 torch.nn.LayerNorm(3),
                 torch.nn.Linear(3, hidden_dim),
                 torch.nn.GELU(),
                 torch.nn.Linear(hidden_dim, 3),
             )
+            if self.remote_projection_aux_positive_slope and self.remote_projection_aux_slope_init > 0:
+                final_linear = self.remote_projection_aux_global_head[-1]
+                slope_init = torch.tensor(
+                    float(self.remote_projection_aux_slope_init), dtype=final_linear.bias.dtype
+                )
+                raw_slope_init = torch.log(torch.expm1(slope_init).clamp_min(1e-6))
+                with torch.no_grad():
+                    final_linear.weight[2].zero_()
+                    final_linear.bias[2].copy_(raw_slope_init)
 
         # Load custom checkpoint if requested
         if self.load_custom_ckpt:
@@ -211,13 +261,27 @@ class VGGTWrapper(torch.nn.Module):
                     deepcopy(self.model.point_head.state_dict())
                 )
 
-    def _apply_remote_projection_aux_head(self, output, source_pointmap):
+    def _apply_remote_projection_aux_head(self, output, source_pointmap, source_image=None):
         if not self.use_remote_projection_aux_head:
             return output
         aux_input = source_pointmap
         if self.remote_projection_aux_detach_pointmap:
             aux_input = aux_input.detach()
         aux_chw = aux_input.permute(0, 3, 1, 2).contiguous()
+        if self.remote_projection_aux_use_rgb:
+            if source_image is None:
+                raise RuntimeError("remote_projection_aux_use_rgb=True requires source_image")
+            rgb = source_image.to(device=aux_chw.device, dtype=aux_chw.dtype)
+            if self.remote_projection_aux_detach_pointmap:
+                rgb = rgb.detach()
+            aux_chw = torch.cat([aux_chw, rgb], dim=1)
+        if self.remote_projection_aux_use_coord:
+            _, _, height, width = aux_chw.shape
+            y = torch.linspace(-1.0, 1.0, height, device=aux_chw.device, dtype=aux_chw.dtype)
+            x = torch.linspace(-1.0, 1.0, width, device=aux_chw.device, dtype=aux_chw.dtype)
+            yy, xx = torch.meshgrid(y, x, indexing="ij")
+            coord = torch.stack([xx, yy], dim=0).unsqueeze(0).expand(aux_chw.shape[0], -1, -1, -1)
+            aux_chw = torch.cat([aux_chw, coord], dim=1)
         pixel_pred = self.remote_projection_aux_pixel_head(aux_chw)
         pixel_pred = pixel_pred.permute(0, 2, 3, 1).contiguous()
         output["remote_projection_rel_height_pred"] = pixel_pred[..., 0]
@@ -230,7 +294,10 @@ class VGGTWrapper(torch.nn.Module):
         global_raw = self.remote_projection_aux_global_head(pooled.float())
         dir_xy = torch.nn.functional.normalize(global_raw[:, :2], dim=-1, eps=1e-6)
         output["remote_projection_global_dir_xy_pred"] = dir_xy
-        output["remote_projection_global_slope_pred"] = global_raw[:, 2:3]
+        slope_pred = global_raw[:, 2:3]
+        if self.remote_projection_aux_positive_slope:
+            slope_pred = torch.nn.functional.softplus(slope_pred)
+        output["remote_projection_global_slope_pred"] = slope_pred
         return output
 
 
@@ -784,6 +851,8 @@ class VGGTWrapper(torch.nn.Module):
                     res[-1]["vggt_output_head"] = "depth"
 
                 if self._is_remote_view(views[view_idx]):
-                    self._apply_remote_projection_aux_head(res[-1], res[-1]["pts3d"])
+                    self._apply_remote_projection_aux_head(
+                        res[-1], res[-1]["pts3d"], views[view_idx]["img"]
+                    )
 
         return res
