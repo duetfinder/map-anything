@@ -1,6 +1,6 @@
 # Crossview 全部已训练模型统一评测记录
 
-评测时间：2026-06-01。
+评测时间：2026-06-01；补充 `vggt_omega_p2_joint_depth_512_all_2`：2026-06-02。
 
 ## 评测口径
 
@@ -17,6 +17,7 @@
 ## 运行状态
 
 - 共发现并评测 26 个模型结果 JSON，最终均成功生成 `rs_aerial_benchmark_results.json`。
+- 2026-06-02 追加评测 `vggt_omega_p2_joint_depth_512_all_2`，使用同一 New York 10-scene mini benchmark、4 views、512 分辨率。
 - 第一次 VGGT 评测会下载/缓存 5GB 级 base 权重，因此 `vggt_p5b_shared_norm` 耗时明显更长；后续 VGGT 从缓存加载。
 
 ## 绝对精度 Top 10
@@ -30,11 +31,11 @@
 | 3 | `vggt_p5h_film_protected` | 0.0457 | 0.0501 | 92.00 | 0.2926 | 9.76 | 15.64 |
 | 4 | `vggt_p5h_film_unfreeze_viewtype_protected` | 0.0457 | 0.0501 | 92.00 | 0.2926 | 9.76 | 15.64 |
 | 5 | `vggt_p6b_private_head_2` | 0.0464 | 0.0504 | 93.33 | 0.2843 | 12.29 | 16.10 |
-| 6 | `vggt_p5d_remote_point_head_consistency` | 0.0522 | 0.0561 | 86.00 | 0.4080 | 17.57 | 16.20 |
-| 7 | `vggt_omega_p1_joint_depth_512_all` | 0.0533 | 0.0564 | 92.67 | 0.2464 | 12.58 | 16.05 |
-| 8 | `vggt_p6b_private_head_1` | 0.0543 | 0.0581 | 86.67 | 0.4158 | 17.45 | 16.39 |
-| 9 | `vggt_omega_p1_joint_depth_512` | 0.0545 | 0.0574 | 92.33 | 0.2833 | 16.35 | 16.32 |
-| 10 | `vggt_omega_p1_joint_depth_512_1gpu_2v` | 0.0546 | 0.0565 | 90.00 | 0.3150 | 14.35 | 16.22 |
+| 6 | `vggt_omega_p2_joint_depth_512_all_2` | 0.0492 | 0.0508 | 97.00 | 0.2006 | 12.92 | 16.00 |
+| 7 | `vggt_p5d_remote_point_head_consistency` | 0.0522 | 0.0561 | 86.00 | 0.4080 | 17.57 | 16.20 |
+| 8 | `vggt_omega_p1_joint_depth_512_all` | 0.0533 | 0.0564 | 92.67 | 0.2464 | 12.58 | 16.05 |
+| 9 | `vggt_p6b_private_head_1` | 0.0543 | 0.0581 | 86.67 | 0.4158 | 17.45 | 16.39 |
+| 10 | `vggt_omega_p1_joint_depth_512` | 0.0545 | 0.0574 | 92.33 | 0.2833 | 16.35 | 16.32 |
 
 ## 卫星输入收益 Top 10
 
@@ -67,6 +68,7 @@
 | vggt | `vggt_p5h_film_protected` | 518 | 0.0530 | 89.33 | 0.0457 | 0.0501 | 92.00 | 0.2926 | 0.0032 | +6.03% |
 | vggt | `vggt_p5h_film_unfreeze_viewtype_protected` | 518 | 0.0530 | 89.33 | 0.0457 | 0.0501 | 92.00 | 0.2926 | 0.0032 | +6.03% |
 | vggt | `vggt_p6b_private_head_2` | 518 | 0.0510 | 92.00 | 0.0464 | 0.0504 | 93.33 | 0.2843 | 0.0016 | +2.99% |
+| vggt_omega | `vggt_omega_p2_joint_depth_512_all_2` | 512 | 0.0527 | 93.67 | 0.0492 | 0.0508 | 97.00 | 0.2006 | 0.0026 | +4.91% |
 | vggt | `vggt_p5d_remote_point_head_consistency` | 518 | 0.0564 | 87.67 | 0.0522 | 0.0561 | 86.00 | 0.4080 | 0.0004 | +0.63% |
 | vggt_omega | `vggt_omega_p1_joint_depth_512_all` | 512 | 0.0579 | 89.67 | 0.0533 | 0.0564 | 92.67 | 0.2464 | 0.0041 | +6.75% |
 | vggt | `vggt_p6b_private_head_1` | 518 | 0.0576 | 89.67 | 0.0543 | 0.0581 | 86.67 | 0.4158 | 0.0010 | +1.73% |
@@ -96,6 +98,44 @@
 
 因此，这几行不能解读成四种结构独立取得了同样的最优结果。更合理的解读是：在当前 10-scene、4-view、普通视角 joint 指标上，p5h 的 late-fusion 改动没有带来可测差异，结果基本等价于其初始化来源 p5e。选择模型时应把它们视作同一组候选，并优先用更大样本或更直接的 remote-to-aerial 消融复核。
 
+## VGGT-Omega p2 更新
+
+`vggt_omega_p2_joint_depth_512_all_2` 对应训练目录：
+
+`/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt_omega/p1_vggt_omega_joint_depth_512_all_2`
+
+这组训练相对旧 `vggt_omega_p1_joint_depth_512_all` 的关键差异：
+
+- 移除训练阶段 confidence / aleatoric uncertainty loss，使用 `vggt_loss_rs_joint_no_conf`。
+- `warmup_epochs` 从 1 提到 3。
+- `max_num_of_imgs_per_gpu` 从 8 提到 12。
+- 仍使用全部城市、4 views、VGGT-Omega 512、`lr=1e-5`、cosine schedule。
+
+训练验证集上，p2 明显优于旧 all：
+
+| metric | p1 all | p2 all_2 | change |
+|---|---:|---:|---:|
+| val loss_avg | 0.6159 | 0.4960 | -19.47% |
+| val aerial_loss_avg | 0.7601 | 0.6010 | -20.92% |
+| val remote_loss_avg | 0.1179 | 0.0977 | -17.12% |
+| val rs_pointmap_loss_avg | 0.0295 | 0.0244 | -17.12% |
+
+New York mini benchmark 上也有提升：
+
+| metric | p1 all | p2 all_2 | change |
+|---|---:|---:|---:|
+| aerial pointmaps_abs_rel | 0.0579 | 0.0527 | -8.93% |
+| aerial pose_auc_5 | 89.67 | 93.67 | +4.00 |
+| joint pointmaps_abs_rel | 0.0564 | 0.0508 | -9.97% |
+| joint_global_pointmaps_abs_rel | 0.0533 | 0.0492 | -7.61% |
+| joint pose_auc_5 | 92.67 | 97.00 | +4.33 |
+| joint ray_dirs_err_deg | 0.2464 | 0.2006 | -18.60% |
+| joint z_depth_abs_rel | 0.0652 | 0.0583 | -10.65% |
+| RS-only height MAE | 12.58 | 12.92 | +2.73% |
+| joint RS height MAE | 16.05 | 16.00 | -0.31% |
+
+解读：p2 在普通视角几何和 joint 几何上提升明确，尤其 pose AUC、ray 和 pointmap 指标；RS-only 高度 MAE 略差，joint RS MAE 基本持平。由于 p2 同时改变了 no-conf loss、warmup 和 batch size，这个结果不能作为单因素消融，但可以作为当前 VGGT-Omega 系列更强的候选配置。
+
 ## 真实卫星内容收益筛选
 
 只看 `same < blank` 还不够，因为 shuffled 也提供了 remote token 和遥感图像分布。如果 `same` 没有优于 `shuffled`，说明收益可能不是来自正确匹配的卫星内容。下面列出 `same` 同时优于 `blank` 和 `shuffled` 的主要模型：
@@ -110,14 +150,16 @@
 | `vggt_p5h_film_protected` | 0.0501 | 0.0533 | 0.0517 | 0.0032 | 0.0017 | 0.0457 | 92.00 |
 | `vggt_p5h_film_unfreeze_viewtype_protected` | 0.0501 | 0.0533 | 0.0517 | 0.0032 | 0.0017 | 0.0457 | 92.00 |
 | `vggt_p7_remote_head_projection_aux_trunk` | 0.0610 | 0.0637 | 0.0632 | 0.0027 | 0.0022 | 0.0564 | 87.67 |
+| `vggt_omega_p2_joint_depth_512_all_2` | 0.0508 | 0.0534 | 0.0533 | 0.0026 | 0.0025 | 0.0492 | 97.00 |
 | `vggt_omega_p1_joint_depth_512` | 0.0574 | 0.0600 | 0.0614 | 0.0026 | 0.0040 | 0.0545 | 92.33 |
 | `vggt_p5b_shared_norm` | 0.0566 | 0.0590 | 0.0591 | 0.0024 | 0.0025 | 0.0671 | 86.00 |
 
-这个筛选下，`vggt_p5e_remote_head_attention_viewtype` / `vggt_p5h_*` 的绝对精度最好；`vggt_omega_p1_joint_depth_512_all` 的卫星内容收益更大，并且 absolute 指标也稳定。
+这个筛选下，`vggt_p5e_remote_head_attention_viewtype` / `vggt_p5h_*` 的 `joint_global` 仍最好；`vggt_omega_p2_joint_depth_512_all_2` 的 `joint point`、`pose_auc_5`、`ray` 更强，是 VGGT-Omega 系列当前最好的 checkpoint。旧 `vggt_omega_p1_joint_depth_512_all` 的卫星内容 delta 更大，但 p2 的绝对精度更高。
 
 ## 初步结论
 
-- 绝对 joint 几何精度当前最好的是 `vggt_p5e_remote_head_attention_viewtype`，`joint_global_pointmaps_abs_rel=0.0457`，`joint_point=0.0501`，`pose_auc_5=92.00`。
+- 绝对 `joint_global_pointmaps_abs_rel` 当前最好的是 `vggt_p5e_remote_head_attention_viewtype`，`joint_global=0.0457`，`joint_point=0.0501`，`pose_auc_5=92.00`。
+- 追加的 `vggt_omega_p2_joint_depth_512_all_2` 是 VGGT-Omega 系列当前最强结果：`joint_global=0.0492`，`joint_point=0.0508`，`pose_auc_5=97.00`，`joint_ray=0.2006`；相比旧 `p1 all`，joint point 提升 9.97%，joint global 提升 7.61%。
 - 对卫星图最敏感、same 相比 blank 的 point 提升最大的是 `vggt_p5g_no_fusion_fixedfreeze_protected`，`delta=0.0069`，相对提升 +4.20%。
 - 解读卫星输入是否有效时，优先看 `same` 是否同时优于 `blank` 和 `shuffled`。如果只优于 blank 但接近 shuffled，可能更多是额外 remote token/分布扰动带来的收益，而不是正确利用真实卫星内容。
 - 这是 10 scene mini benchmark，适合快速筛选；最终模型选择仍建议用更大 paired scene 数量或完整 benchmark 复核。

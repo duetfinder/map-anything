@@ -989,3 +989,214 @@ PROJ_GLOBAL_SLOPE_WEIGHT 保留小权重
 2. 再跑 mini benchmark，比较 ordinary-only、remote-only、joint remote 的重建变化。
 3. 如果 ordinary 仍被拉差，打开 ordinary branch 保护或把 remote fusion 推迟到更 late/gated 的位置。
 
+## 2026-06-03 P7 融入 P5B Shared-Norm 主联训进度
+
+### 已完成
+
+已经把 projection_aux 多任务监督接入最基础的 P5B shared-norm 训练路线，形成新的主联训脚本：
+
+```text
+bash_scripts/train/Crossview/vggt/p7_vggt_p5b_shared_norm_projection_aux.sh
+configs/train_params/vggt_p7_p5b_shared_norm_projection_aux.yaml
+```
+
+这个实验不再是 aux-only 诊断，而是同时包含：
+
+```text
+普通视角 aerial reconstruction loss
+remote pointmap shared-normalization loss
+remote projection_aux 成像机制多任务 loss
+```
+
+核心默认设置：
+
+```text
+REMOTE_POINTMAP_NORM_MODE=aerial_avg_dis
+LAMBDA_REMOTE_PM=4.0
+LAMBDA_REMOTE_H=0.0
+
+REMOTE_PROJECTION_AUX_HIDDEN_DIM=96
+REMOTE_PROJECTION_AUX_IMAGE_STEM_DIM=32
+REMOTE_PROJECTION_AUX_NUM_BLOCKS=6
+REMOTE_PROJECTION_AUX_DETACH_POINTMAP=false
+REMOTE_PROJECTION_AUX_USE_RGB=true
+REMOTE_PROJECTION_AUX_USE_COORD=true
+
+PROJ_REL_HEIGHT_SCALE_MODE=gt_pointmap_norm
+PROJ_OFFSET_SCALE=32.0
+LAMBDA_PROJ_REL_HEIGHT=0.5
+LAMBDA_PROJ_OFFSET=1.5
+LAMBDA_PROJ_GLOBAL_SLOPE=0.1
+LAMBDA_PROJ_GLOBAL_DIR=0.0
+LAMBDA_PROJ_CONSISTENCY=0.0
+```
+
+`LAMBDA_PROJ_CONSISTENCY` 暂时关闭，因为当前 height 使用 pointmap norm 尺度，而 offset 使用固定像素尺度，现有 consistency 公式不是 scale-aware；直接打开可能把两个不同尺度硬绑在一起。后续如果要开 consistency，应先改成显式 scale-aware 版本。
+
+### Smoke Run 结果
+
+测试命令采用 Newyork、2 GPU、1 epoch smoke，输出目录：
+
+```text
+outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_p5b_projection_aux_smoke_newyork_2v
+```
+
+#### 发现并修复的问题 1：DDP ready-twice
+
+最初使用 P5B shared point head 时，2 卡 backward 报错：
+
+```text
+model.point_head.scratch.output_conv2.2.weight has been marked as ready twice
+```
+
+原因：shared point head 在 VGGT checkpointed/reentrant backward 下被 remote pointmap 和 projection_aux 路径复用，DDP 默认动态图模式会重复标记同一参数。
+
+修复：在专用 train_params 中启用固定图 DDP：
+
+```yaml
+ddp_static_graph: true
+ddp_find_unused_parameters: false
+```
+
+修复后，ready-twice 错误消失。
+
+#### 发现的问题 2：4 views / batch 4 在 2 卡上 OOM
+
+`NUM_VIEWS=4, BATCH_SIZE=4` 在 2 张 48G 卡上会 OOM。原因是主干联训 + shared point head + projection_aux head 同时反传，显存明显高于 aux-only 诊断实验。
+
+已将脚本默认值改为 2 卡可运行设置：
+
+```bash
+NUM_VIEWS=${NUM_VIEWS:-2}
+BATCH_SIZE=${BATCH_SIZE:-2}
+```
+
+如果要恢复 4 views，需要更多显存、梯度累积、冻结部分模块，或降低 aux decoder 容量。
+
+#### 已跑通的路径
+
+使用 `NUM_VIEWS=2, BATCH_SIZE=2` 已成功跑过：
+
+```text
+model build
+projection_aux head build
+train/test criterion build
+dataset remote projection labels read
+forward
+loss compute
+backward
+optimizer step
+projection_aux metrics logging
+```
+
+第一步训练日志已经打印完整的主重建和 projection_aux 指标，例如：
+
+```text
+aerial_loss
+remote_loss
+rs_pointmap_loss
+rs_projection_aux_loss
+rs_projection_rel_height_high20_gt_mean / pred_mean
+rs_projection_rel_height_low80_gt_mean / pred_mean
+rs_projection_rel_height_contrast_gt_gap / pred_gap
+rs_projection_offset_high20_gt_mean / pred_mean
+rs_projection_offset_low80_gt_mean / pred_mean
+rs_projection_offset_contrast_gt_gap / pred_gap
+rs_projection_offset_bucket_mean_low_gt / pred
+```
+
+这说明当前脚本已经不是纯配置可解析，而是实际训练第一步可运行。
+
+### 当前阶段结论
+
+1. projection_aux 多任务路径已经从 aux-only 诊断成功接入 P5B shared-norm 主联训。
+2. 当前训练路径的主要运行 bug 已处理：DDP shared-head backward 通过 `static_graph` 修复。
+3. 2 GPU 下推荐从 `NUM_VIEWS=2, BATCH_SIZE=2` 开始，不建议直接用 4 views。
+4. 当前还没有证明它能提升主重建，只证明了主联训代码路径已经跑通。
+5. 下一步重点不再是继续写结构，而是跑完整小规模实验，看 projection_aux 在主联训中是否保持可学习，并检查 ordinary reconstruction 是否被破坏。
+
+### 下一步目标
+
+#### 目标 1：完整跑 Newyork 小规模主联训
+
+推荐先跑：
+
+```bash
+cd /root/autodl-tmp/Models/map-anything
+TRAIN_CITIES=[newyork] VAL_CITIES=[newyork] TEST_CITIES=[newyork] \
+NUM_GPUS=2 CUDA_DEVICES=0,1 NUM_VIEWS=2 BATCH_SIZE=2 \
+OUTPUT_DIR='/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_p5b_projection_aux_newyork_2v' \
+bash bash_scripts/train/Crossview/vggt/p7_vggt_p5b_shared_norm_projection_aux.sh
+```
+
+优先观察 6 个信号：
+
+```text
+aerial_loss 是否稳定，不能明显劣于 P5B
+rs_pointmap_loss 是否稳定
+rs_projection_aux_loss 是否下降
+rel_height contrast_pred_gap 是否接近 contrast_gt_gap
+offset contrast_pred_gap 是否接近 contrast_gt_gap
+offset low bucket pred 是否接近 low bucket gt
+```
+
+#### 目标 2：可视化 projection_aux 输出
+
+训练到若干 epoch 后，用当前 checkpoint 可视化 projection_aux：
+
+```text
+scripts/visualize_projection_aux_outputs.py
+```
+
+重点比较：
+
+```text
+rel_height_gt / pred
+offset_gt / pred
+rel_height_norm_mae
+offset_norm_mae
+field_dir_from_offset_cosine
+```
+
+如果主联训后 aux 输出重新塌缩，说明 remote pointmap 主监督和 projection_aux 之间仍存在优化冲突，需要降低 `LAMBDA_REMOTE_PM` 或阶段式训练。
+
+#### 目标 3：mini benchmark 评估主重建
+
+aux 学起来后再跑 mini benchmark，评估真正关心的问题：
+
+```text
+ordinary-only 是否保持或提升
+remote-only 是否稳定
+ordinary + remote joint 是否优于 ordinary-only
+```
+
+如果 projection_aux 指标好，但 joint reconstruction 仍差，问题就不在成像机制是否可学习，而在 remote token 进入 VGGT 后如何影响 ordinary 表征。
+
+### 后续可能分支
+
+如果 Newyork 2v 主联训结果好：
+
+```text
+扩大到更多城市
+尝试 NUM_VIEWS=4 但降低 batch 或使用梯度累积
+跑 mini benchmark 和 export_pointcloud_ply 可视化重建
+```
+
+如果 projection_aux 在主联训中退化：
+
+```text
+降低 LAMBDA_REMOTE_PM
+先 warmstart capacity_grad aux checkpoint
+前若干 epoch 冻结主干只训 remote/aux，再解冻主干
+尝试 USE_REMOTE_PRIVATE_POINT_HEAD=true 避免 shared point head 梯度冲突
+```
+
+如果 projection_aux 学得好但主重建变差：
+
+```text
+保护 ordinary heads 或 ordinary branch
+尝试 late/gated remote fusion
+降低 remote loss 对 shared trunk 的影响
+对 ordinary-only / same remote / shuffled remote 做控制评估
+```
+
