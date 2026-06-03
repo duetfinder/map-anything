@@ -140,6 +140,28 @@ def train(args):
         print(model.load_state_dict(ckpt["model"], strict=False))
         del ckpt  # in case it occupies memory
 
+    warmstart_ckpt = getattr(args.train_params, "warmstart_ckpt", None)
+    if warmstart_ckpt not in (None, "", "None", "none", "null"):
+        print("Warm-starting model weights from: ", warmstart_ckpt)
+        ckpt = torch.load(warmstart_ckpt, map_location=device, weights_only=False)
+        state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        model_state = model.state_dict()
+        filtered_state_dict = {}
+        skipped_shape_mismatch = []
+        for key, value in state_dict.items():
+            if key in model_state and hasattr(value, "shape") and value.shape != model_state[key].shape:
+                skipped_shape_mismatch.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+                continue
+            filtered_state_dict[key] = value
+        if skipped_shape_mismatch:
+            print("Warm-start skipped shape-mismatched keys:")
+            for key, old_shape, new_shape in skipped_shape_mismatch[:50]:
+                print(f"  {key}: checkpoint{old_shape} -> model{new_shape}")
+            if len(skipped_shape_mismatch) > 50:
+                print(f"  ... and {len(skipped_shape_mismatch) - 50} more")
+        print(model.load_state_dict(filtered_state_dict, strict=False))
+        del ckpt, state_dict, filtered_state_dict
+
     # Init model for DDP training
     if args.distributed.distributed:
         ddp_static_graph = bool(
@@ -645,6 +667,7 @@ def train_one_epoch(
             use_amp=bool(args.train_params.amp),
             amp_dtype=args.train_params.amp_dtype,
             ret="loss",
+            criterion_kwargs={"train_epoch": epoch_f},
         )
         loss, loss_details = loss_tuple  # criterion returns two values
         primary_same_loss = loss
@@ -888,6 +911,7 @@ def test_one_epoch(
             use_amp=bool(args.train_params.amp),
             amp_dtype=args.train_params.amp_dtype,
             ret="loss",
+            criterion_kwargs={"train_epoch": float(epoch)},
         )
         loss_value, loss_details = loss_tuple  # criterion returns two values
         if n_views > 2:

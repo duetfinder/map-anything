@@ -23,6 +23,7 @@ vigor_chicago_joint_rs_aerial:
         data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.train.data_norm_type}',
         ROOT='${dataset.vigor_chicago_joint_rs_aerial.train.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.train.dataset_metadata_dir}',
+        scene_list_path='${dataset.vigor_chicago_joint_rs_aerial.train.scene_list_path}',
         cities=${dataset.vigor_chicago_joint_rs_aerial.train.cities},
         overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.train.overfit_num_sets},
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.train.variable_num_views},
@@ -51,6 +52,7 @@ vigor_chicago_joint_rs_aerial:
     ROOT: ${root_data_dir}/Crossview_wai
     dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
     overfit_num_sets: null
+    scene_list_path: null
     variable_num_views: ${dataset.train.variable_num_views}
     num_views: ${dataset.num_views}
     covisibility_thres: 0.0
@@ -80,6 +82,7 @@ vigor_chicago_joint_rs_aerial:
         data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.val.data_norm_type}',
         ROOT='${dataset.vigor_chicago_joint_rs_aerial.val.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.val.dataset_metadata_dir}',
+        scene_list_path='${dataset.vigor_chicago_joint_rs_aerial.val.scene_list_path}',
         cities=${dataset.vigor_chicago_joint_rs_aerial.val.cities},
         overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.val.overfit_num_sets},
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.val.variable_num_views},
@@ -108,6 +111,7 @@ vigor_chicago_joint_rs_aerial:
     ROOT: ${root_data_dir}/Crossview_wai
     dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
     overfit_num_sets: null
+    scene_list_path: null
     variable_num_views: ${dataset.val.variable_num_views}
     num_views: ${dataset.num_views}
     covisibility_thres: 0.0
@@ -137,6 +141,7 @@ vigor_chicago_joint_rs_aerial:
         data_norm_type='${dataset.vigor_chicago_joint_rs_aerial.test.data_norm_type}',
         ROOT='${dataset.vigor_chicago_joint_rs_aerial.test.ROOT}',
         dataset_metadata_dir='${dataset.vigor_chicago_joint_rs_aerial.test.dataset_metadata_dir}',
+        scene_list_path='${dataset.vigor_chicago_joint_rs_aerial.test.scene_list_path}',
         cities=${dataset.vigor_chicago_joint_rs_aerial.test.cities},
         overfit_num_sets=${dataset.vigor_chicago_joint_rs_aerial.test.overfit_num_sets},
         variable_num_views=${dataset.vigor_chicago_joint_rs_aerial.test.variable_num_views},
@@ -165,6 +170,7 @@ vigor_chicago_joint_rs_aerial:
     ROOT: ${root_data_dir}/Crossview_wai
     dataset_metadata_dir: ${mapanything_dataset_metadata_dir}/Crossview
     overfit_num_sets: null
+    scene_list_path: null
     variable_num_views: ${dataset.test.variable_num_views}
     num_views: ${dataset.num_views}
     covisibility_thres: 0.0

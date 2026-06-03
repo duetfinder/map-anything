@@ -84,6 +84,18 @@
 | vggt | `vggt_p6a_raw_base_conditional_remote_adapter` | 518 | 0.1663 | 33.00 | 0.1469 | 0.1565 | 38.33 | 1.4736 | 0.0069 | +4.20% |
 | vggt | `vggt_p5g_no_fusion_fixedfreeze_protected` | 518 | 0.1663 | 33.00 | 0.1727 | 0.1565 | 38.33 | 1.4736 | 0.0069 | +4.20% |
 
+## p5e 与 p5h 指标完全一致的说明
+
+`vggt_p5e_remote_head_attention_viewtype`、`vggt_p5h_crossattn_protected`、`vggt_p5h_film_protected`、`vggt_p5h_film_unfreeze_viewtype_protected` 在本表中的主要指标完全一致。已检查：
+
+- 四个评测目录使用的 checkpoint 路径不同。
+- checkpoint 文件大小/hash 不同，不是同一个文件复制。
+- p5h 系列训练时从 p5e checkpoint 初始化，并且 remote/branch consistency loss 权重为 0，主要训练 late remote-to-aerial fusion。
+- p5h checkpoint 中 late fusion gate 很小：cross-attn 约 -0.0104，film 约 0.0139，film-unfreeze 约 0.0233。
+- 修正 p5h 评测 override 字段名后单独复测，结果仍与 p5e 只有浮点末位差异。
+
+因此，这几行不能解读成四种结构独立取得了同样的最优结果。更合理的解读是：在当前 10-scene、4-view、普通视角 joint 指标上，p5h 的 late-fusion 改动没有带来可测差异，结果基本等价于其初始化来源 p5e。选择模型时应把它们视作同一组候选，并优先用更大样本或更直接的 remote-to-aerial 消融复核。
+
 ## 真实卫星内容收益筛选
 
 只看 `same < blank` 还不够，因为 shuffled 也提供了 remote token 和遥感图像分布。如果 `same` 没有优于 `shuffled`，说明收益可能不是来自正确匹配的卫星内容。下面列出 `same` 同时优于 `blank` 和 `shuffled` 的主要模型：

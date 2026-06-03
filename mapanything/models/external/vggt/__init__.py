@@ -72,6 +72,7 @@ class VGGTWrapper(torch.nn.Module):
         remote_projection_aux_detach_pointmap=False,
         remote_projection_aux_use_rgb=False,
         remote_projection_aux_use_coord=False,
+        remote_projection_aux_image_stem_dim=0,
         remote_projection_aux_positive_slope=False,
         remote_projection_aux_slope_init=0.1,
         remote_projection_aux_num_blocks=0,
@@ -104,6 +105,7 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_projection_aux_detach_pointmap = remote_projection_aux_detach_pointmap
         self.remote_projection_aux_use_rgb = remote_projection_aux_use_rgb
         self.remote_projection_aux_use_coord = remote_projection_aux_use_coord
+        self.remote_projection_aux_image_stem_dim = int(remote_projection_aux_image_stem_dim)
         self.remote_projection_aux_positive_slope = remote_projection_aux_positive_slope
         self.remote_projection_aux_slope_init = float(remote_projection_aux_slope_init)
         self.remote_projection_aux_num_blocks = int(remote_projection_aux_num_blocks)
@@ -212,6 +214,19 @@ class VGGTWrapper(torch.nn.Module):
                 aux_pixel_in_channels += 3
             if self.remote_projection_aux_use_coord:
                 aux_pixel_in_channels += 2
+            if self.remote_projection_aux_image_stem_dim > 0:
+                aux_pixel_in_channels += self.remote_projection_aux_image_stem_dim
+                self.remote_projection_aux_image_stem = torch.nn.Sequential(
+                    torch.nn.Conv2d(3, self.remote_projection_aux_image_stem_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                    torch.nn.Conv2d(
+                        self.remote_projection_aux_image_stem_dim,
+                        self.remote_projection_aux_image_stem_dim,
+                        kernel_size=3,
+                        padding=1,
+                    ),
+                    torch.nn.GELU(),
+                )
             if self.remote_projection_aux_num_blocks > 0:
                 pixel_layers = [
                     torch.nn.Conv2d(aux_pixel_in_channels, hidden_dim, kernel_size=3, padding=1),
@@ -282,6 +297,13 @@ class VGGTWrapper(torch.nn.Module):
             yy, xx = torch.meshgrid(y, x, indexing="ij")
             coord = torch.stack([xx, yy], dim=0).unsqueeze(0).expand(aux_chw.shape[0], -1, -1, -1)
             aux_chw = torch.cat([aux_chw, coord], dim=1)
+        if self.remote_projection_aux_image_stem_dim > 0:
+            if source_image is None:
+                raise RuntimeError(
+                    "remote_projection_aux_image_stem_dim>0 requires source_image"
+                )
+            image_for_stem = source_image.to(device=aux_chw.device, dtype=aux_chw.dtype)
+            aux_chw = torch.cat([aux_chw, self.remote_projection_aux_image_stem(image_for_stem)], dim=1)
         pixel_pred = self.remote_projection_aux_pixel_head(aux_chw)
         pixel_pred = pixel_pred.permute(0, 2, 3, 1).contiguous()
         output["remote_projection_rel_height_pred"] = pixel_pred[..., 0]

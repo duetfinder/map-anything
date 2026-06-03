@@ -42,6 +42,8 @@ keep_freq: 10
 print_freq: 20
 # Resume Training from last checkpoint
 resume: True
+# Load model weights without optimizer/epoch state before DDP initialization.
+warmstart_ckpt: null
 # Check for loss instability (stop training if loss exceeds max_loss_value)
 check_loss_instability: True
 # Maximum loss value threshold for detecting training instability

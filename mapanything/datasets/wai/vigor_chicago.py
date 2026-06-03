@@ -66,8 +66,14 @@ class VigorChicagoWAI(BaseDataset):
 
         self.scenes = filter_scene_names_by_cities(self.scenes, self.cities)
 
+        scene_list_path = None
         if self.scene_list_path is not None:
-            filtered_scene_list = load_scene_list(Path(self.scene_list_path))
+            scene_list_path = str(self.scene_list_path).strip()
+            if not scene_list_path or scene_list_path.lower() in {"none", "null"}:
+                scene_list_path = None
+
+        if scene_list_path is not None:
+            filtered_scene_list = load_scene_list(Path(scene_list_path))
             allowed_scene_set = set(filtered_scene_list)
             self.scenes = [scene for scene in self.scenes if scene in allowed_scene_set]
 

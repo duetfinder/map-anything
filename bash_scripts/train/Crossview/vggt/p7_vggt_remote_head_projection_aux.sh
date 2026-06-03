@@ -22,6 +22,9 @@ REMOTE_CROP_SCALE_MAX=${REMOTE_CROP_SCALE_MAX:-1.0}
 REMOTE_IMAGE_RESIZE_MODE=${REMOTE_IMAGE_RESIZE_MODE:-nearest}
 REMOTE_LABEL_RESIZE_MODE=${REMOTE_LABEL_RESIZE_MODE:-nearest}
 REMOTE_NUM_VIEWS=${REMOTE_NUM_VIEWS:-1}
+TRAIN_CITIES=${TRAIN_CITIES:-[chicago]}
+VAL_CITIES=${VAL_CITIES:-[chicago]}
+TEST_CITIES=${TEST_CITIES:-[chicago]}
 LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-4.0}
 LAMBDA_REMOTE_H=${LAMBDA_REMOTE_H:-0.0}
 REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE:-aerial_avg_dis}
@@ -33,6 +36,7 @@ PRETRAINED_CKPT=${PRETRAINED_CKPT:-/root/autodl-tmp/outputs/checkpoints/vggt/mod
 LOAD_PRETRAINED_WEIGHTS=${LOAD_PRETRAINED_WEIGHTS:-false}
 LOAD_CUSTOM_CKPT=${LOAD_CUSTOM_CKPT:-auto}
 RESUME=${RESUME:-false}
+WARMSTART_CKPT=${WARMSTART_CKPT:-null}
 TRAIN_PARAMS=${TRAIN_PARAMS:-vggt_p7_remote_head_projection_aux}
 LOSS_CONFIG=${LOSS_CONFIG:-vggt_loss_rs_joint_p7_remote_head_projection_aux}
 
@@ -58,7 +62,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 cd "${REPO_ROOT}"
 
-EXTRA_CLI_ARGS=("${@:2}")
+EXTRA_CLI_ARGS=("$@")
 if [ "${LOAD_CUSTOM_CKPT}" = "auto" ]; then
     if [ -n "${PRETRAINED_CKPT}" ]; then
         LOAD_CUSTOM_CKPT=true
@@ -84,15 +88,47 @@ fi
 echo "P7 remote-head projection auxiliary multitask"
 echo "REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE}"
 echo "REMOTE_NUM_VIEWS=${REMOTE_NUM_VIEWS}"
+echo "TRAIN_CITIES=${TRAIN_CITIES}"
+echo "VAL_CITIES=${VAL_CITIES}"
+echo "TEST_CITIES=${TEST_CITIES}"
 echo "REMOTE_PROJECTION_AUX_HIDDEN_DIM=${REMOTE_PROJECTION_AUX_HIDDEN_DIM:-64}"
 echo "REMOTE_PROJECTION_AUX_USE_COORD=${REMOTE_PROJECTION_AUX_USE_COORD:-false}"
+echo "REMOTE_PROJECTION_AUX_IMAGE_STEM_DIM=${REMOTE_PROJECTION_AUX_IMAGE_STEM_DIM:-0}"
 echo "REMOTE_PROJECTION_AUX_POSITIVE_SLOPE=${REMOTE_PROJECTION_AUX_POSITIVE_SLOPE:-false}"
 echo "REMOTE_PROJECTION_AUX_SLOPE_INIT=${REMOTE_PROJECTION_AUX_SLOPE_INIT:-0.1}"
 echo "PROJ_GLOBAL_DIR_FROM_OFFSET=${PROJ_GLOBAL_DIR_FROM_OFFSET:-false}"
+echo "PROJ_REL_HEIGHT_SCALE=${PROJ_REL_HEIGHT_SCALE:-1.0}"
+echo "PROJ_REL_HEIGHT_SCALE_MODE=${PROJ_REL_HEIGHT_SCALE_MODE:-fixed}"
+echo "PROJ_REL_HEIGHT_MIN=${PROJ_REL_HEIGHT_MIN:-0.0}"
+echo "PROJ_REL_HEIGHT_USE_TILT_MASK=${PROJ_REL_HEIGHT_USE_TILT_MASK:-false}"
+echo "PROJ_REL_HEIGHT_TARGET_WEIGHT=${PROJ_REL_HEIGHT_TARGET_WEIGHT:-0.0}"
+echo "PROJ_REL_HEIGHT_TARGET_WEIGHT_GAMMA=${PROJ_REL_HEIGHT_TARGET_WEIGHT_GAMMA:-1.0}"
+echo "PROJ_REL_HEIGHT_AFFINE_WEIGHT=${PROJ_REL_HEIGHT_AFFINE_WEIGHT:-0.0}"
+echo "PROJ_REL_HEIGHT_AFFINE_DETACH_FIT=${PROJ_REL_HEIGHT_AFFINE_DETACH_FIT:-true}"
+echo "PROJ_REL_HEIGHT_AFFINE_MIN_PIXELS=${PROJ_REL_HEIGHT_AFFINE_MIN_PIXELS:-16}"
+echo "PROJ_REL_HEIGHT_BALANCED_WEIGHT=${PROJ_REL_HEIGHT_BALANCED_WEIGHT:-0.0}"
+echo "PROJ_REL_HEIGHT_BALANCED_QUANTILES=${PROJ_REL_HEIGHT_BALANCED_QUANTILES:-[0.5,0.8]}"
+echo "PROJ_REL_HEIGHT_CONTRAST_WEIGHT=${PROJ_REL_HEIGHT_CONTRAST_WEIGHT:-0.0}"
+echo "PROJ_REL_HEIGHT_BUCKET_MEAN_WEIGHT=${PROJ_REL_HEIGHT_BUCKET_MEAN_WEIGHT:-0.0}"
+echo "PROJ_REL_HEIGHT_LOW_OVERPRED_WEIGHT=${PROJ_REL_HEIGHT_LOW_OVERPRED_WEIGHT:-0.0}"
+echo "PROJ_REL_HEIGHT_LOW_OVERPRED_START_EPOCH=${PROJ_REL_HEIGHT_LOW_OVERPRED_START_EPOCH:-0.0}"
+echo "PROJ_REL_HEIGHT_LOW_OVERPRED_RAMP_EPOCHS=${PROJ_REL_HEIGHT_LOW_OVERPRED_RAMP_EPOCHS:-0.0}"
+echo "PROJ_OFFSET_SCALE=${PROJ_OFFSET_SCALE:-1.0}"
+echo "PROJ_OFFSET_TARGET_WEIGHT=${PROJ_OFFSET_TARGET_WEIGHT:-0.0}"
+echo "PROJ_OFFSET_TARGET_WEIGHT_GAMMA=${PROJ_OFFSET_TARGET_WEIGHT_GAMMA:-1.0}"
+echo "PROJ_OFFSET_BALANCED_WEIGHT=${PROJ_OFFSET_BALANCED_WEIGHT:-0.0}"
+echo "PROJ_OFFSET_BALANCED_QUANTILES=${PROJ_OFFSET_BALANCED_QUANTILES:-[0.5,0.8]}"
+echo "PROJ_OFFSET_CONTRAST_WEIGHT=${PROJ_OFFSET_CONTRAST_WEIGHT:-0.0}"
+echo "PROJ_OFFSET_BUCKET_MEAN_WEIGHT=${PROJ_OFFSET_BUCKET_MEAN_WEIGHT:-0.0}"
+echo "PROJ_OFFSET_LOW_OVERPRED_WEIGHT=${PROJ_OFFSET_LOW_OVERPRED_WEIGHT:-0.0}"
+echo "PROJ_OFFSET_LOW_OVERPRED_START_EPOCH=${PROJ_OFFSET_LOW_OVERPRED_START_EPOCH:-0.0}"
+echo "PROJ_OFFSET_LOW_OVERPRED_RAMP_EPOCHS=${PROJ_OFFSET_LOW_OVERPRED_RAMP_EPOCHS:-0.0}"
+echo "PROJ_CONSISTENCY_USE_LOSS_SPACE=${PROJ_CONSISTENCY_USE_LOSS_SPACE:-false}"
 echo "LAMBDA_PROJ_OFFSET_MAG=${LAMBDA_PROJ_OFFSET_MAG:-0.0}"
 echo "LAMBDA_PROJ_OFFSET_DIR=${LAMBDA_PROJ_OFFSET_DIR:-0.0}"
 echo "TRAIN_PARAMS=${TRAIN_PARAMS}"
 echo "LOSS_CONFIG=${LOSS_CONFIG}"
+echo "WARMSTART_CKPT=${WARMSTART_CKPT}"
 
 PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "${NUM_GPUS}" \
     scripts/train.py \
@@ -100,9 +136,9 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     dataset=vigor_chicago_rs_joint_518 \
     dataset.num_workers=${NUM_WORKERS} \
     dataset.num_views=${NUM_VIEWS} \
-    dataset.vigor_chicago_joint_rs_aerial.train.cities=[chicago] \
-    dataset.vigor_chicago_joint_rs_aerial.val.cities=[chicago] \
-    dataset.vigor_chicago_joint_rs_aerial.test.cities=[chicago] \
+    dataset.vigor_chicago_joint_rs_aerial.train.cities=${TRAIN_CITIES} \
+    dataset.vigor_chicago_joint_rs_aerial.val.cities=${VAL_CITIES} \
+    dataset.vigor_chicago_joint_rs_aerial.test.cities=${TEST_CITIES} \
     dataset.vigor_chicago_joint_rs_aerial.train.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.val.remote_providers=[${RS_PROVIDER}] \
     dataset.vigor_chicago_joint_rs_aerial.test.remote_providers=[${RS_PROVIDER}] \
@@ -141,7 +177,33 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     loss.remote_projection_consistency_loss_weight=${LAMBDA_PROJ_CONSISTENCY:-0.2} \
     loss.remote_projection_global_dir_from_offset=${PROJ_GLOBAL_DIR_FROM_OFFSET:-false} \
     loss.remote_projection_rel_height_scale=${PROJ_REL_HEIGHT_SCALE:-1.0} \
+    loss.remote_projection_rel_height_scale_mode=${PROJ_REL_HEIGHT_SCALE_MODE:-fixed} \
     loss.remote_projection_rel_height_clip=${PROJ_REL_HEIGHT_CLIP:-0.0} \
+    loss.remote_projection_rel_height_min=${PROJ_REL_HEIGHT_MIN:-0.0} \
+    loss.remote_projection_rel_height_use_tilt_mask=${PROJ_REL_HEIGHT_USE_TILT_MASK:-false} \
+    loss.remote_projection_rel_height_target_weight=${PROJ_REL_HEIGHT_TARGET_WEIGHT:-0.0} \
+    loss.remote_projection_rel_height_target_weight_gamma=${PROJ_REL_HEIGHT_TARGET_WEIGHT_GAMMA:-1.0} \
+    loss.remote_projection_rel_height_affine_loss_weight=${PROJ_REL_HEIGHT_AFFINE_WEIGHT:-0.0} \
+    loss.remote_projection_rel_height_affine_detach_fit=${PROJ_REL_HEIGHT_AFFINE_DETACH_FIT:-true} \
+    loss.remote_projection_rel_height_affine_min_pixels=${PROJ_REL_HEIGHT_AFFINE_MIN_PIXELS:-16} \
+    loss.remote_projection_rel_height_balanced_loss_weight=${PROJ_REL_HEIGHT_BALANCED_WEIGHT:-0.0} \
+    loss.remote_projection_rel_height_balanced_quantiles=${PROJ_REL_HEIGHT_BALANCED_QUANTILES:-[0.5,0.8]} \
+    loss.remote_projection_rel_height_contrast_loss_weight=${PROJ_REL_HEIGHT_CONTRAST_WEIGHT:-0.0} \
+    loss.remote_projection_rel_height_bucket_mean_loss_weight=${PROJ_REL_HEIGHT_BUCKET_MEAN_WEIGHT:-0.0} \
+    loss.remote_projection_rel_height_low_overpred_loss_weight=${PROJ_REL_HEIGHT_LOW_OVERPRED_WEIGHT:-0.0} \
+    loss.remote_projection_rel_height_low_overpred_start_epoch=${PROJ_REL_HEIGHT_LOW_OVERPRED_START_EPOCH:-0.0} \
+    loss.remote_projection_rel_height_low_overpred_ramp_epochs=${PROJ_REL_HEIGHT_LOW_OVERPRED_RAMP_EPOCHS:-0.0} \
+    loss.remote_projection_offset_scale=${PROJ_OFFSET_SCALE:-1.0} \
+    loss.remote_projection_offset_target_weight=${PROJ_OFFSET_TARGET_WEIGHT:-0.0} \
+    loss.remote_projection_offset_target_weight_gamma=${PROJ_OFFSET_TARGET_WEIGHT_GAMMA:-1.0} \
+    loss.remote_projection_offset_balanced_loss_weight=${PROJ_OFFSET_BALANCED_WEIGHT:-0.0} \
+    loss.remote_projection_offset_balanced_quantiles=${PROJ_OFFSET_BALANCED_QUANTILES:-[0.5,0.8]} \
+    loss.remote_projection_offset_contrast_loss_weight=${PROJ_OFFSET_CONTRAST_WEIGHT:-0.0} \
+    loss.remote_projection_offset_bucket_mean_loss_weight=${PROJ_OFFSET_BUCKET_MEAN_WEIGHT:-0.0} \
+    loss.remote_projection_offset_low_overpred_loss_weight=${PROJ_OFFSET_LOW_OVERPRED_WEIGHT:-0.0} \
+    loss.remote_projection_offset_low_overpred_start_epoch=${PROJ_OFFSET_LOW_OVERPRED_START_EPOCH:-0.0} \
+    loss.remote_projection_offset_low_overpred_ramp_epochs=${PROJ_OFFSET_LOW_OVERPRED_RAMP_EPOCHS:-0.0} \
+    loss.remote_projection_consistency_use_loss_space=${PROJ_CONSISTENCY_USE_LOSS_SPACE:-false} \
     loss.remote_projection_offset_use_tilt_mask=${PROJ_OFFSET_USE_TILT_MASK:-false} \
     loss.remote_projection_consistency_use_tilt_mask=${PROJ_CONSISTENCY_USE_TILT_MASK:-false} \
     loss.remote_projection_offset_min_magnitude=${PROJ_OFFSET_MIN_MAGNITUDE:-0.0} \
@@ -164,6 +226,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     model.model_config.remote_projection_aux_detach_pointmap=${REMOTE_PROJECTION_AUX_DETACH_POINTMAP:-false} \
     model.model_config.remote_projection_aux_use_rgb=${REMOTE_PROJECTION_AUX_USE_RGB:-false} \
     model.model_config.remote_projection_aux_use_coord=${REMOTE_PROJECTION_AUX_USE_COORD:-false} \
+    model.model_config.remote_projection_aux_image_stem_dim=${REMOTE_PROJECTION_AUX_IMAGE_STEM_DIM:-0} \
     model.model_config.remote_projection_aux_positive_slope=${REMOTE_PROJECTION_AUX_POSITIVE_SLOPE:-false} \
     model.model_config.remote_projection_aux_slope_init=${REMOTE_PROJECTION_AUX_SLOPE_INIT:-0.1} \
     model.model_config.remote_projection_aux_num_blocks=${REMOTE_PROJECTION_AUX_NUM_BLOCKS:-0} \
@@ -176,5 +239,6 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     train_params.max_num_of_imgs_per_gpu=${BATCH_SIZE} \
     train_params.print_freq=${PRINT_FREQ} \
     train_params.resume=${RESUME} \
+    train_params.warmstart_ckpt=${WARMSTART_CKPT} \
     hydra.run.dir="${OUTPUT_DIR}" \
     "${EXTRA_CLI_ARGS[@]}"

@@ -539,11 +539,37 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         projection_consistency_loss_weight=0.0,
         projection_global_dir_from_offset=False,
         projection_rel_height_scale=1.0,
+        projection_rel_height_scale_mode="fixed",
         projection_rel_height_clip=0.0,
+        projection_rel_height_min=0.0,
+        projection_rel_height_use_tilt_mask=False,
+        projection_offset_scale=1.0,
+        projection_consistency_use_loss_space=False,
         projection_offset_use_tilt_mask=False,
         projection_consistency_use_tilt_mask=False,
         projection_offset_min_magnitude=0.0,
         projection_consistency_min_magnitude=0.0,
+        projection_rel_height_target_weight=0.0,
+        projection_rel_height_target_weight_gamma=1.0,
+        projection_rel_height_affine_loss_weight=0.0,
+        projection_rel_height_affine_detach_fit=True,
+        projection_rel_height_affine_min_pixels=16,
+        projection_rel_height_balanced_loss_weight=0.0,
+        projection_rel_height_balanced_quantiles=(0.5, 0.8),
+        projection_rel_height_contrast_loss_weight=0.0,
+        projection_rel_height_bucket_mean_loss_weight=0.0,
+        projection_rel_height_low_overpred_loss_weight=0.0,
+        projection_rel_height_low_overpred_start_epoch=0.0,
+        projection_rel_height_low_overpred_ramp_epochs=0.0,
+        projection_offset_target_weight=0.0,
+        projection_offset_target_weight_gamma=1.0,
+        projection_offset_balanced_loss_weight=0.0,
+        projection_offset_balanced_quantiles=(0.5, 0.8),
+        projection_offset_contrast_loss_weight=0.0,
+        projection_offset_bucket_mean_loss_weight=0.0,
+        projection_offset_low_overpred_loss_weight=0.0,
+        projection_offset_low_overpred_start_epoch=0.0,
+        projection_offset_low_overpred_ramp_epochs=0.0,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -556,11 +582,61 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         self.projection_consistency_loss_weight = float(projection_consistency_loss_weight)
         self.projection_global_dir_from_offset = bool(projection_global_dir_from_offset)
         self.projection_rel_height_scale = float(projection_rel_height_scale)
+        self.projection_rel_height_scale_mode = str(projection_rel_height_scale_mode)
+        if self.projection_rel_height_scale_mode not in {"fixed", "gt_pointmap_norm"}:
+            raise ValueError(
+                "projection_rel_height_scale_mode must be 'fixed' or 'gt_pointmap_norm', "
+                f"got {projection_rel_height_scale_mode!r}"
+            )
         self.projection_rel_height_clip = float(projection_rel_height_clip)
+        self.projection_rel_height_min = float(projection_rel_height_min)
+        self.projection_rel_height_use_tilt_mask = bool(projection_rel_height_use_tilt_mask)
+        self.projection_offset_scale = float(projection_offset_scale)
+        self.projection_consistency_use_loss_space = bool(projection_consistency_use_loss_space)
         self.projection_offset_use_tilt_mask = bool(projection_offset_use_tilt_mask)
         self.projection_consistency_use_tilt_mask = bool(projection_consistency_use_tilt_mask)
         self.projection_offset_min_magnitude = float(projection_offset_min_magnitude)
         self.projection_consistency_min_magnitude = float(projection_consistency_min_magnitude)
+        self.projection_rel_height_target_weight = float(projection_rel_height_target_weight)
+        self.projection_rel_height_target_weight_gamma = float(projection_rel_height_target_weight_gamma)
+        self.projection_rel_height_affine_loss_weight = float(projection_rel_height_affine_loss_weight)
+        self.projection_rel_height_affine_detach_fit = bool(projection_rel_height_affine_detach_fit)
+        self.projection_rel_height_affine_min_pixels = int(projection_rel_height_affine_min_pixels)
+        self.projection_rel_height_balanced_loss_weight = float(projection_rel_height_balanced_loss_weight)
+        self.projection_rel_height_balanced_quantiles = self._parse_balanced_quantiles(
+            projection_rel_height_balanced_quantiles
+        )
+        self.projection_rel_height_contrast_loss_weight = float(projection_rel_height_contrast_loss_weight)
+        self.projection_rel_height_bucket_mean_loss_weight = float(projection_rel_height_bucket_mean_loss_weight)
+        self.projection_rel_height_low_overpred_loss_weight = float(projection_rel_height_low_overpred_loss_weight)
+        self.projection_rel_height_low_overpred_start_epoch = float(projection_rel_height_low_overpred_start_epoch)
+        self.projection_rel_height_low_overpred_ramp_epochs = float(projection_rel_height_low_overpred_ramp_epochs)
+        self.projection_offset_target_weight = float(projection_offset_target_weight)
+        self.projection_offset_target_weight_gamma = float(projection_offset_target_weight_gamma)
+        self.projection_offset_balanced_loss_weight = float(projection_offset_balanced_loss_weight)
+        self.projection_offset_balanced_quantiles = self._parse_balanced_quantiles(
+            projection_offset_balanced_quantiles
+        )
+        self.projection_offset_contrast_loss_weight = float(projection_offset_contrast_loss_weight)
+        self.projection_offset_bucket_mean_loss_weight = float(projection_offset_bucket_mean_loss_weight)
+        self.projection_offset_low_overpred_loss_weight = float(projection_offset_low_overpred_loss_weight)
+        self.projection_offset_low_overpred_start_epoch = float(projection_offset_low_overpred_start_epoch)
+        self.projection_offset_low_overpred_ramp_epochs = float(projection_offset_low_overpred_ramp_epochs)
+
+    @staticmethod
+    def _scheduled_weight(base_weight, start_epoch, ramp_epochs, train_epoch):
+        base_weight = float(base_weight)
+        if base_weight <= 0:
+            return 0.0
+        if train_epoch is None:
+            return base_weight
+        progress = float(train_epoch) - float(start_epoch)
+        if progress <= 0:
+            return 0.0
+        ramp_epochs = float(ramp_epochs)
+        if ramp_epochs <= 0:
+            return base_weight
+        return base_weight * max(0.0, min(1.0, progress / ramp_epochs))
 
     @staticmethod
     def _finite_mask(*tensors):
@@ -572,12 +648,18 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             mask = current if mask is None else (mask & current)
         return mask
 
-    def _projection_mask(self, gt, key, base_mask, offset_gt=None):
+    def _projection_mask(self, gt, key, base_mask, offset_gt=None, rel_height_gt=None):
         mask = base_mask
+        if key == 'rel_height' and self.projection_rel_height_use_tilt_mask:
+            mask = mask & gt['remote_projection_tilt_mask'].bool()
         if key == 'offset' and self.projection_offset_use_tilt_mask:
             mask = mask & gt['remote_projection_tilt_mask'].bool()
         if key == 'consistency' and self.projection_consistency_use_tilt_mask:
             mask = mask & gt['remote_projection_tilt_mask'].bool()
+        if key == 'rel_height' and self.projection_rel_height_min > 0:
+            if rel_height_gt is None:
+                raise ValueError('rel_height_gt is required when projection height min masking is enabled')
+            mask = mask & (rel_height_gt.float().abs() >= self.projection_rel_height_min)
         min_magnitude = 0.0
         if key == 'offset':
             min_magnitude = self.projection_offset_min_magnitude
@@ -589,7 +671,231 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             mask = mask & (torch.linalg.norm(offset_gt.float(), dim=-1) >= min_magnitude)
         return mask
 
-    def _projection_aux_loss_one(self, gt, pred):
+    @staticmethod
+    def _broadcast_projection_scale(scale, target):
+        if not torch.is_tensor(scale):
+            scale = target.new_tensor(scale)
+        scale = scale.to(device=target.device, dtype=target.dtype).clamp_min(1e-6)
+        while scale.ndim > 1 and scale.shape[-1] == 1:
+            scale = scale.squeeze(-1)
+        while scale.ndim < target.ndim:
+            scale = scale.unsqueeze(-1)
+        return scale
+
+    @staticmethod
+    def _weighted_masked_mean(loss_map, mask, weight):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return loss_map.new_zeros(())
+        return (loss_map[mask] * weight[mask]).mean()
+
+    def _projection_target_weight(self, target_mag, mask, strength, gamma):
+        strength = float(strength)
+        if strength <= 0:
+            return None
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return torch.ones_like(target_mag)
+        mag = target_mag.detach().abs()
+        mean_mag = self._masked_mean(mag, mask).detach().clamp_min(1e-6)
+        rel_mag = (mag / mean_mag).clamp(max=10.0)
+        weight = 1.0 + strength * rel_mag.pow(float(gamma))
+        weight_mean = self._masked_mean(weight, mask).detach().clamp_min(1e-6)
+        return weight / weight_mean
+
+    @staticmethod
+    def _masked_quantile(values, mask, q):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return None
+        selected = values[mask]
+        if selected.numel() == 0:
+            return None
+        return torch.quantile(selected.float(), float(q))
+
+    @staticmethod
+    def _parse_balanced_quantiles(quantiles):
+        if isinstance(quantiles, str):
+            quantiles = [part.strip() for part in quantiles.strip("[]()").split(",") if part.strip()]
+        if torch.is_tensor(quantiles):
+            quantiles = quantiles.detach().cpu().tolist()
+        parsed = tuple(float(q) for q in quantiles)
+        if len(parsed) != 2:
+            raise ValueError(f"balanced quantiles must contain two values, got {quantiles!r}")
+        if not (0.0 < parsed[0] < parsed[1] < 1.0):
+            raise ValueError(f"balanced quantiles must satisfy 0 < q0 < q1 < 1, got {parsed!r}")
+        return parsed
+
+    def _balanced_masked_loss(self, loss_map, target_mag, mask, quantiles, prefix, details):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return loss_map.sum() * 0.0
+        q0 = self._masked_quantile(target_mag, mask, quantiles[0])
+        q1 = self._masked_quantile(target_mag, mask, quantiles[1])
+        if q0 is None or q1 is None:
+            return self._masked_mean(loss_map, mask)
+        bucket_masks = [
+            mask & (target_mag < q0),
+            mask & (target_mag >= q0) & (target_mag < q1),
+            mask & (target_mag >= q1),
+        ]
+        losses = []
+        for bucket_name, bucket_mask in zip(["low", "mid", "high"], bucket_masks):
+            if not bucket_mask.any():
+                continue
+            bucket_loss = self._masked_mean(loss_map, bucket_mask)
+            losses.append(bucket_loss)
+            details[f"rs_projection_{prefix}_balanced_{bucket_name}_loss"] = float(bucket_loss)
+            details[f"rs_projection_{prefix}_balanced_{bucket_name}_ratio"] = float(bucket_mask.float().mean())
+        if not losses:
+            return self._masked_mean(loss_map, mask)
+        details[f"rs_projection_{prefix}_balanced_q0"] = float(q0)
+        details[f"rs_projection_{prefix}_balanced_q1"] = float(q1)
+        return torch.stack(losses).mean()
+
+    def _bucket_mean_loss(self, pred_mag, target_mag, mask, quantiles, prefix, details):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return pred_mag.sum() * 0.0
+        q0 = self._masked_quantile(target_mag, mask, quantiles[0])
+        q1 = self._masked_quantile(target_mag, mask, quantiles[1])
+        if q0 is None or q1 is None:
+            return pred_mag.sum() * 0.0
+        bucket_masks = [
+            mask & (target_mag < q0),
+            mask & (target_mag >= q0) & (target_mag < q1),
+            mask & (target_mag >= q1),
+        ]
+        losses = []
+        for bucket_name, bucket_mask in zip(["low", "mid", "high"], bucket_masks):
+            if not bucket_mask.any():
+                continue
+            pred_mean = self._masked_mean(pred_mag, bucket_mask)
+            target_mean = self._masked_mean(target_mag, bucket_mask)
+            bucket_loss = (pred_mean - target_mean).abs()
+            losses.append(bucket_loss)
+            details[f"rs_projection_{prefix}_bucket_mean_{bucket_name}_pred"] = float(pred_mean)
+            details[f"rs_projection_{prefix}_bucket_mean_{bucket_name}_gt"] = float(target_mean)
+            details[f"rs_projection_{prefix}_bucket_mean_{bucket_name}_loss"] = float(bucket_loss)
+        if not losses:
+            return pred_mag.sum() * 0.0
+        details[f"rs_projection_{prefix}_bucket_mean_q0"] = float(q0)
+        details[f"rs_projection_{prefix}_bucket_mean_q1"] = float(q1)
+        return torch.stack(losses).mean()
+
+    def _low_bucket_overpred_loss(self, pred_mag, target_mag, mask, quantiles, prefix, details):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return pred_mag.sum() * 0.0
+        q0 = self._masked_quantile(target_mag, mask, quantiles[0])
+        if q0 is None:
+            return pred_mag.sum() * 0.0
+        low_mask = mask & (target_mag < q0)
+        if not low_mask.any():
+            return pred_mag.sum() * 0.0
+        over = torch.relu(pred_mag - target_mag)
+        loss = self._masked_mean(over, low_mask)
+        details[f"rs_projection_{prefix}_low_overpred_q0"] = float(q0)
+        details[f"rs_projection_{prefix}_low_overpred_pred_mean"] = float(self._masked_mean(pred_mag, low_mask))
+        details[f"rs_projection_{prefix}_low_overpred_gt_mean"] = float(self._masked_mean(target_mag, low_mask))
+        details[f"rs_projection_{prefix}_low_overpred_loss"] = float(loss)
+        return loss
+
+    def _bucket_contrast_loss(self, pred_mag, target_mag, mask, quantiles, prefix, details):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return pred_mag.sum() * 0.0
+        q0 = self._masked_quantile(target_mag, mask, quantiles[0])
+        q1 = self._masked_quantile(target_mag, mask, quantiles[1])
+        if q0 is None or q1 is None:
+            return pred_mag.sum() * 0.0
+        low_mask = mask & (target_mag < q0)
+        high_mask = mask & (target_mag >= q1)
+        if not low_mask.any() or not high_mask.any():
+            return pred_mag.sum() * 0.0
+        pred_low = self._masked_mean(pred_mag, low_mask)
+        pred_high = self._masked_mean(pred_mag, high_mask)
+        target_low = self._masked_mean(target_mag, low_mask)
+        target_high = self._masked_mean(target_mag, high_mask)
+        pred_gap = pred_high - pred_low
+        target_gap = target_high - target_low
+        loss = (pred_gap - target_gap).abs()
+        details[f"rs_projection_{prefix}_contrast_pred_gap"] = float(pred_gap)
+        details[f"rs_projection_{prefix}_contrast_gt_gap"] = float(target_gap)
+        details[f"rs_projection_{prefix}_contrast_q0"] = float(q0)
+        details[f"rs_projection_{prefix}_contrast_q1"] = float(q1)
+        return loss
+
+    def _height_affine_aligned_loss(self, pred_map, gt_map, mask):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any() or int(mask.sum()) < self.projection_rel_height_affine_min_pixels:
+            zero = pred_map.sum() * 0.0
+            return zero, zero.detach(), zero.detach(), zero.detach()
+        x = pred_map[mask].float()
+        y = gt_map[mask].float()
+        fit_x = x.detach() if self.projection_rel_height_affine_detach_fit else x
+        fit_y = y.detach() if self.projection_rel_height_affine_detach_fit else y
+        x_mean = fit_x.mean()
+        y_mean = fit_y.mean()
+        x_centered = fit_x - x_mean
+        y_centered = fit_y - y_mean
+        denom = (x_centered * x_centered).mean().clamp_min(1e-6)
+        scale = ((x_centered * y_centered).mean() / denom).clamp(-10.0, 10.0)
+        shift = y_mean - scale * x_mean
+        aligned = scale.to(dtype=x.dtype) * x + shift.to(dtype=x.dtype)
+        loss = (aligned - y).abs().mean()
+        return loss, scale.detach(), shift.detach(), (aligned.abs().mean()).detach()
+
+    def _add_projection_bucket_details(self, details, prefix, pred_mag, gt_mag, mask):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return
+        threshold = self._masked_quantile(gt_mag, mask, 0.8)
+        if threshold is None:
+            return
+        high_mask = mask & (gt_mag >= threshold)
+        low_mask = mask & (gt_mag < threshold)
+        if high_mask.any():
+            details[f'rs_projection_{prefix}_high20_gt_mean'] = float(self._masked_mean(gt_mag, high_mask))
+            details[f'rs_projection_{prefix}_high20_pred_mean'] = float(self._masked_mean(pred_mag, high_mask))
+            details[f'rs_projection_{prefix}_high20_mae'] = float(self._masked_mean((pred_mag - gt_mag).abs(), high_mask))
+            details[f'rs_projection_{prefix}_high20_ratio'] = float(high_mask.float().mean())
+        if low_mask.any():
+            details[f'rs_projection_{prefix}_low80_gt_mean'] = float(self._masked_mean(gt_mag, low_mask))
+            details[f'rs_projection_{prefix}_low80_pred_mean'] = float(self._masked_mean(pred_mag, low_mask))
+            details[f'rs_projection_{prefix}_low80_mae'] = float(self._masked_mean((pred_mag - gt_mag).abs(), low_mask))
+
+    def _projection_rel_height_scale_factor(self, gt, pred, base_mask, **kwargs):
+        if self.projection_rel_height_scale_mode == 'fixed':
+            return pred['remote_projection_rel_height_pred'].new_tensor(self.projection_rel_height_scale)
+
+        gt_pointmap = gt['remote_pointmap'].float() if 'remote_pointmap' in gt else gt['pts3d'].float()
+        pred_pts3d = pred['pts3d'].float()
+        norm_mode = self.pointmap_norm_mode
+        if isinstance(norm_mode, str) and norm_mode.startswith('aerial_'):
+            _, _, _, gt_norm_factor = self._normalize_pair_with_aerial_factors(
+                pred_pts3d,
+                gt_pointmap,
+                kwargs.get('aerial_gts'),
+                kwargs.get('aerial_preds'),
+                norm_mode[len('aerial_'):],
+            )
+        else:
+            _, _, _, gt_norm_factor = self._normalize_pair(
+                pred_pts3d, gt_pointmap, gt['remote_valid_mask'].bool(), norm_mode
+            )
+        return gt_norm_factor
+
+    def _projection_aux_loss_one(self, gt, pred, **kwargs):
         required_pred = [
             'remote_projection_rel_height_pred',
             'remote_projection_offset_xy_pred',
@@ -607,7 +913,16 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             weight > 0
             for weight in [
                 self.projection_rel_height_loss_weight,
+                self.projection_rel_height_affine_loss_weight,
+                self.projection_rel_height_balanced_loss_weight,
+                self.projection_rel_height_contrast_loss_weight,
+                self.projection_rel_height_bucket_mean_loss_weight,
+                self.projection_rel_height_low_overpred_loss_weight,
                 self.projection_offset_loss_weight,
+                self.projection_offset_balanced_loss_weight,
+                self.projection_offset_contrast_loss_weight,
+                self.projection_offset_bucket_mean_loss_weight,
+                self.projection_offset_low_overpred_loss_weight,
                 self.projection_offset_mag_loss_weight,
                 self.projection_offset_dir_loss_weight,
                 self.projection_global_dir_loss_weight,
@@ -652,6 +967,26 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             denom = mask_f.sum(dim=(1, 2)).clamp_min(1.0)
             offset_vec_pred = (offset_pred * mask_f).sum(dim=(1, 2)) / denom
             dir_pred_for_global = torch.nn.functional.normalize(offset_vec_pred, dim=-1, eps=1e-6)
+
+        rel_gt_for_loss = rel_gt
+        rel_pred_for_loss = rel_pred
+        rel_height_mask = self._projection_mask(gt, 'rel_height', base_mask, rel_height_gt=rel_gt)
+        rel_height_scale = self._projection_rel_height_scale_factor(gt, pred, base_mask, **kwargs)
+        rel_height_scale = self._broadcast_projection_scale(rel_height_scale, rel_gt_for_loss)
+        rel_gt_for_loss = rel_gt_for_loss / rel_height_scale
+        if self.projection_rel_height_clip > 0:
+            rel_gt_for_loss = rel_gt_for_loss.clamp(
+                -self.projection_rel_height_clip, self.projection_rel_height_clip
+            )
+            rel_pred_for_loss = rel_pred_for_loss.clamp(
+                -self.projection_rel_height_clip, self.projection_rel_height_clip
+            )
+
+        offset_gt_for_loss = offset_gt
+        offset_pred_for_loss = offset_pred
+        if self.projection_offset_scale != 1.0:
+            offset_gt_for_loss = offset_gt_for_loss / self.projection_offset_scale
+
         total = None
         details = {}
 
@@ -663,34 +998,112 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             details[f'rs_projection_{name}_loss_weighted'] = float(weighted)
 
         if self.projection_rel_height_loss_weight > 0:
-            rel_gt_for_loss = rel_gt
-            rel_pred_for_loss = rel_pred
-            if self.projection_rel_height_scale != 1.0:
-                rel_gt_for_loss = rel_gt_for_loss / self.projection_rel_height_scale
-            if self.projection_rel_height_clip > 0:
-                rel_gt_for_loss = rel_gt_for_loss.clamp(
-                    -self.projection_rel_height_clip, self.projection_rel_height_clip
+            rel_loss_map = (rel_pred_for_loss - rel_gt_for_loss).abs()
+            rel_target_weight = self._projection_target_weight(
+                rel_gt_for_loss.abs(),
+                rel_height_mask,
+                self.projection_rel_height_target_weight,
+                self.projection_rel_height_target_weight_gamma,
+            )
+            if rel_target_weight is None:
+                rel_loss = self._masked_mean(rel_loss_map, rel_height_mask)
+            else:
+                rel_loss = self._weighted_masked_mean(rel_loss_map, rel_height_mask, rel_target_weight)
+                details['rs_projection_rel_height_target_weight_mean'] = float(
+                    self._masked_mean(rel_target_weight, rel_height_mask)
                 )
-                rel_pred_for_loss = rel_pred_for_loss.clamp(
-                    -self.projection_rel_height_clip, self.projection_rel_height_clip
-                )
-            rel_loss = self._masked_mean((rel_pred_for_loss - rel_gt_for_loss).abs(), base_mask)
             add_loss('rel_height', rel_loss, self.projection_rel_height_loss_weight)
+            details['rs_projection_rel_height_mask_ratio'] = float(rel_height_mask.float().mean())
+            details['rs_projection_rel_height_scale_mean'] = float(rel_height_scale.mean())
             details['rs_projection_rel_height_pred_loss_abs_mean'] = float(
-                self._masked_mean(rel_pred_for_loss.abs(), base_mask)
+                self._masked_mean(rel_pred_for_loss.abs(), rel_height_mask)
             )
             details['rs_projection_rel_height_gt_loss_abs_mean'] = float(
-                self._masked_mean(rel_gt_for_loss.abs(), base_mask)
+                self._masked_mean(rel_gt_for_loss.abs(), rel_height_mask)
             )
+            self._add_projection_bucket_details(
+                details,
+                'rel_height',
+                rel_pred_for_loss.abs(),
+                rel_gt_for_loss.abs(),
+                rel_height_mask,
+            )
+
+        if self.projection_rel_height_balanced_loss_weight > 0:
+            rel_balanced_loss_map = (rel_pred_for_loss - rel_gt_for_loss).abs()
+            rel_balanced_loss = self._balanced_masked_loss(
+                rel_balanced_loss_map,
+                rel_gt_for_loss.abs(),
+                rel_height_mask,
+                self.projection_rel_height_balanced_quantiles,
+                'rel_height',
+                details,
+            )
+            add_loss('rel_height_balanced', rel_balanced_loss, self.projection_rel_height_balanced_loss_weight)
+
+        if self.projection_rel_height_contrast_loss_weight > 0:
+            rel_contrast_loss = self._bucket_contrast_loss(
+                rel_pred_for_loss.abs(),
+                rel_gt_for_loss.abs(),
+                rel_height_mask,
+                self.projection_rel_height_balanced_quantiles,
+                'rel_height',
+                details,
+            )
+            add_loss('rel_height_contrast', rel_contrast_loss, self.projection_rel_height_contrast_loss_weight)
+
+        if self.projection_rel_height_bucket_mean_loss_weight > 0:
+            rel_bucket_mean_loss = self._bucket_mean_loss(
+                rel_pred_for_loss.abs(),
+                rel_gt_for_loss.abs(),
+                rel_height_mask,
+                self.projection_rel_height_balanced_quantiles,
+                'rel_height',
+                details,
+            )
+            add_loss('rel_height_bucket_mean', rel_bucket_mean_loss, self.projection_rel_height_bucket_mean_loss_weight)
+
+        rel_low_overpred_weight = self._scheduled_weight(
+            self.projection_rel_height_low_overpred_loss_weight,
+            self.projection_rel_height_low_overpred_start_epoch,
+            self.projection_rel_height_low_overpred_ramp_epochs,
+            kwargs.get('train_epoch'),
+        )
+        details['rs_projection_rel_height_low_overpred_effective_weight'] = float(rel_low_overpred_weight)
+        if rel_low_overpred_weight > 0:
+            rel_low_overpred_loss = self._low_bucket_overpred_loss(
+                rel_pred_for_loss.abs(),
+                rel_gt_for_loss.abs(),
+                rel_height_mask,
+                self.projection_rel_height_balanced_quantiles,
+                'rel_height',
+                details,
+            )
+            add_loss('rel_height_low_overpred', rel_low_overpred_loss, rel_low_overpred_weight)
+
+        if self.projection_rel_height_affine_loss_weight > 0:
+            affine_loss, affine_scale, affine_shift, affine_pred_abs = self._height_affine_aligned_loss(
+                rel_pred_for_loss, rel_gt_for_loss, rel_height_mask
+            )
+            add_loss('rel_height_affine', affine_loss, self.projection_rel_height_affine_loss_weight)
+            details['rs_projection_rel_height_affine_scale_mean'] = float(affine_scale)
+            details['rs_projection_rel_height_affine_shift_mean'] = float(affine_shift)
+            details['rs_projection_rel_height_affine_pred_abs_mean'] = float(affine_pred_abs)
 
         if (
             self.projection_offset_loss_weight > 0
+            or self.projection_offset_balanced_loss_weight > 0
+            or self.projection_offset_contrast_loss_weight > 0
+            or self.projection_offset_bucket_mean_loss_weight > 0
+            or self.projection_offset_low_overpred_loss_weight > 0
             or self.projection_offset_mag_loss_weight > 0
             or self.projection_offset_dir_loss_weight > 0
         ):
             offset_mask = global_offset_mask
             offset_pred_mag = torch.linalg.norm(offset_pred, dim=-1)
             offset_gt_mag = torch.linalg.norm(offset_gt, dim=-1)
+            offset_pred_loss_mag = torch.linalg.norm(offset_pred_for_loss, dim=-1)
+            offset_gt_loss_mag = torch.linalg.norm(offset_gt_for_loss, dim=-1)
             details['rs_projection_offset_mask_ratio'] = float(offset_mask.float().mean())
             details['rs_projection_offset_pred_abs_mean'] = float(
                 self._masked_mean(offset_pred.abs().mean(dim=-1), offset_mask)
@@ -698,24 +1111,102 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             details['rs_projection_offset_gt_abs_mean'] = float(
                 self._masked_mean(offset_gt.abs().mean(dim=-1), offset_mask)
             )
+            details['rs_projection_offset_pred_loss_abs_mean'] = float(
+                self._masked_mean(offset_pred_for_loss.abs().mean(dim=-1), offset_mask)
+            )
+            details['rs_projection_offset_gt_loss_abs_mean'] = float(
+                self._masked_mean(offset_gt_for_loss.abs().mean(dim=-1), offset_mask)
+            )
             details['rs_projection_offset_pred_norm_mean'] = float(
                 self._masked_mean(offset_pred_mag, offset_mask)
             )
             details['rs_projection_offset_gt_norm_mean'] = float(
                 self._masked_mean(offset_gt_mag, offset_mask)
             )
+            self._add_projection_bucket_details(
+                details,
+                'offset',
+                offset_pred_loss_mag,
+                offset_gt_loss_mag,
+                offset_mask,
+            )
 
         if self.projection_offset_loss_weight > 0:
-            offset_loss = self._masked_mean((offset_pred - offset_gt).abs().mean(dim=-1), offset_mask)
+            offset_loss_map = (offset_pred_for_loss - offset_gt_for_loss).abs().mean(dim=-1)
+            offset_target_weight = self._projection_target_weight(
+                offset_gt_loss_mag,
+                offset_mask,
+                self.projection_offset_target_weight,
+                self.projection_offset_target_weight_gamma,
+            )
+            if offset_target_weight is None:
+                offset_loss = self._masked_mean(offset_loss_map, offset_mask)
+            else:
+                offset_loss = self._weighted_masked_mean(offset_loss_map, offset_mask, offset_target_weight)
+                details['rs_projection_offset_target_weight_mean'] = float(
+                    self._masked_mean(offset_target_weight, offset_mask)
+                )
             add_loss('offset', offset_loss, self.projection_offset_loss_weight)
 
+        if self.projection_offset_balanced_loss_weight > 0:
+            offset_balanced_loss_map = (offset_pred_for_loss - offset_gt_for_loss).abs().mean(dim=-1)
+            offset_balanced_loss = self._balanced_masked_loss(
+                offset_balanced_loss_map,
+                offset_gt_loss_mag,
+                offset_mask,
+                self.projection_offset_balanced_quantiles,
+                'offset',
+                details,
+            )
+            add_loss('offset_balanced', offset_balanced_loss, self.projection_offset_balanced_loss_weight)
+
+        if self.projection_offset_contrast_loss_weight > 0:
+            offset_contrast_loss = self._bucket_contrast_loss(
+                offset_pred_loss_mag,
+                offset_gt_loss_mag,
+                offset_mask,
+                self.projection_offset_balanced_quantiles,
+                'offset',
+                details,
+            )
+            add_loss('offset_contrast', offset_contrast_loss, self.projection_offset_contrast_loss_weight)
+
+        if self.projection_offset_bucket_mean_loss_weight > 0:
+            offset_bucket_mean_loss = self._bucket_mean_loss(
+                offset_pred_loss_mag,
+                offset_gt_loss_mag,
+                offset_mask,
+                self.projection_offset_balanced_quantiles,
+                'offset',
+                details,
+            )
+            add_loss('offset_bucket_mean', offset_bucket_mean_loss, self.projection_offset_bucket_mean_loss_weight)
+
+        offset_low_overpred_weight = self._scheduled_weight(
+            self.projection_offset_low_overpred_loss_weight,
+            self.projection_offset_low_overpred_start_epoch,
+            self.projection_offset_low_overpred_ramp_epochs,
+            kwargs.get('train_epoch'),
+        )
+        details['rs_projection_offset_low_overpred_effective_weight'] = float(offset_low_overpred_weight)
+        if offset_low_overpred_weight > 0:
+            offset_low_overpred_loss = self._low_bucket_overpred_loss(
+                offset_pred_loss_mag,
+                offset_gt_loss_mag,
+                offset_mask,
+                self.projection_offset_balanced_quantiles,
+                'offset',
+                details,
+            )
+            add_loss('offset_low_overpred', offset_low_overpred_loss, offset_low_overpred_weight)
+
         if self.projection_offset_mag_loss_weight > 0:
-            offset_mag_loss = self._masked_mean((offset_pred_mag - offset_gt_mag).abs(), offset_mask)
+            offset_mag_loss = self._masked_mean((offset_pred_loss_mag - offset_gt_loss_mag).abs(), offset_mask)
             add_loss('offset_mag', offset_mag_loss, self.projection_offset_mag_loss_weight)
 
         if self.projection_offset_dir_loss_weight > 0:
-            offset_dir_pred = torch.nn.functional.normalize(offset_pred, dim=-1, eps=1e-6)
-            offset_dir_gt = torch.nn.functional.normalize(offset_gt, dim=-1, eps=1e-6)
+            offset_dir_pred = torch.nn.functional.normalize(offset_pred_for_loss, dim=-1, eps=1e-6)
+            offset_dir_gt = torch.nn.functional.normalize(offset_gt_for_loss, dim=-1, eps=1e-6)
             offset_dir_loss = self._masked_mean(
                 1.0 - (offset_dir_pred * offset_dir_gt).sum(dim=-1).clamp(-1.0, 1.0),
                 offset_mask,
@@ -735,14 +1226,15 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
 
         if self.projection_consistency_loss_weight > 0:
             consistency_mask = self._projection_mask(gt, 'consistency', base_mask, offset_gt=offset_gt)
-            rel_pred_metric = rel_pred * self.projection_rel_height_scale
+            rel_for_consistency = rel_pred_for_loss if self.projection_consistency_use_loss_space else rel_pred
+            offset_for_consistency = offset_pred_for_loss if self.projection_consistency_use_loss_space else offset_pred
             offset_from_field = (
-                rel_pred_metric.unsqueeze(-1)
+                rel_for_consistency.unsqueeze(-1)
                 * slope_pred.view(slope_pred.shape[0], 1, 1, 1)
                 * dir_pred.view(dir_pred.shape[0], 1, 1, 2)
             )
             consistency_loss = self._masked_mean(
-                (offset_pred - offset_from_field).abs().mean(dim=-1), consistency_mask
+                (offset_for_consistency - offset_from_field).abs().mean(dim=-1), consistency_mask
             )
             add_loss('consistency', consistency_loss, self.projection_consistency_loss_weight)
             details['rs_projection_consistency_mask_ratio'] = float(consistency_mask.float().mean())
@@ -766,7 +1258,7 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         aux_losses = []
         aux_details = {}
         for gt, pred in zip(gts, preds):
-            aux_loss, one_details = self._projection_aux_loss_one(gt, pred)
+            aux_loss, one_details = self._projection_aux_loss_one(gt, pred, **kwargs)
             if aux_loss is None:
                 continue
             aux_losses.append(aux_loss)
@@ -1023,6 +1515,11 @@ class JointAerialRSLoss(nn.Module):
         return str(instance) == 'remote'
 
     def forward(self, gts, preds, **kwargs):
+        remote_kwargs = dict(kwargs)
+        aerial_kwargs = {
+            key: value for key, value in kwargs.items()
+            if key not in {'train_epoch'}
+        }
         if len(gts) != len(preds):
             raise ValueError(
                 f"Expected same number of GT views and predictions, got {len(gts)} and {len(preds)}"
@@ -1055,7 +1552,7 @@ class JointAerialRSLoss(nn.Module):
         details = {}
 
         if self.aerial_criterion is not None:
-            aerial_loss, aerial_details = self.aerial_criterion(aerial_gts, aerial_preds, **kwargs)
+            aerial_loss, aerial_details = self.aerial_criterion(aerial_gts, aerial_preds, **aerial_kwargs)
             weighted_aerial_loss = self.aerial_loss_weight * aerial_loss
             total_loss = weighted_aerial_loss if total_loss is None else total_loss + weighted_aerial_loss
             details['aerial_loss'] = float(aerial_loss)
@@ -1063,7 +1560,7 @@ class JointAerialRSLoss(nn.Module):
 
         if self.remote_criterion is not None:
             remote_loss, remote_details = self.remote_criterion(
-                remote_gts, remote_preds, aerial_gts=aerial_gts, aerial_preds=aerial_preds, **kwargs
+                remote_gts, remote_preds, aerial_gts=aerial_gts, aerial_preds=aerial_preds, **remote_kwargs
             )
             effective_remote_weight = self.remote_loss_weight
             if self.scale_remote_loss_by_num_aerial_views:
@@ -1079,7 +1576,7 @@ class JointAerialRSLoss(nn.Module):
             and self.branch_consistency_loss_weight > 0
         ):
             consistency_loss, consistency_details = self.branch_consistency_criterion(
-                aerial_gts, aerial_preds, **kwargs
+                aerial_gts, aerial_preds, **aerial_kwargs
             )
             weighted_consistency_loss = (
                 self.branch_consistency_loss_weight * consistency_loss

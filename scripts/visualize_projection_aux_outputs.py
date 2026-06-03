@@ -49,6 +49,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detach-aux", action="store_true", help="Instantiate P7 aux head with detached pointmap input.")
     parser.add_argument("--use-rgb-aux", action="store_true", help="Instantiate P7 aux head with RGB-conditioned pixel input.")
     parser.add_argument("--aux-num-blocks", type=int, default=0, help="Residual conv blocks in the P7 aux pixel head.")
+    parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden channels in the P7 aux heads.")
+    parser.add_argument("--image-stem-dim", type=int, default=0, help="RGB image-stem channels concatenated into the P7 aux pixel head.")
     parser.add_argument("--use-coord-aux", action="store_true", help="Instantiate P7 aux head with normalized coordinate input.")
     parser.add_argument("--positive-slope-aux", action="store_true", help="Instantiate P7 aux head with positive global slope output.")
     parser.add_argument("--slope-init", type=float, default=0.1, help="Initial positive global slope for the P7 aux head.")
@@ -56,6 +58,13 @@ def parse_args() -> argparse.Namespace:
         "--field-dir-from-offset",
         action="store_true",
         help="Compute the projection direction used for consistency from the mean predicted offset field.",
+    )
+    parser.add_argument("--rel-height-scale", type=float, default=1.0, help="Scale used for normalized rel-height diagnostics.")
+    parser.add_argument("--offset-scale", type=float, default=1.0, help="Scale used for normalized offset diagnostics.")
+    parser.add_argument(
+        "--pred-normalized",
+        action="store_true",
+        help="Treat aux predictions as normalized values and rescale them for metric GT/panel comparisons.",
     )
     return parser.parse_args()
 
@@ -92,13 +101,14 @@ def make_export_args(args: argparse.Namespace) -> SimpleNamespace:
         vggt_p6b_export=False,
         vggt_p7_projection_aux_export=args.preset == "split",
         vggt_p7_remote_head_projection_aux_export=args.preset == "remote_head",
-        vggt_projection_aux_hidden_dim=64,
+        vggt_projection_aux_hidden_dim=args.hidden_dim,
         vggt_projection_aux_detach_pointmap=args.detach_aux,
         vggt_projection_aux_use_rgb=args.use_rgb_aux,
         vggt_projection_aux_use_coord=args.use_coord_aux,
         vggt_projection_aux_positive_slope=args.positive_slope_aux,
         vggt_projection_aux_slope_init=args.slope_init,
         vggt_projection_aux_num_blocks=args.aux_num_blocks,
+        vggt_projection_aux_image_stem_dim=args.image_stem_dim,
         include_remote_points=False,
         vggt_late_fusion_type="cross_attention",
         vggt_late_gate_init=1e-3,
@@ -239,8 +249,14 @@ def main() -> int:
     mask = gt["remote_projection_valid_mask"].astype(bool)
     rel_gt = gt["remote_projection_rel_height"]
     offset_gt = gt["remote_projection_offset_xy"]
-    rel_pred = to_numpy(pred["remote_projection_rel_height_pred"])[0]
-    offset_pred = to_numpy(pred["remote_projection_offset_xy_pred"])[0]
+    rel_pred_raw = to_numpy(pred["remote_projection_rel_height_pred"])[0]
+    offset_pred_raw = to_numpy(pred["remote_projection_offset_xy_pred"])[0]
+    if args.pred_normalized:
+        rel_pred = rel_pred_raw * float(args.rel_height_scale)
+        offset_pred = offset_pred_raw * float(args.offset_scale)
+    else:
+        rel_pred = rel_pred_raw
+        offset_pred = offset_pred_raw
     dir_gt = np.asarray(gt["remote_projection_global_dir_xy"], dtype=np.float32).reshape(-1)[:2]
     slope_gt = np.asarray(gt["remote_projection_global_slope"], dtype=np.float32).reshape(-1)[:1]
     dir_pred = to_numpy(pred["remote_projection_global_dir_xy_pred"])[0].reshape(-1)[:2]
@@ -256,6 +272,10 @@ def main() -> int:
     field_dir_pred = field_dir_pred / (np.linalg.norm(field_dir_pred) + 1e-8)
     consistency_dir_pred = field_dir_pred if args.field_dir_from_offset else dir_pred
     offset_from_field = rel_pred[..., None] * float(slope_pred[0]) * consistency_dir_pred.reshape(1, 1, 2)
+    rel_gt_norm = rel_gt / float(args.rel_height_scale) if args.rel_height_scale != 1.0 else rel_gt
+    rel_pred_norm = rel_pred_raw if args.pred_normalized else rel_pred / float(args.rel_height_scale) if args.rel_height_scale != 1.0 else rel_pred
+    offset_gt_norm = offset_gt / float(args.offset_scale) if args.offset_scale != 1.0 else offset_gt
+    offset_pred_norm = offset_pred_raw if args.pred_normalized else offset_pred / float(args.offset_scale) if args.offset_scale != 1.0 else offset_pred
 
     panels = [
         make_panel("rel_height GT", rel_gt, mask),
@@ -279,6 +299,11 @@ def main() -> int:
         "valid_pixels": int(mask.sum()),
         "rel_height_mae": masked_mae(rel_pred, rel_gt, mask),
         "offset_mae": masked_mae(offset_pred, offset_gt, mask),
+        "rel_height_norm_mae": masked_mae(rel_pred_norm, rel_gt_norm, mask),
+        "offset_norm_mae": masked_mae(offset_pred_norm, offset_gt_norm, mask),
+        "rel_height_scale": float(args.rel_height_scale),
+        "offset_scale": float(args.offset_scale),
+        "pred_normalized": bool(args.pred_normalized),
         "consistency_mae": masked_mae(offset_pred, offset_from_field, mask),
         "global_dir_gt": dir_gt.tolist(),
         "global_dir_pred": dir_pred.tolist(),
@@ -292,10 +317,12 @@ def main() -> int:
         "global_slope_pred": slope_pred.tolist(),
         "rel_height_gt_mean": float(rel_gt[mask].mean()) if mask.any() else None,
         "rel_height_pred_mean": float(rel_pred[mask].mean()) if mask.any() else None,
+        "rel_height_pred_raw_mean": float(rel_pred_raw[mask].mean()) if mask.any() else None,
         "rel_height_gt_std": float(rel_gt[mask].std()) if mask.any() else None,
         "rel_height_pred_std": float(rel_pred[mask].std()) if mask.any() else None,
         "offset_gt_abs_mean": float(np.linalg.norm(offset_gt, axis=-1)[mask].mean()) if mask.any() else None,
         "offset_pred_abs_mean": float(np.linalg.norm(offset_pred, axis=-1)[mask].mean()) if mask.any() else None,
+        "offset_pred_raw_abs_mean": float(np.linalg.norm(offset_pred_raw, axis=-1)[mask].mean()) if mask.any() else None,
     }
     with (args.output_dir / "projection_aux_summary.json").open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)

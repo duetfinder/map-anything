@@ -159,6 +159,7 @@ def loss_of_one_batch_multi_view(
     amp_dtype="bf16",
     ret=None,
     ignore_keys=None,
+    criterion_kwargs=None,
 ):
     """
     Calculate loss for a batch with multiple views.
@@ -174,11 +175,15 @@ def loss_of_one_batch_multi_view(
         ignore_keys (set, optional): Set of keys to ignore when moving tensors to device.
                                    Defaults to {"dataset", "label", "instance",
                                    "idx", "true_shape", "rng", "data_norm_type"}.
+        criterion_kwargs (dict, optional): Extra keyword arguments passed to the criterion.
 
     Returns:
         dict or Any: If ret is None, returns a dictionary containing views, predictions, and loss.
                      Otherwise, returns the value associated with the ret key.
     """
+    if criterion_kwargs is None:
+        criterion_kwargs = {}
+
     # Move necessary tensors to device
     if ignore_keys is None:
         ignore_keys = set(
@@ -241,7 +246,7 @@ def loss_of_one_batch_multi_view(
     with torch.autocast("cuda", enabled=bool(use_amp), dtype=amp_dtype):
         preds = model(model_batch)
         with torch.autocast("cuda", enabled=False):
-            loss = criterion(criterion_batch, preds) if criterion is not None else None
+            loss = criterion(criterion_batch, preds, **criterion_kwargs) if criterion is not None else None
 
     result = {f"view{i + 1}": view for i, view in enumerate(criterion_batch)}
     result.update({f"pred{i + 1}": pred for i, pred in enumerate(preds)})

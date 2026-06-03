@@ -82,8 +82,8 @@ P5F = cfg(
     "vggt_export_mode=mixed",
     "++model.model_config.use_pre_aggregator_view_type_bias=true",
     "++model.model_config.use_remote_to_aerial_gated_residual=true",
-    "++model.model_config.remote_to_aerial_residual_hidden_scale=0.25",
-    "++model.model_config.remote_to_aerial_gate_init=0.0",
+    "++model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+    "++model.model_config.remote_to_aerial_late_fusion_gate_init=0.0",
 )
 
 
@@ -95,10 +95,10 @@ def p5g(fusion: str, protected: bool) -> list[str]:
         "vggt_export_mode=mixed",
         "++model.model_config.use_split_remote_aggregator=true",
         f"++model.model_config.remote_to_aerial_late_fusion_type={fusion}",
-        "++model.model_config.remote_to_aerial_residual_hidden_scale=0.25",
-        "++model.model_config.remote_to_aerial_gate_init=0.0",
+        "++model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+        "++model.model_config.remote_to_aerial_late_fusion_gate_init=0.0",
         "++model.model_config.remote_to_aerial_cross_attention_heads=8",
-        "++model.model_config.remote_to_aerial_max_tokens=256",
+        "++model.model_config.remote_to_aerial_max_remote_tokens=256",
         f"++model.model_config.protect_ordinary_from_remote={str(protected).lower()}",
     )
 
@@ -112,11 +112,11 @@ def p5h(fusion: str) -> list[str]:
         "++model.model_config.use_view_type_bias=true",
         "++model.model_config.use_split_remote_aggregator=true",
         f"++model.model_config.remote_to_aerial_late_fusion_type={fusion}",
-        "++model.model_config.remote_to_aerial_residual_hidden_scale=0.25",
-        "++model.model_config.remote_to_aerial_gate_init=0.0",
+        "++model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+        "++model.model_config.remote_to_aerial_late_fusion_gate_init=0.0",
         "++model.model_config.remote_to_aerial_cross_attention_heads=8",
-        "++model.model_config.remote_to_aerial_max_tokens=256",
-        "++model.model_config.protect_ordinary_from_remote=true",
+        "++model.model_config.remote_to_aerial_max_remote_tokens=256",
+        "++model.model_config.protect_ordinary_heads_from_remote=true",
     )
 
 
@@ -128,11 +128,11 @@ P6A = cfg(
     "++model.model_config.use_view_type_bias=true",
     "++model.model_config.use_split_remote_aggregator=true",
     "++model.model_config.remote_to_aerial_late_fusion_type=cross_attention",
-    "++model.model_config.remote_to_aerial_residual_hidden_scale=0.25",
-    "++model.model_config.remote_to_aerial_gate_init=1e-3",
+    "++model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+    "++model.model_config.remote_to_aerial_late_fusion_gate_init=1e-3",
     "++model.model_config.remote_to_aerial_cross_attention_heads=8",
-    "++model.model_config.remote_to_aerial_max_tokens=256",
-    "++model.model_config.protect_ordinary_from_remote=true",
+    "++model.model_config.remote_to_aerial_max_remote_tokens=256",
+    "++model.model_config.protect_ordinary_heads_from_remote=true",
 )
 P6B = cfg(
     "vggt",
@@ -140,7 +140,7 @@ P6B = cfg(
     "vggt_joint_remote_export=true",
     "vggt_export_mode=mixed",
     "++model.model_config.use_split_remote_aggregator=false",
-    "++model.model_config.protect_ordinary_from_remote=false",
+    "++model.model_config.protect_ordinary_heads_from_remote=false",
     "++model.model_config.use_view_type_bias=false",
     "++model.model_config.use_pre_aggregator_view_type_bias=false",
     "++model.model_config.use_remote_to_aerial_gated_residual=false",

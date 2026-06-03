@@ -1,14 +1,17 @@
 defaults:
   - vggt_finetune
 
-# P7 remote-head projection-aux keeps the official VGGT trunk and ordinary
-# camera/depth heads fixed. Only the remote point head and projection auxiliary
-# heads are trained, so this isolates remote multitask learning from ordinary
-# reconstruction drift.
-lr: 0
-min_lr: 0
-
+# P5B main reconstruction finetuning plus P7 projection auxiliary heads.
+# Keep the VGGT trunk trainable as in p5b, but train the lightweight
+# projection-aux heads with a larger LR so the remote imaging supervision is not
+# bottlenecked by the conservative finetune LR.
 submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 5e-07
+    min_lr: 5e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
   remote_point_head:
     lr: 2e-05
     min_lr: 2e-07
@@ -30,12 +33,6 @@ submodule_configs:
   remote_projection_aux_global_head:
     lr: 1e-04
     min_lr: 1e-06
-    warmup_epochs: ${train_params.warmup_epochs}
-    weight_decay: ${train_params.weight_decay}
-    schedule_type: ${train_params.schedule_type}
-  model:
-    lr: 0
-    min_lr: 0
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
