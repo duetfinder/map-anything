@@ -2,6 +2,11 @@ defaults:
   - vggt_finetune
 
 # P5B main reconstruction finetuning plus P7 projection auxiliary heads.
+# Shared point_head is reused under checkpointed VGGT blocks; static graph avoids
+# DDP ready-twice errors in the fixed p5b+p7 forward graph.
+ddp_static_graph: true
+ddp_find_unused_parameters: false
+
 # Keep the VGGT trunk trainable as in p5b, but train the lightweight
 # projection-aux heads with a larger LR so the remote imaging supervision is not
 # bottlenecked by the conservative finetune LR.
