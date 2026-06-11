@@ -151,6 +151,109 @@ P7 = [
     "++model.model_config.use_remote_projection_aux_head=true",
     "++model.model_config.remote_projection_aux_hidden_dim=64",
 ]
+P7_P5B_SHARED_NORM_PROJECTION_AUX = [
+    (
+        'config_overrides=["machine=aws","model=vggt",'
+        '"model.model_config.use_split_remote_aggregator=false",'
+        '"model.model_config.protect_ordinary_heads_from_remote=false",'
+        '"model.model_config.use_view_type_bias=false",'
+        '"model.model_config.use_pre_aggregator_view_type_bias=false",'
+        '"model.model_config.use_remote_to_aerial_gated_residual=false",'
+        '"model.model_config.remote_to_aerial_late_fusion_type=none",'
+        '"model.model_config.use_remote_projection_aux_head=true",'
+        '"model.model_config.remote_projection_aux_hidden_dim=96",'
+        '"model.model_config.remote_projection_aux_detach_pointmap=false",'
+        '"model.model_config.remote_projection_aux_use_rgb=true",'
+        '"model.model_config.remote_projection_aux_use_coord=true",'
+        '"model.model_config.remote_projection_aux_image_stem_dim=32",'
+        '"model.model_config.remote_projection_aux_positive_slope=true",'
+        '"model.model_config.remote_projection_aux_slope_init=0.1",'
+        '"model.model_config.remote_projection_aux_num_blocks=6"]'
+    ),
+    "vggt_joint_remote_export=true",
+    "vggt_export_mode=mixed",
+    *RES_518,
+]
+P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX = [
+    (
+        'config_overrides=["machine=aws","model=vggt",'
+        '"model.model_config.use_split_remote_aggregator=false",'
+        '"model.model_config.protect_ordinary_heads_from_remote=false",'
+        '"model.model_config.use_view_type_bias=false",'
+        '"model.model_config.use_pre_aggregator_view_type_bias=false",'
+        '"model.model_config.use_remote_to_aerial_gated_residual=false",'
+        '"model.model_config.remote_to_aerial_late_fusion_type=none",'
+        '"model.model_config.use_remote_projection_aux_head=true",'
+        '"model.model_config.remote_projection_aux_hidden_dim=96",'
+        '"model.model_config.remote_projection_aux_source=tokens",'
+        '"model.model_config.remote_projection_aux_detach_pointmap=false",'
+        '"model.model_config.remote_projection_aux_use_rgb=true",'
+        '"model.model_config.remote_projection_aux_use_coord=true",'
+        '"model.model_config.remote_projection_aux_image_stem_dim=32",'
+        '"model.model_config.remote_projection_aux_positive_slope=true",'
+        '"model.model_config.remote_projection_aux_slope_init=0.1",'
+        '"model.model_config.remote_projection_aux_num_blocks=6"]'
+    ),
+    "vggt_joint_remote_export=true",
+    "vggt_export_mode=mixed",
+    *RES_518,
+]
+P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX = [
+    (
+        'config_overrides=["machine=aws","model=vggt",'
+        '"model.model_config.use_split_remote_aggregator=false",'
+        '"model.model_config.protect_ordinary_heads_from_remote=false",'
+        '"model.model_config.use_view_type_bias=false",'
+        '"model.model_config.use_pre_aggregator_view_type_bias=false",'
+        '"model.model_config.use_remote_to_aerial_gated_residual=false",'
+        '"model.model_config.remote_to_aerial_late_fusion_type=none",'
+        '"model.model_config.use_remote_private_point_head=true",'
+        '"model.model_config.output_point_head_for_consistency=true",'
+        '"model.model_config.use_remote_projection_aux_head=true",'
+        '"model.model_config.remote_projection_aux_hidden_dim=96",'
+        '"model.model_config.remote_projection_aux_source=tokens",'
+        '"model.model_config.remote_projection_aux_detach_pointmap=false",'
+        '"model.model_config.remote_projection_aux_use_rgb=true",'
+        '"model.model_config.remote_projection_aux_use_coord=true",'
+        '"model.model_config.remote_projection_aux_image_stem_dim=32",'
+        '"model.model_config.remote_projection_aux_positive_slope=true",'
+        '"model.model_config.remote_projection_aux_slope_init=0.1",'
+        '"model.model_config.remote_projection_aux_num_blocks=6"]'
+    ),
+    "vggt_use_remote_private_point_head=true",
+    "vggt_joint_remote_export=true",
+    "vggt_export_mode=mixed",
+    *RES_518,
+]
+P7_P5E_PRIVATE_VIEWTYPE_PROJECTION_AUX = [
+    (
+        'config_overrides=["machine=aws","model=vggt",'
+        '"model.model_config.use_point_head_for_remote=true",'
+        '"model.model_config.use_view_type_bias=true",'
+        '"model.model_config.use_pre_aggregator_view_type_bias=false",'
+        '"model.model_config.use_remote_to_aerial_gated_residual=false",'
+        '"model.model_config.use_split_remote_aggregator=false",'
+        '"model.model_config.protect_ordinary_heads_from_remote=false",'
+        '"model.model_config.remote_to_aerial_late_fusion_type=none",'
+        '"model.model_config.ordinary_output_head=depth",'
+        '"model.model_config.remote_output_head=point",'
+        '"model.model_config.use_remote_private_point_head=true",'
+        '"model.model_config.output_point_head_for_consistency=false",'
+        '"model.model_config.use_remote_projection_aux_head=true",'
+        '"model.model_config.remote_projection_aux_hidden_dim=96",'
+        '"model.model_config.remote_projection_aux_detach_pointmap=false",'
+        '"model.model_config.remote_projection_aux_use_rgb=true",'
+        '"model.model_config.remote_projection_aux_use_coord=true",'
+        '"model.model_config.remote_projection_aux_image_stem_dim=32",'
+        '"model.model_config.remote_projection_aux_positive_slope=true",'
+        '"model.model_config.remote_projection_aux_slope_init=0.1",'
+        '"model.model_config.remote_projection_aux_num_blocks=6"]'
+    ),
+    "vggt_use_remote_private_point_head=true",
+    "vggt_joint_remote_export=true",
+    "vggt_export_mode=mixed",
+    *RES_518,
+]
 
 
 JOBS: list[Job] = [
@@ -192,6 +295,57 @@ JOBS: list[Job] = [
     Job("vggt_p6b_private_head_2", "vggt", "vggt/p6b_vggt_joint_remote_alignment_private_head_2/checkpoint-best.pth", P6B),
     Job("vggt_p6b_private_head_w03_bs5_static_remoteonly", "vggt", "vggt/p6b_vggt_joint_remote_alignment_private_head_w03_bs5_static_remoteonly/checkpoint-best.pth", P6B),
     Job("vggt_p7_remote_head_projection_aux_trunk", "vggt", "vggt/p7_vggt_remote_head_projection_aux_trunk/checkpoint-best.pth", P7),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_full_2city", "vggt", "vggt/p7_chicago_newyork_full_p5b_joint_pm4_aux_lowover15_e50_b8_2gpu/checkpoint-final.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_best", "vggt", "vggt/p7_allcities_p5b_joint_pm4_aux_h075_lowover15_warm2city_e30_b8_2gpu_rerun/checkpoint-best.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_final", "vggt", "vggt/p7_allcities_p5b_joint_pm4_aux_h075_lowover15_warm2city_e30_b8_2gpu_rerun/checkpoint-final.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_h0005_final", "vggt", "vggt/p7_allcities_p5b_joint_pm4_h0005_aux_h075_lowover15_warm_p5bfinal_e6_b8_2gpu/checkpoint-final.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_curric2v_to4v_final", "vggt", "vggt/p7_allcities_p5b_joint_pm4_aux_h075_lowover15_curric2v_to4v_e4_b8_2gpu/checkpoint-final.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_nocrop_warmbest_best", "vggt", "vggt/p7_allcities_p5b_joint_pm4_aux_h075_lowover15_nocrop_warmbest_e8_b8_2gpu/checkpoint-best.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_lowtrunklr2e6_warmbest_best", "vggt", "vggt/p7_allcities_p5b_joint_pm4_aux_h075_lowover15_lowtrunklr2e6_warmbest_e8_b8_2gpu/checkpoint-best.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_shared_norm_projection_aux_allcities_lowtrunklr2e6_warmbest_final", "vggt", "vggt/p7_allcities_p5b_joint_pm4_aux_h075_lowover15_lowtrunklr2e6_warmbest_e8_b8_2gpu/checkpoint-final.pth", P7_P5B_SHARED_NORM_PROJECTION_AUX),
+    Job("vggt_p7_p5b_parallel_token_aux_preservep5b_h035_best", "vggt", "vggt/p7_allcities_p5b_parallel_token_aux_preservep5b_h035_e6_b9_4gpu/checkpoint-best.pth", P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_parallel_token_aux_preservep5b_h035_final", "vggt", "vggt/p7_allcities_p5b_parallel_token_aux_preservep5b_h035_e6_b9_4gpu/checkpoint-final.pth", P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_parallel_token_aux_recoverp5b_h035_best", "vggt", "vggt/p7_allcities_p5b_parallel_token_aux_recoverp5b_h035_warmpreserve_e8_b9_4gpu/checkpoint-best.pth", P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_parallel_token_aux_recoverp5b_h035_final", "vggt", "vggt/p7_allcities_p5b_parallel_token_aux_recoverp5b_h035_warmpreserve_e8_b9_4gpu/checkpoint-final.pth", P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_parallel_token_aux_p5b_anchor_h035_best", "vggt", "vggt/p7_allcities_p5b_parallel_token_aux_p5b_anchor_h035_e4_b10_4gpu/checkpoint-best.pth", P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_parallel_token_aux_p5b_anchor_h035_final", "vggt", "vggt/p7_allcities_p5b_parallel_token_aux_p5b_anchor_h035_e4_b10_4gpu/checkpoint-final.pth", P7_P5B_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_remote_parallel_token_aux_recoverp5b_h035_best", "vggt", "vggt/p7_allcities_p5b_private_remote_parallel_token_aux_recoverp5b_h035_e6_b9_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_remote_parallel_token_aux_recoverp5b_h035_final", "vggt", "vggt/p7_allcities_p5b_private_remote_parallel_token_aux_recoverp5b_h035_e6_b9_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_best", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_e6_b9_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_final", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_e6_b9_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_e2_best", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_e2_b9_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_e2_final", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_e2_b9_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_pmgrad05_best", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_pmgrad05_e4_b9_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_pmgrad05_final", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_pmgrad05_e4_b9_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_zheight001_final", "vggt", "vggt/p7_allcities_p5b_private_p5bhead_oldp7_parallel_token_aux_h035_zheight001_e3_b9_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_oldp7_trunk_p5b_remote_head_final", "vggt", "vggt/p7_diagnostic_oldp7_trunk_p5b_remote_head/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_oldp7_p5bhead_freeze_remotehead_aux_h035_best", "vggt", "vggt/p7_allcities_p5b_private_oldp7_p5bhead_freeze_remotehead_aux_h035_e3_b9_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_oldp7_p5bhead_freeze_remotehead_aux_h035_final", "vggt", "vggt/p7_allcities_p5b_private_oldp7_p5bhead_freeze_remotehead_aux_h035_e3_b9_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_oldp7_p5bhead_frozen_trunk_remotehead_auxonly_h035_best", "vggt", "vggt/p7_allcities_p5b_private_oldp7_p5bhead_frozen_trunk_remotehead_auxonly_h035_e4_b16_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5b_private_oldp7_p5bhead_frozen_trunk_remotehead_auxonly_h035_final", "vggt", "vggt/p7_allcities_p5b_private_oldp7_p5bhead_frozen_trunk_remotehead_auxonly_h035_e4_b16_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_frozen_trunk_remotehead_auxonly_h035_best", "vggt", "vggt/p7_diagnostic_p5bhead_frozen_trunk_remotehead_auxonly_h035_e4_b32_4gpu/checkpoint-best.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height003_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height003_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_trunklr5e8_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_trunklr5e8_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5b_warm_privatehead_freeze_remotehead_aux_h035_height001_trunklr5e8_final", "vggt", "vggt/p7_diagnostic_p5b_warm_privatehead_freeze_remotehead_aux_h035_height001_trunklr5e8_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5b_warm_privatehead_frozen_trunk_remotehead_auxonly_h035_height001_final", "vggt", "vggt/p7_diagnostic_p5b_warm_privatehead_frozen_trunk_remotehead_auxonly_h035_height001_e4_b32_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_oldp7_frozen_trunk_train_remotehead_aux_h035_height001_final", "vggt", "vggt/p7_diagnostic_oldp7_frozen_trunk_train_remotehead_aux_h035_height001_e4_b32_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_oldp7_train_remotehead_aggtail2_raw001_gradz005_anchor500k_final", "vggt", "vggt/p7_oldp7_train_remotehead_nonreentrant_aggtail2lr1e7_raw001_gradz005_paramanchor500k_lowlr3e6_h003_e2_b24_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_oldp7_train_remotehead_aggtail2_raw001_gradz005_anchor500k_e4_final", "vggt", "vggt/p7_oldp7_train_remotehead_nonreentrant_aggtail2lr1e7_raw001_gradz005_paramanchor500k_lowlr3e6_h003_e4_b24_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_trunklr5e8_e6_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_trunklr5e8_e6_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_zdist2_trunklr5e8_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_zdist2_trunklr5e8_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_zhigh2q80_trunklr5e8_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_zhigh2q80_trunklr5e8_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_frozen_trunk_remotehead_heads_aux_h035_height001_final", "vggt", "vggt/p7_diagnostic_p5bhead_frozen_trunk_remotehead_heads_aux_h035_height001_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_teacherz5_trunklr2e7_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_teacherz5_trunklr2e7_e3_b8_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_teacherxyz5_trunklr2e7_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_teacherxyz5_trunklr2e7_e3_b8_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_trunklr1e7_final", "vggt", "vggt/p7_diagnostic_p5bhead_freeze_remotehead_aux_h035_height001_trunklr1e7_e3_b10_4gpu/checkpoint-final.pth", P7_P5B_PRIVATE_PARALLEL_TOKEN_PROJECTION_AUX),
+    Job("vggt_p7_p5e_private_viewtype_projection_aux_allcities_best", "vggt", "vggt/p7_allcities_p5e_private_viewtype_projection_aux_h075_warm_p5bfinal_e12_b8_2gpu_static/checkpoint-best.pth", P7_P5E_PRIVATE_VIEWTYPE_PROJECTION_AUX),
+    Job("vggt_p7_p5e_private_viewtype_projection_aux_allcities_final", "vggt", "vggt/p7_allcities_p5e_private_viewtype_projection_aux_h075_warm_p5bfinal_e12_b8_2gpu_static/checkpoint-final.pth", P7_P5E_PRIVATE_VIEWTYPE_PROJECTION_AUX),
+    Job("vggt_p7_p5e_private_viewtype_projection_aux_lowtrunkfull_warmp5efinal_best", "vggt", "vggt/p7_allcities_p5e_private_viewtype_projection_aux_lowtrunkfull_warmp5efinal_e6_b9_2gpu/checkpoint-best.pth", P7_P5E_PRIVATE_VIEWTYPE_PROJECTION_AUX),
+    Job("vggt_p7_p5e_private_viewtype_projection_aux_lowtrunkfull_warmp5efinal_final", "vggt", "vggt/p7_allcities_p5e_private_viewtype_projection_aux_lowtrunkfull_warmp5efinal_e6_b9_2gpu/checkpoint-final.pth", P7_P5E_PRIVATE_VIEWTYPE_PROJECTION_AUX),
+    Job("vggt_p7_p5h_film_protected_from_p5e_aux_rank005_allcities_final", "vggt", "vggt/p7_allcities_p5h_film_protected_from_p5e_aux_rank005_e8_b8_2gpu/checkpoint-final.pth", p5h("film")),
+    Job("vggt_p7_p5h_film_protected_from_p5e_aux_rank05_gate005_allcities_final", "vggt", "vggt/p7_allcities_p5h_film_protected_from_p5e_aux_rank05_gate005_e6_b8_2gpu/checkpoint-final.pth", p5h("film")),
+    Job("vggt_p7_p5h_film_diffblank_rank02_gate005_allcities_final", "vggt", "vggt/p7_allcities_p5h_film_diffblank_rank02_gate005_e4_b8_2gpu/checkpoint-final.pth", p5h("film")),
     Job("vggt_omega_p1_joint_depth_512", "vggt_omega", "vggt_omega/p1_vggt_omega_joint_depth_512/checkpoint-best.pth", cfg("vggt_omega", omega=True)),
     Job("vggt_omega_p1_joint_depth_512_1gpu_2v", "vggt_omega", "vggt_omega/p1_vggt_omega_joint_depth_512_1gpu_2v/checkpoint-best.pth", cfg("vggt_omega", omega=True)),
     Job("vggt_omega_p1_joint_depth_512_all", "vggt_omega", "vggt_omega/p1_vggt_omega_joint_depth_512_all/checkpoint-best.pth", cfg("vggt_omega", omega=True)),
@@ -261,9 +415,32 @@ def main() -> int:
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     parser.add_argument("--cuda-device", default="0")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="Optional job labels to run/check instead of the full JOBS list.",
+    )
     args = parser.parse_args()
 
-    missing = [str(job.ckpt_path) for job in JOBS if not job.ckpt_path.exists()]
+    selected_jobs = JOBS
+    if args.only:
+        requested = set(args.only)
+        selected_jobs = [job for job in JOBS if job.label in requested]
+        missing_labels = requested - {job.label for job in selected_jobs}
+        if missing_labels:
+            print("Unknown job labels:", file=sys.stderr)
+            for label in sorted(missing_labels):
+                print(label, file=sys.stderr)
+            return 2
+
+    missing = []
+    for job in selected_jobs:
+        result_path = args.out_root / job.label / RESULT_JSON
+        if result_path.exists() and not args.force:
+            continue
+        if not job.ckpt_path.exists():
+            missing.append(str(job.ckpt_path))
     if missing:
         print("Missing checkpoints:", file=sys.stderr)
         for path in missing:
@@ -272,10 +449,10 @@ def main() -> int:
 
     args.out_root.mkdir(parents=True, exist_ok=True)
     summary_path = args.out_root / "run_summary.jsonl"
-    print(f"Running {len(JOBS)} jobs. Output: {args.out_root}")
+    print(f"Running {len(selected_jobs)} jobs. Output: {args.out_root}")
     with summary_path.open("a", encoding="utf-8") as summary:
-        for idx, job in enumerate(JOBS, 1):
-            print(f"[{idx}/{len(JOBS)}] {job.label}", flush=True)
+        for idx, job in enumerate(selected_jobs, 1):
+            print(f"[{idx}/{len(selected_jobs)}] {job.label}", flush=True)
             record = run_job(job, args.out_root, args.cuda_device, args.force)
             summary.write(json.dumps(record, ensure_ascii=False) + "\n")
             summary.flush()

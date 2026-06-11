@@ -1,0 +1,58 @@
+defaults:
+  - vggt_finetune
+
+# P5E-style remote private point head plus P7 projection auxiliary heads.
+# Ordinary decoder heads stay fixed as geometry anchors; the shared trunk still
+# finetunes with the conservative base LR.
+ddp_static_graph: true
+ddp_find_unused_parameters: false
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 5e-07
+    min_lr: 5e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.camera_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.depth_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.point_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 2e-05
+    min_lr: 2e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_pixel_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

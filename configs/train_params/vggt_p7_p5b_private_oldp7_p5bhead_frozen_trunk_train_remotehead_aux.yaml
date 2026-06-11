@@ -1,0 +1,77 @@
+defaults:
+  - vggt_p7_p5b_private_oldp7_p5bhead_freeze_remotehead_parallel_token_aux
+
+# Frozen-trunk remote-head repair:
+# - keep the old P7 trunk and ordinary geometry heads fixed;
+# - train only the private remote point head and the parallel projection aux head.
+# This targets remote geometry recovery without disturbing the joint aerial path.
+lr: 0.0
+min_lr: 0.0
+
+submodule_configs:
+  model.aggregator:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  model.track_head:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  model.camera_head:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  model.point_head:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  model.depth_head:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_norm:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_proj:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_pixel_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

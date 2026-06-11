@@ -112,6 +112,17 @@ def build_remote_supervision_view(batch, remote_idx=0):
         'remote_projection_tilt_mask',
         'remote_projection_global_dir_xy',
         'remote_projection_global_slope',
+        'remote_projection_projected_xyz_centered',
+        'remote_projection_center_xy',
+    ]
+    remote_moge_keys = [
+        'remote_moge_prior_path',
+        'remote_moge_grad_xy',
+        'remote_moge_grad_mag',
+        'remote_moge_edge_mask',
+        'remote_moge_prior_weight',
+        'remote_moge_confidence_mask',
+        'remote_moge_aligned_height',
     ]
 
     remote_view = {
@@ -137,6 +148,10 @@ def build_remote_supervision_view(batch, remote_idx=0):
     if remote_aug_variant_key in remote_source:
         remote_view['remote_aug_variant'] = remote_source[remote_aug_variant_key]
     for base_key in remote_projection_keys:
+        source_key = _remote_key(base_key, remote_idx)
+        if source_key in remote_source:
+            remote_view[base_key] = remote_source[source_key]
+    for base_key in remote_moge_keys:
         source_key = _remote_key(base_key, remote_idx)
         if source_key in remote_source:
             remote_view[base_key] = remote_source[source_key]

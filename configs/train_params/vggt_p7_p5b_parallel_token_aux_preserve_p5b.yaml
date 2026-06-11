@@ -1,0 +1,51 @@
+defaults:
+  - vggt_p7_p5b_shared_norm_projection_aux_parallel_token_lowtrunklr
+
+# Start from the stronger original P5B remote geometry and keep the
+# reconstruction path conservative while the parallel token aux branch learns.
+lr: 1e-06
+min_lr: 1e-08
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 5e-08
+    min_lr: 5e-10
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 2e-06
+    min_lr: 2e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_norm:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_proj:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_pixel_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

@@ -564,3 +564,160 @@ projection_aux
 ```
 
 这样可以用最低风险验证核心假设：MoGe 的结构先验是否能改善 remote 几何边界，同时不破坏原始标签的绝对准确性。
+
+## 2026-06-06 快速验证记录
+
+已实现最小可行版本：
+
+- `scripts/generate_crossview_moge_priors.py`：使用 `MoGeWrapper(name="moge-2", model_string="Ruicheng/moge-2-vitl")` 生成 `moge_prior.npz`。
+- dataset 侧读取并随 remote crop/resize 变换：
+  - `remote_moge_grad_xy`
+  - `remote_moge_grad_mag`
+  - `remote_moge_edge_mask`
+  - `remote_moge_prior_weight`
+  - `remote_moge_confidence_mask`
+- `RSPointmapHeightLoss` 新增：
+  - `moge_gradient_loss_weight`
+  - `moge_edge_loss_weight`
+  - `moge_prior_min_weight`
+  - `moge_edge_temperature`
+  - `moge_edge_threshold`
+- `build_remote_supervision_view()` 已修正，会把 MoGe prior 字段复制到 synthetic remote GT view；修正前训练日志中 `rs_moge_required_present=0`，修正后为 1。
+
+数据与质量门控：
+
+- balanced scene list：`/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/metadata/p7_moge_balanced_20x4_train_scene_list.npy`
+- 4 城每城 20 scene，总计 80 scene；Google/Bing provider。
+- 使用 `moge_residual_p95 <= 30` 过滤后保留 126 个 prior，删除 31 个 bad prior，缺失 3 个。
+- 保留分布：SanFrancisco 39，Seattle 37，Chicago 35，NewYork 15。
+- NewYork 的 MoGe2 对齐失败比例较高，因此不适合直接把 MoGe 当 dense hard label；必须继续用 residual gate。
+
+正式快速验证：
+
+```text
+p7_moge2_balanced20x4_private_tokens_raw001_gradz005_mogegrad001_edge0002_h003_warme2_e30_b24_4gpu_fixed
+```
+
+关键设置：
+
+```text
+LAMBDA_REMOTE_PM=4.0
+LAMBDA_REMOTE_RAW_PM=0.001
+LAMBDA_REMOTE_PM_GRAD=0.05
+LAMBDA_REMOTE_MOGE_GRAD=0.01
+LAMBDA_REMOTE_MOGE_EDGE=0.002
+REMOTE_MOGE_PRIOR_MIN_WEIGHT=0.03
+LAMBDA_REMOTE_HIGH_Z=0.03
+LAMBDA_PROJ_REL_HEIGHT=0.35
+LAMBDA_PROJ_OFFSET=0.75
+LAMBDA_PROJ_GLOBAL_SLOPE=0.05
+REMOTE_PROJECTION_AUX_SOURCE=tokens
+USE_REMOTE_PRIVATE_POINT_HEAD=true
+```
+
+训练现象：
+
+- 训练稳定，无 NaN。
+- `rs_moge_required_present=1`，说明 prior 确实进入 loss。
+- `rs_moge_prior_active_ratio` 约 `0.23-0.36`。
+- `rs_moge_prior_loss_weighted` 约 `0.015-0.018`，没有压过主 pointmap loss。
+- 这次只有 80 scene 且 global batch 96，因此每个 epoch 只有 1 个训练 step；30 epoch 只是快速方向验证，不是充分训练。
+
+New York 10-scene mini benchmark：
+
+| model | joint global | joint point | AUC5 | ray | RS-only MAE | same | blank | shuffled | blank delta |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| MoGe2 final | 0.0448 | 0.0485 | 95.33 | 0.2955 | 9.97 | 0.0485 | 0.0494 | 0.0497 | 0.0009 |
+| MoGe2 best | 0.0448 | 0.0485 | 95.33 | 0.2955 | 9.96 | 0.0485 | 0.0494 | 0.0497 | 0.0009 |
+| oldP7 aggtail2 e2 | 0.0450 | 0.0486 | 95.67 | 0.2958 | 9.72 | 0.0486 | 0.0494 | 0.0497 | 0.0009 |
+| oldP7 aggtail2 e4 | 0.0448 | 0.0486 | 95.67 | 0.2954 | 10.07 | 0.0486 | 0.0494 | 0.0497 | 0.0009 |
+
+输出路径：
+
+```text
+checkpoint:
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_moge2_balanced20x4_private_tokens_raw001_gradz005_mogegrad001_edge0002_h003_warme2_e30_b24_4gpu_fixed/checkpoint-final.pth
+
+benchmark summary:
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/rs_guided_dense_mv/newyork/crossview_all_models_4v_mini_controls/p7_moge2_fixed_summary
+
+PLY:
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/448/p7_moge2_balanced20x4_private_tokens_mogegrad001_edge0002_fixed_final
+```
+
+结论：
+
+- MoGe2 prior 路线已经证明工程上可跑，并且作为弱梯度/边缘先验不会明显破坏当前 P7-P5B/private/oldP7 结构。
+- 它没有证明能显著降低 remote 高度误差：`RS-only MAE=9.96/9.97`，弱于 oldP7 aggtail2 e2 的 `9.72`，强于 e4 的 `10.07`。
+- `joint_global` 有小幅正向，但幅度很小；same-vs-blank delta 没有扩大。
+- 因此当前 MoGe2 方案只能算“可行但未验证有效”。若用户查看 `mapanything_pointcloud_same_remote.ply` 发现局部建筑形状更好，可以继续扩大质量门控后的 MoGe prior 数据量；否则不建议把 MoGe2 作为下一阶段主线。
+
+## 2026-06-06 projection-aux MoGe prior 验证
+
+动机：用户指出 MoGe 不应只辅助 pointmap，稀疏的 `projection_aux` 多任务 height/offset 监督也可能需要稠密的局部结构先验。因此新增 `RSPointmapHeightProjectionAuxLoss` 内的 projection-MoGe prior，把 MoGe2 edge/gradient 用在 projection-aux 的 `rel_height` 预测上。
+
+实现：
+
+- `mapanything/train/losses.py`：`RSPointmapHeightProjectionAuxLoss` 新增 `projection_moge_gradient_loss_weight`、`projection_moge_edge_loss_weight`、`projection_moge_prior_min_weight`、`projection_moge_edge_temperature`、`projection_moge_edge_threshold`。
+- 训练脚本新增 `LAMBDA_PROJ_MOGE_GRAD`、`LAMBDA_PROJ_MOGE_EDGE`、`PROJ_MOGE_PRIOR_MIN_WEIGHT` 等 override。
+- 默认向后兼容，所有 projection-MoGe 权重默认为 0。
+
+正式快速验证：
+
+```text
+p7_proj_moge_aux_balanced20x4_private_tokens_raw001_gradz005_projmg02_edge005_h003_warme2_e40_b28_4gpu
+```
+
+关键设置：
+
+```text
+LAMBDA_REMOTE_MOGE_GRAD=0
+LAMBDA_REMOTE_MOGE_EDGE=0
+LAMBDA_PROJ_MOGE_GRAD=0.02
+LAMBDA_PROJ_MOGE_EDGE=0.005
+PROJ_MOGE_PRIOR_MIN_WEIGHT=0.03
+LAMBDA_REMOTE_PM=4.0
+LAMBDA_REMOTE_RAW_PM=0.001
+LAMBDA_REMOTE_PM_GRAD=0.05
+LAMBDA_REMOTE_HIGH_Z=0.03
+LAMBDA_PROJ_REL_HEIGHT=0.35
+LAMBDA_PROJ_OFFSET=0.75
+LAMBDA_PROJ_GLOBAL_SLOPE=0.05
+REMOTE_PROJECTION_AUX_SOURCE=tokens
+USE_REMOTE_PRIVATE_POINT_HEAD=true
+```
+
+训练现象：
+
+- 训练稳定，无 NaN。
+- `rs_projection_moge_required_present=1`，说明 MoGe prior 确实进入 projection-aux loss。
+- `rs_projection_moge_prior_active_ratio` 约 `0.25-0.38`。
+- weighted projection-MoGe prior 约 `0.002-0.003`，相对主 aux loss 较弱。
+- global batch 112，80 scene 快速验证每 epoch 约 1 个训练 step，适合方向筛选，不是充分收敛实验。
+
+New York 10-scene mini benchmark：
+
+| model | joint global | joint point | AUC5 | ray | RS-only MAE | joint RS MAE | same | blank | shuffled | blank delta |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| projection-MoGe aux final | 0.0448 | 0.0485 | 95.67 | 0.2958 | 10.10 | 16.73 | 0.0485 | 0.0494 | 0.0497 | 0.0009 |
+| projection-MoGe aux best | 0.0448 | 0.0486 | 95.67 | 0.2956 | 10.01 | 16.70 | 0.0486 | 0.0494 | 0.0497 | 0.0009 |
+| MoGe2 remote prior final | 0.0448 | 0.0485 | 95.33 | 0.2955 | 9.97 | 16.72 | 0.0485 | 0.0494 | 0.0497 | 0.0009 |
+| oldP7 aggtail2 e2 | 0.0450 | 0.0486 | 95.67 | 0.2958 | 9.72 | 16.65 | 0.0486 | 0.0494 | 0.0497 | 0.0009 |
+
+输出路径：
+
+```text
+checkpoint:
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p7_proj_moge_aux_balanced20x4_private_tokens_raw001_gradz005_projmg02_edge005_h003_warme2_e40_b28_4gpu/checkpoint-final.pth
+
+PLY:
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/461_1/vggt_p7_proj_moge_aux_balanced20x4_private_tokens_projmg02_edge005_final
+/root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/493/vggt_p7_proj_moge_aux_balanced20x4_private_tokens_projmg02_edge005_final
+```
+
+结论：
+
+- MoGe2 edge/gradient 辅助 projection-aux height 的机制已经验证可训练，并且不会明显破坏 joint reconstruction。
+- 但它没有改善 remote-only 高度，`RS-only MAE=10.01/10.10` 弱于 oldP7 aggtail2 e2 的 `9.72`，也弱于 remote pointmap MoGe prior final 的 `9.97`。
+- 当前 projection-MoGe prior 权重偏弱，只能提供小的局部结构梯度；如果可视化仍无明显变化，继续单纯提高权重有风险，因为 MoGe2 对齐质量在 NewYork 上并不稳定。
+- 下一步更合理的是两条并行线：一是设计更强但门控严格的 aux dense height/ranking prior；二是把 parallel aux-head 思路移植到 PI3 或 VGGT-Omega 这类更强 base，测试是否是 VGGT P7 结构容量/初始化限制。

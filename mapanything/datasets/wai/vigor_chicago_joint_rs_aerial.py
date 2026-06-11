@@ -21,9 +21,12 @@ from PIL import Image
 from mapanything.datasets.wai.vigor_chicago import VigorChicagoWAI
 from mapanything.datasets.wai.vigor_chicago_rs_common import (
     available_providers,
+    empty_moge_prior_modalities,
     load_pointmap_modalities,
+    load_moge_prior_modalities,
     load_projection_aux_modalities,
     normalize_providers,
+    preprocess_moge_prior_modalities,
     preprocess_projection_aux_modalities,
     preprocess_rs_modalities,
 )
@@ -224,6 +227,8 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         )
         projection_aux_path = remote_scene_dir / 'projection_aux.npz'
         remote_projection_aux = load_projection_aux_modalities(projection_aux_path)
+        moge_prior_path = remote_scene_dir / 'moge_prior.npz'
+        remote_moge_prior = load_moge_prior_modalities(moge_prior_path)
 
         with open(remote_scene_dir / 'info.json', 'r', encoding='utf-8') as f:
             info = json.load(f)
@@ -252,6 +257,12 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
             self.remote_resolution,
             label_resize_mode=self.remote_label_resize_mode,
         )
+        remote_moge_prior = preprocess_moge_prior_modalities(
+            remote_moge_prior,
+            crop_box,
+            self.remote_resolution,
+            label_resize_mode='bilinear',
+        )
         remote_image = self.remote_transform(remote_image)
 
         sample = {
@@ -271,6 +282,10 @@ class VigorChicagoJointRSAerial(VigorChicagoWAI):
         if remote_projection_aux is not None:
             sample['remote_projection_aux_path'] = str(projection_aux_path)
             sample.update(remote_projection_aux)
+        if remote_moge_prior is None:
+            remote_moge_prior = empty_moge_prior_modalities(self.remote_resolution)
+        sample['remote_moge_prior_path'] = str(moge_prior_path) if moge_prior_path.exists() else ''
+        sample.update(remote_moge_prior)
         return sample
 
     @staticmethod

@@ -44,6 +44,7 @@ LATE_HIDDEN_SCALE=${LATE_HIDDEN_SCALE:-0.25}
 CROSS_ATTENTION_HEADS=${CROSS_ATTENTION_HEADS:-8}
 MAX_REMOTE_TOKENS=${MAX_REMOTE_TOKENS:-256}
 PROTECT_ORDINARY_HEADS=${PROTECT_ORDINARY_HEADS:-true}
+TRAIN_PARAMS=${TRAIN_PARAMS:-vggt_p5h_frozen_late_fusion}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-p5h_vggt_p5e_base_${FUSION_TYPE}_protected}
 OUTPUT_DIR=${OUTPUT_DIR:-"\${root_experiments_dir}/mapanything/training/Crossview/vggt/${EXPERIMENT_NAME}"}
 
@@ -84,6 +85,7 @@ echo "PROTECT_ORDINARY_HEADS=${PROTECT_ORDINARY_HEADS}"
 echo "REMOTE_POINTMAP_NORM_MODE=${REMOTE_POINTMAP_NORM_MODE}"
 echo "REMOTE_NUM_VIEWS=${REMOTE_NUM_VIEWS}"
 echo "MAX_REMOTE_TOKENS=${MAX_REMOTE_TOKENS}"
+echo "TRAIN_PARAMS=${TRAIN_PARAMS}"
 
 PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "${NUM_GPUS}" --master_port "${MASTER_PORT}" \
     scripts/train.py \
@@ -146,7 +148,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" torchrun --nproc_per_node "$
     model.model_config.remote_output_head=point \
     model.model_config.use_remote_private_point_head=true \
     model.model_config.output_point_head_for_consistency=true \
-    train_params=vggt_p5h_frozen_late_fusion \
+    train_params=${TRAIN_PARAMS} \
     train_params.epochs=${EPOCHS} \
     train_params.warmup_epochs=${WARMUP_EPOCHS} \
     train_params.eval_freq=${EVAL_FREQ} \

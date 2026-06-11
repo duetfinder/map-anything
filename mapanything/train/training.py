@@ -18,6 +18,7 @@ import pickle
 import sys
 import time
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 from typing import Sized
 
@@ -141,7 +142,7 @@ def train(args):
         del ckpt  # in case it occupies memory
 
     warmstart_ckpt = getattr(args.train_params, "warmstart_ckpt", None)
-    if warmstart_ckpt not in (None, "", "None", "none", "null"):
+    if _is_nonempty_config_value(warmstart_ckpt):
         print("Warm-starting model weights from: ", warmstart_ckpt)
         ckpt = torch.load(warmstart_ckpt, map_location=device, weights_only=False)
         state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
@@ -159,8 +160,147 @@ def train(args):
                 print(f"  {key}: checkpoint{old_shape} -> model{new_shape}")
             if len(skipped_shape_mismatch) > 50:
                 print(f"  ... and {len(skipped_shape_mismatch) - 50} more")
-        print(model.load_state_dict(filtered_state_dict, strict=False))
+        load_result = model.load_state_dict(filtered_state_dict, strict=False)
+        print(load_result)
+        init_remote_private_from_shared = bool(
+            getattr(args.train_params, "initialize_remote_private_point_head_from_shared", False)
+        )
+        has_remote_private_in_ckpt = any(
+            key.startswith("remote_point_head.") for key in filtered_state_dict
+        )
+        if (
+            init_remote_private_from_shared
+            and not has_remote_private_in_ckpt
+            and hasattr(model, "remote_point_head")
+            and hasattr(model, "model")
+            and hasattr(model.model, "point_head")
+        ):
+            print(
+                "Initializing remote private point head from warm-started shared point head"
+            )
+            model.remote_point_head.load_state_dict(
+                deepcopy(model.model.point_head.state_dict())
+            )
+        remote_private_init_ckpt = getattr(
+            args.train_params, "initialize_remote_private_point_head_ckpt", None
+        )
+        if (
+            remote_private_init_ckpt not in (None, "", "None", "none", "null")
+            and hasattr(model, "remote_point_head")
+        ):
+            source_prefix = str(
+                getattr(
+                    args.train_params,
+                    "initialize_remote_private_point_head_source_prefix",
+                    "model.point_head.",
+                )
+            )
+            print(
+                "Initializing remote private point head from checkpoint: "
+                f"{remote_private_init_ckpt} ({source_prefix})"
+            )
+            remote_ckpt = torch.load(
+                remote_private_init_ckpt, map_location=device, weights_only=False
+            )
+            remote_state = (
+                remote_ckpt["model"]
+                if isinstance(remote_ckpt, dict) and "model" in remote_ckpt
+                else remote_ckpt
+            )
+            head_state = {
+                key[len(source_prefix):]: value
+                for key, value in remote_state.items()
+                if key.startswith(source_prefix)
+            }
+            if not head_state and source_prefix != "remote_point_head.":
+                fallback_prefix = "remote_point_head."
+                head_state = {
+                    key[len(fallback_prefix):]: value
+                    for key, value in remote_state.items()
+                    if key.startswith(fallback_prefix)
+                }
+                if head_state:
+                    print(
+                        "No keys matched requested prefix; using remote_point_head. "
+                        "fallback"
+                    )
+            if not head_state:
+                raise ValueError(
+                    "No point-head keys found for remote private initialization "
+                    f"in {remote_private_init_ckpt} with prefix {source_prefix}"
+                )
+            target_state = model.remote_point_head.state_dict()
+            filtered_head_state = {}
+            skipped_head_keys = []
+            for key, value in head_state.items():
+                if (
+                    key in target_state
+                    and hasattr(value, "shape")
+                    and value.shape == target_state[key].shape
+                ):
+                    filtered_head_state[key] = value
+                else:
+                    skipped_head_keys.append(key)
+            if skipped_head_keys:
+                print(
+                    "Remote private point head init skipped keys: "
+                    f"{skipped_head_keys[:20]}"
+                )
+            load_head_result = model.remote_point_head.load_state_dict(
+                filtered_head_state, strict=False
+            )
+            print(load_head_result)
+            del remote_ckpt, remote_state, head_state, filtered_head_state
         del ckpt, state_dict, filtered_state_dict
+
+    remote_teacher_model = None
+    remote_teacher_anchor_weight = float(
+        getattr(args.train_params, "remote_teacher_anchor_loss_weight", 0.0)
+    )
+    remote_teacher_anchor_ckpt = getattr(
+        args.train_params, "remote_teacher_anchor_ckpt", None
+    )
+    if remote_teacher_anchor_weight > 0 and _is_nonempty_config_value(remote_teacher_anchor_ckpt):
+        print(
+            "Building remote teacher anchor model with weight "
+            f"{remote_teacher_anchor_weight}"
+        )
+        remote_teacher_model = init_model(
+            args.model.model_str,
+            args.model.model_config,
+            torch_hub_force_reload=False,
+        )
+        remote_teacher_model.to(device)
+        _load_checkpoint_filtered(
+            remote_teacher_model,
+            remote_teacher_anchor_ckpt,
+            device,
+            "remote teacher anchor",
+        )
+        remote_teacher_model.eval()
+        for param in remote_teacher_model.parameters():
+            param.requires_grad_(False)
+
+    remote_point_head_param_anchor = None
+    remote_point_head_param_anchor_weight = float(
+        getattr(args.train_params, "remote_point_head_param_anchor_loss_weight", 0.0)
+    )
+    if remote_point_head_param_anchor_weight > 0:
+        if not hasattr(model_without_ddp, "remote_point_head"):
+            raise ValueError(
+                "remote_point_head_param_anchor_loss_weight requires "
+                "model.remote_point_head"
+            )
+        remote_point_head_param_anchor = {
+            name: param.detach().float().clone()
+            for name, param in model_without_ddp.remote_point_head.named_parameters()
+            if param.requires_grad
+        }
+        print(
+            "Cached remote_point_head parameter anchor: "
+            f"{len(remote_point_head_param_anchor)} tensors, "
+            f"weight={remote_point_head_param_anchor_weight}"
+        )
 
     # Init model for DDP training
     if args.distributed.distributed:
@@ -338,6 +478,8 @@ def train(args):
             param_groups_name_to_idx_map=param_groups_name_to_idx_map,
             param_groups_idx_to_name_map=param_groups_idx_to_name_map,
             model_without_ddp=model_without_ddp,
+            remote_teacher_model=remote_teacher_model,
+            remote_point_head_param_anchor=remote_point_head_param_anchor,
         )
         if log_writer is not None:
             epoch_1000x = int((epoch + 1) * 1000)
@@ -442,6 +584,34 @@ def _get_train_param(args, name, default):
     return getattr(args.train_params, name, default)
 
 
+def _is_nonempty_config_value(value):
+    return value not in (None, "", "None", "none", "null")
+
+
+def _load_checkpoint_filtered(model, ckpt_path, device, label):
+    print(f"Loading {label} checkpoint: {ckpt_path}")
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+    state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+    model_state = model.state_dict()
+    filtered_state_dict = {}
+    skipped_shape_mismatch = []
+    for key, value in state_dict.items():
+        if key in model_state and hasattr(value, "shape") and value.shape != model_state[key].shape:
+            skipped_shape_mismatch.append((key, tuple(value.shape), tuple(model_state[key].shape)))
+            continue
+        filtered_state_dict[key] = value
+    if skipped_shape_mismatch:
+        print(f"{label} skipped shape-mismatched keys:")
+        for key, old_shape, new_shape in skipped_shape_mismatch[:50]:
+            print(f"  {key}: checkpoint{old_shape} -> model{new_shape}")
+        if len(skipped_shape_mismatch) > 50:
+            print(f"  ... and {len(skipped_shape_mismatch) - 50} more")
+    load_result = model.load_state_dict(filtered_state_dict, strict=False)
+    print(load_result)
+    del ckpt, state_dict, filtered_state_dict
+    return load_result
+
+
 def _make_remote_control_inputs(remote_gt_views, mode, blank_value):
     control_inputs = []
     for remote_gt_view in remote_gt_views:
@@ -512,6 +682,129 @@ def _compute_remote_adapter_regularization(model):
         return {}
     return unwrapped.get_remote_to_aerial_regularization_terms()
 
+
+def _compute_remote_point_head_param_anchor_loss(model, anchor, mode="relative_l2"):
+    if not anchor:
+        return None, {}
+    unwrapped = _unwrap_train_model(model)
+    if not hasattr(unwrapped, "remote_point_head"):
+        return None, {}
+
+    mode = str(mode).lower()
+    losses = []
+    diff_sq_sum = None
+    anchor_sq_sum = None
+    max_abs = 0.0
+    for name, param in unwrapped.remote_point_head.named_parameters():
+        if not param.requires_grad or name not in anchor:
+            continue
+        anchor_param = anchor[name].to(device=param.device)
+        diff = param.float() - anchor_param
+        if mode == "relative_l2":
+            denom = anchor_param.pow(2).mean().clamp_min(1e-8)
+            losses.append(diff.pow(2).mean() / denom)
+        elif mode == "l2":
+            losses.append(diff.pow(2).mean())
+        else:
+            raise ValueError(f"Unsupported remote_point_head_param_anchor_mode: {mode}")
+
+        diff_sq = diff.detach().pow(2).sum()
+        anchor_sq = anchor_param.detach().pow(2).sum()
+        diff_sq_sum = diff_sq if diff_sq_sum is None else diff_sq_sum + diff_sq
+        anchor_sq_sum = anchor_sq if anchor_sq_sum is None else anchor_sq_sum + anchor_sq
+        max_abs = max(max_abs, float(diff.detach().abs().max()))
+
+    if not losses:
+        return None, {}
+
+    anchor_loss = torch.stack(losses).mean()
+    rel_l2 = (diff_sq_sum / anchor_sq_sum.clamp_min(1e-12)).sqrt()
+    details = {
+        "remote_point_head_param_anchor_loss": float(anchor_loss.detach()),
+        "remote_point_head_param_anchor_rel_l2": float(rel_l2),
+        "remote_point_head_param_anchor_max_abs": max_abs,
+    }
+    return anchor_loss, details
+
+
+def _select_teacher_anchor_channels(student_pts, teacher_pts, channels):
+    channels = str(channels).lower()
+    if channels == "xyz":
+        return student_pts, teacher_pts
+    if channels == "z":
+        return student_pts[..., 2:3], teacher_pts[..., 2:3]
+    if channels == "xy":
+        return student_pts[..., :2], teacher_pts[..., :2]
+    raise ValueError(f"Unsupported remote_teacher_anchor_channels: {channels}")
+
+
+def _compute_remote_teacher_anchor_loss(
+    batch,
+    loss_result,
+    teacher_model,
+    use_amp,
+    amp_dtype,
+    channels,
+):
+    if teacher_model is None or not has_joint_remote_supervision(batch):
+        return None, {}
+
+    remote_gt_views = build_remote_supervision_views(batch)
+    if not remote_gt_views:
+        return None, {}
+
+    model_batch = list(batch) + [
+        {
+            'img': remote_gt_view['img'],
+            'data_norm_type': remote_gt_view['data_norm_type'],
+            'instance': 'remote',
+        }
+        for remote_gt_view in remote_gt_views
+    ]
+    n_aerial = len(batch)
+    amp_dtype = _resolve_amp_dtype(use_amp, amp_dtype)
+    was_training = teacher_model.training
+    try:
+        teacher_model.eval()
+        with torch.no_grad():
+            with torch.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
+                teacher_preds = teacher_model(model_batch)
+    finally:
+        teacher_model.train(was_training)
+
+    losses = []
+    student_means = []
+    teacher_means = []
+    for remote_idx, remote_gt_view in enumerate(remote_gt_views):
+        student_pred = loss_result[f"pred{n_aerial + remote_idx + 1}"]
+        teacher_pred = teacher_preds[n_aerial + remote_idx]
+        student_pts = student_pred['pts3d'].float()
+        teacher_pts = teacher_pred['pts3d'].float()
+        student_selected, teacher_selected = _select_teacher_anchor_channels(
+            student_pts, teacher_pts, channels
+        )
+        valid_mask = remote_gt_view['remote_valid_mask'].bool()
+        finite_mask = torch.isfinite(student_selected).all(dim=-1) & torch.isfinite(teacher_selected).all(dim=-1)
+        mask = valid_mask & finite_mask
+        if not mask.any():
+            continue
+        loss_map = (student_selected - teacher_selected.detach()).abs().mean(dim=-1)
+        losses.append(loss_map[mask].mean())
+        student_means.append(float(student_selected.detach()[mask].mean()))
+        teacher_means.append(float(teacher_selected.detach()[mask].mean()))
+
+    if not losses:
+        return None, {}
+
+    anchor_loss = torch.stack(losses).mean()
+    details = {
+        "remote_teacher_anchor_loss": float(anchor_loss.detach()),
+        "remote_teacher_anchor_student_mean": sum(student_means) / len(student_means),
+        "remote_teacher_anchor_teacher_mean": sum(teacher_means) / len(teacher_means),
+    }
+    return anchor_loss, details
+
+
 def _compute_remote_control_ranking_loss(
     batch,
     model,
@@ -522,6 +815,7 @@ def _compute_remote_control_ranking_loss(
     modes,
     blank_value,
     same_loss,
+    differentiable_controls=False,
 ):
     if same_loss is None or not has_joint_remote_supervision(batch):
         return None, {}
@@ -545,6 +839,14 @@ def _compute_remote_control_ranking_loss(
         if remote_inputs is None:
             return None
         model_batch = model_aerial_views + remote_inputs
+        if differentiable_controls:
+            with torch.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
+                preds = model(model_batch)
+                aerial_preds = preds[:-n_remote]
+                with torch.autocast('cuda', enabled=False):
+                    control_loss, _ = aerial_criterion(aerial_gts, aerial_preds)
+            return control_loss
+
         was_training = model.training
         try:
             model.eval()
@@ -594,6 +896,8 @@ def train_one_epoch(
     param_groups_name_to_idx_map=None,
     param_groups_idx_to_name_map=None,
     model_without_ddp=None,
+    remote_teacher_model=None,
+    remote_point_head_param_anchor=None,
 ):
     """
     Trains the model for one epoch.
@@ -659,18 +963,60 @@ def train_one_epoch(
                 args.train_params.submodule_configs,
             )
 
-        loss_tuple = loss_of_one_batch_multi_view(
+        loss_result = loss_of_one_batch_multi_view(
             batch,
             model,
             criterion,
             device,
             use_amp=bool(args.train_params.amp),
             amp_dtype=args.train_params.amp_dtype,
-            ret="loss",
             criterion_kwargs={"train_epoch": epoch_f},
         )
-        loss, loss_details = loss_tuple  # criterion returns two values
+        loss, loss_details = loss_result["loss"]  # criterion returns two values
         primary_same_loss = loss
+
+        teacher_anchor_weight = float(
+            _get_train_param(args, "remote_teacher_anchor_loss_weight", 0.0)
+        )
+        if teacher_anchor_weight > 0 and remote_teacher_model is not None:
+            teacher_anchor_loss, teacher_anchor_details = _compute_remote_teacher_anchor_loss(
+                batch=batch,
+                loss_result=loss_result,
+                teacher_model=remote_teacher_model,
+                use_amp=bool(args.train_params.amp),
+                amp_dtype=args.train_params.amp_dtype,
+                channels=_get_train_param(args, "remote_teacher_anchor_channels", "z"),
+            )
+            if teacher_anchor_loss is not None:
+                weighted_teacher_anchor_loss = teacher_anchor_weight * teacher_anchor_loss
+                loss = loss + weighted_teacher_anchor_loss
+                loss_details.update(teacher_anchor_details)
+                loss_details["remote_teacher_anchor_loss_weighted"] = float(
+                    weighted_teacher_anchor_loss.detach()
+                )
+
+        param_anchor_weight = float(
+            _get_train_param(args, "remote_point_head_param_anchor_loss_weight", 0.0)
+        )
+        if param_anchor_weight > 0 and remote_point_head_param_anchor is not None:
+            param_anchor_loss, param_anchor_details = (
+                _compute_remote_point_head_param_anchor_loss(
+                    model,
+                    remote_point_head_param_anchor,
+                    mode=_get_train_param(
+                        args,
+                        "remote_point_head_param_anchor_mode",
+                        "relative_l2",
+                    ),
+                )
+            )
+            if param_anchor_loss is not None:
+                weighted_param_anchor_loss = param_anchor_weight * param_anchor_loss
+                loss = loss + weighted_param_anchor_loss
+                loss_details.update(param_anchor_details)
+                loss_details["remote_point_head_param_anchor_loss_weighted"] = float(
+                    weighted_param_anchor_loss.detach()
+                )
 
         blank_value = float(_get_train_param(args, "remote_control_blank_value", 0.5))
 
@@ -718,6 +1064,27 @@ def train_one_epoch(
             _get_train_param(args, "remote_control_ranking_loss_weight", 0.0)
         )
         if ranking_loss_weight > 0:
+            same_loss_source = str(
+                _get_train_param(args, "remote_control_same_loss_source", "primary")
+            )
+            if same_loss_source == "aerial":
+                aerial_criterion = getattr(criterion, "aerial_criterion", None)
+                if aerial_criterion is not None and has_joint_remote_supervision(batch):
+                    n_remote = len(build_remote_supervision_views(batch))
+                    aerial_gts = list(batch)
+                    aerial_preds = [
+                        loss_result[f"pred{idx + 1}"]
+                        for idx in range(len(aerial_gts))
+                    ]
+                    with torch.autocast("cuda", enabled=False):
+                        primary_same_loss, _ = aerial_criterion(
+                            aerial_gts, aerial_preds
+                        )
+                    loss_details["remote_control_same_loss_source_aerial"] = 1.0
+                    if n_remote > 0:
+                        loss_details["remote_control_same_ignored_remote_views"] = float(
+                            n_remote
+                        )
             ranking_modes = _get_train_param(
                 args, "remote_control_ranking_modes", ["blank", "shuffled"]
             )
@@ -733,6 +1100,9 @@ def train_one_epoch(
                 modes=ranking_modes,
                 blank_value=blank_value,
                 same_loss=primary_same_loss,
+                differentiable_controls=bool(
+                    _get_train_param(args, "remote_control_ranking_differentiable", False)
+                ),
             )
             if ranking_loss is not None:
                 loss = loss + ranking_loss_weight * ranking_loss
@@ -792,6 +1162,35 @@ def train_one_epoch(
             update_grad=(data_iter_step + 1) % accum_iter == 0,
             clip_grad=1.0,
         )
+        if (
+            data_iter_step == 0
+            and bool(_get_train_param(args, "debug_remote_point_head_grads", False))
+            and train_tools.is_main_process()
+        ):
+            remote_grad_sq = 0.0
+            remote_grad_max = 0.0
+            remote_grad_params = 0
+            remote_missing_params = 0
+            for name, param in model_without_ddp.named_parameters():
+                if not name.startswith("remote_point_head"):
+                    continue
+                if not param.requires_grad:
+                    continue
+                if param.grad is None:
+                    remote_missing_params += 1
+                    continue
+                grad = param.grad.detach().float()
+                remote_grad_sq += float(grad.pow(2).sum())
+                remote_grad_max = max(remote_grad_max, float(grad.abs().max()))
+                remote_grad_params += 1
+            print(
+                "Remote point head grad debug: "
+                f"params_with_grad={remote_grad_params} "
+                f"missing_grad={remote_missing_params} "
+                f"grad_l2={remote_grad_sq ** 0.5:.6g} "
+                f"grad_max={remote_grad_max:.6g}",
+                force=True,
+            )
 
         # Zero out the gradients to prepare for the next iteration of gradient descent
         if (data_iter_step + 1) % accum_iter == 0:

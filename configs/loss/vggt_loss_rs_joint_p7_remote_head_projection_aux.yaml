@@ -1,15 +1,42 @@
 remote_pointmap_loss_weight: 4.0
+remote_raw_pointmap_loss_weight: 0.0
 remote_height_loss_weight: 0.0
+remote_pointmap_top_n_percent: 0.0
+remote_pointmap_gradient_loss_weight: 0.0
+remote_pointmap_gradient_scales: 4
+remote_pointmap_gradient_channels: z
+remote_pointmap_z_distribution_loss_weight: 0.0
+remote_pointmap_high_z_loss_weight: 0.0
+remote_pointmap_high_z_quantile: 0.8
+remote_pointmap_high_z_min_pixels: 16
+remote_moge_gradient_loss_weight: 0.0
+remote_moge_edge_loss_weight: 0.0
+remote_pointmap_moge_height_loss_weight: 0.0
+remote_pointmap_moge_height_prior_min_weight: 0.02
+remote_pointmap_moge_height_ground_quantile: 0.2
+remote_overlap_pointmap_loss_weight: 0.0
+remote_overlap_depth_tolerance: 3.0
+remote_overlap_relative_depth_tolerance: 0.05
+remote_overlap_min_pixels: 64
+remote_overlap_min_depth: 0.001
+remote_moge_prior_min_weight: 0.02
+remote_moge_edge_temperature: 10.0
+remote_moge_edge_threshold: 0.5
 remote_projection_rel_height_loss_weight: 0.2
 remote_projection_offset_loss_weight: 0.5
 remote_projection_offset_mag_loss_weight: 0.0
 remote_projection_offset_dir_loss_weight: 0.0
 remote_projection_global_dir_loss_weight: 0.05
 remote_projection_global_slope_loss_weight: 0.05
+remote_projection_global_vector_loss_weight: 0.0
 remote_projection_consistency_loss_weight: 0.2
 remote_projection_global_dir_from_offset: false
+remote_projection_global_target_from_pointmap: false
+remote_projection_global_target_min_rel_height: 0.0
+remote_projection_global_target_min_pixels: 64
 remote_projection_rel_height_scale: 1.0
 remote_projection_rel_height_scale_mode: fixed
+remote_projection_rel_height_scale_quantile: 0.9
 remote_projection_rel_height_clip: 0.0
 remote_projection_rel_height_min: 0.0
 remote_projection_rel_height_use_tilt_mask: false
@@ -31,6 +58,14 @@ remote_projection_rel_height_bucket_mean_loss_weight: 0.0
 remote_projection_rel_height_low_overpred_loss_weight: 0.0
 remote_projection_rel_height_low_overpred_start_epoch: 0.0
 remote_projection_rel_height_low_overpred_ramp_epochs: 0.0
+remote_projection_dense_rel_height_loss_weight: 0.0
+remote_projection_dense_rel_height_exclude_hard_mask: true
+remote_projection_dense_rel_height_low_weight: 0.25
+remote_projection_dense_rel_height_low_quantile: 0.5
+remote_projection_dense_rel_height_min_abs_quantile: 0.0
+remote_projection_dense_global_offset_loss_weight: 0.0
+remote_projection_dense_global_offset_low_weight: 0.5
+remote_projection_dense_global_offset_low_quantile: 0.5
 remote_projection_offset_target_weight: 0.0
 remote_projection_offset_target_weight_gamma: 1.0
 remote_projection_offset_balanced_loss_weight: 0.0
@@ -40,8 +75,28 @@ remote_projection_offset_bucket_mean_loss_weight: 0.0
 remote_projection_offset_low_overpred_loss_weight: 0.0
 remote_projection_offset_low_overpred_start_epoch: 0.0
 remote_projection_offset_low_overpred_ramp_epochs: 0.0
+remote_projection_moge_gradient_loss_weight: 0.0
+remote_projection_moge_edge_loss_weight: 0.0
+remote_projection_moge_height_loss_weight: 0.0
+remote_projection_moge_height_prior_min_weight: 0.02
+remote_projection_moge_height_ground_quantile: 0.2
+remote_projection_moge_height_exclude_hard_mask: true
+remote_projection_moge_prior_min_weight: 0.02
+remote_projection_moge_edge_temperature: 10.0
+remote_projection_moge_edge_threshold: 0.5
+remote_projection_reconstruct_offset_to_gt_loss_weight: 0.0
+remote_projection_reconstruct_global_to_gt_loss_weight: 0.0
+remote_projection_reconstruct_offset_to_point_detach_loss_weight: 0.0
+remote_projection_reconstruct_global_to_point_detach_loss_weight: 0.0
+remote_projection_reconstruct_to_gt_use_pointmap_norm: false
+remote_projection_reconstruct_to_gt_high_z_quantile: 0.0
+remote_projection_reconstruct_to_gt_high_z_min_pixels: 16
+remote_projection_grid_global_to_gt_loss_weight: 0.0
+remote_projection_grid_global_to_gt_high_z_quantile: 0.0
+remote_projection_grid_global_to_gt_high_z_min_pixels: 16
 test_remote_pointmap_loss_weight: ${loss.remote_pointmap_loss_weight}
 test_remote_height_loss_weight: 0.0
+test_remote_pointmap_top_n_percent: 0.0
 remote_compare_in_view0_frame: false
 remote_compare_gt_in_view0_frame_only: true
 remote_detach_pose_for_view0_align: false
@@ -73,7 +128,29 @@ train_criterion: >
       pointmap_criterion=L1Loss(reduction='none'),
       height_criterion=L1Loss(reduction='none'),
       pointmap_loss_weight=${loss.remote_pointmap_loss_weight},
+      raw_pointmap_loss_weight=${loss.remote_raw_pointmap_loss_weight},
       height_loss_weight=${loss.remote_height_loss_weight},
+      pointmap_top_n_percent=${loss.remote_pointmap_top_n_percent},
+      pointmap_gradient_loss_weight=${loss.remote_pointmap_gradient_loss_weight},
+      pointmap_gradient_scales=${loss.remote_pointmap_gradient_scales},
+      pointmap_gradient_channels='${loss.remote_pointmap_gradient_channels}',
+      pointmap_z_distribution_loss_weight=${loss.remote_pointmap_z_distribution_loss_weight},
+      pointmap_high_z_loss_weight=${loss.remote_pointmap_high_z_loss_weight},
+      pointmap_high_z_quantile=${loss.remote_pointmap_high_z_quantile},
+      pointmap_high_z_min_pixels=${loss.remote_pointmap_high_z_min_pixels},
+      moge_gradient_loss_weight=${loss.remote_moge_gradient_loss_weight},
+      moge_edge_loss_weight=${loss.remote_moge_edge_loss_weight},
+      pointmap_moge_height_loss_weight=${loss.remote_pointmap_moge_height_loss_weight},
+      pointmap_moge_height_prior_min_weight=${loss.remote_pointmap_moge_height_prior_min_weight},
+      pointmap_moge_height_ground_quantile=${loss.remote_pointmap_moge_height_ground_quantile},
+      overlap_pointmap_loss_weight=${loss.remote_overlap_pointmap_loss_weight},
+      overlap_depth_tolerance=${loss.remote_overlap_depth_tolerance},
+      overlap_relative_depth_tolerance=${loss.remote_overlap_relative_depth_tolerance},
+      overlap_min_pixels=${loss.remote_overlap_min_pixels},
+      overlap_min_depth=${loss.remote_overlap_min_depth},
+      moge_prior_min_weight=${loss.remote_moge_prior_min_weight},
+      moge_edge_temperature=${loss.remote_moge_edge_temperature},
+      moge_edge_threshold=${loss.remote_moge_edge_threshold},
       compare_in_view0_frame=${loss.remote_compare_in_view0_frame},
       compare_gt_in_view0_frame_only=${loss.remote_compare_gt_in_view0_frame_only},
       detach_pose_for_view0_align=${loss.remote_detach_pose_for_view0_align},
@@ -84,10 +161,15 @@ train_criterion: >
       projection_offset_dir_loss_weight=${loss.remote_projection_offset_dir_loss_weight},
       projection_global_dir_loss_weight=${loss.remote_projection_global_dir_loss_weight},
       projection_global_slope_loss_weight=${loss.remote_projection_global_slope_loss_weight},
+      projection_global_vector_loss_weight=${loss.remote_projection_global_vector_loss_weight},
       projection_consistency_loss_weight=${loss.remote_projection_consistency_loss_weight},
       projection_global_dir_from_offset=${loss.remote_projection_global_dir_from_offset},
+      projection_global_target_from_pointmap=${loss.remote_projection_global_target_from_pointmap},
+      projection_global_target_min_rel_height=${loss.remote_projection_global_target_min_rel_height},
+      projection_global_target_min_pixels=${loss.remote_projection_global_target_min_pixels},
       projection_rel_height_scale=${loss.remote_projection_rel_height_scale},
       projection_rel_height_scale_mode='${loss.remote_projection_rel_height_scale_mode}',
+      projection_rel_height_scale_quantile=${loss.remote_projection_rel_height_scale_quantile},
       projection_rel_height_clip=${loss.remote_projection_rel_height_clip},
       projection_rel_height_min=${loss.remote_projection_rel_height_min},
       projection_rel_height_use_tilt_mask=${loss.remote_projection_rel_height_use_tilt_mask},
@@ -109,6 +191,14 @@ train_criterion: >
       projection_rel_height_low_overpred_loss_weight=${loss.remote_projection_rel_height_low_overpred_loss_weight},
       projection_rel_height_low_overpred_start_epoch=${loss.remote_projection_rel_height_low_overpred_start_epoch},
       projection_rel_height_low_overpred_ramp_epochs=${loss.remote_projection_rel_height_low_overpred_ramp_epochs},
+      projection_dense_rel_height_loss_weight=${loss.remote_projection_dense_rel_height_loss_weight},
+      projection_dense_rel_height_exclude_hard_mask=${loss.remote_projection_dense_rel_height_exclude_hard_mask},
+      projection_dense_rel_height_low_weight=${loss.remote_projection_dense_rel_height_low_weight},
+      projection_dense_rel_height_low_quantile=${loss.remote_projection_dense_rel_height_low_quantile},
+      projection_dense_rel_height_min_abs_quantile=${loss.remote_projection_dense_rel_height_min_abs_quantile},
+      projection_dense_global_offset_loss_weight=${loss.remote_projection_dense_global_offset_loss_weight},
+      projection_dense_global_offset_low_weight=${loss.remote_projection_dense_global_offset_low_weight},
+      projection_dense_global_offset_low_quantile=${loss.remote_projection_dense_global_offset_low_quantile},
       projection_offset_target_weight=${loss.remote_projection_offset_target_weight},
       projection_offset_target_weight_gamma=${loss.remote_projection_offset_target_weight_gamma},
       projection_offset_balanced_loss_weight=${loss.remote_projection_offset_balanced_loss_weight},
@@ -117,7 +207,26 @@ train_criterion: >
       projection_offset_bucket_mean_loss_weight=${loss.remote_projection_offset_bucket_mean_loss_weight},
       projection_offset_low_overpred_loss_weight=${loss.remote_projection_offset_low_overpred_loss_weight},
       projection_offset_low_overpred_start_epoch=${loss.remote_projection_offset_low_overpred_start_epoch},
-      projection_offset_low_overpred_ramp_epochs=${loss.remote_projection_offset_low_overpred_ramp_epochs}
+      projection_offset_low_overpred_ramp_epochs=${loss.remote_projection_offset_low_overpred_ramp_epochs},
+      projection_moge_gradient_loss_weight=${loss.remote_projection_moge_gradient_loss_weight},
+      projection_moge_edge_loss_weight=${loss.remote_projection_moge_edge_loss_weight},
+      projection_moge_height_loss_weight=${loss.remote_projection_moge_height_loss_weight},
+      projection_moge_height_prior_min_weight=${loss.remote_projection_moge_height_prior_min_weight},
+      projection_moge_height_ground_quantile=${loss.remote_projection_moge_height_ground_quantile},
+      projection_moge_height_exclude_hard_mask=${loss.remote_projection_moge_height_exclude_hard_mask},
+      projection_moge_prior_min_weight=${loss.remote_projection_moge_prior_min_weight},
+      projection_moge_edge_temperature=${loss.remote_projection_moge_edge_temperature},
+      projection_moge_edge_threshold=${loss.remote_projection_moge_edge_threshold},
+      projection_reconstruct_offset_to_gt_loss_weight=${loss.remote_projection_reconstruct_offset_to_gt_loss_weight},
+      projection_reconstruct_global_to_gt_loss_weight=${loss.remote_projection_reconstruct_global_to_gt_loss_weight},
+      projection_reconstruct_offset_to_point_detach_loss_weight=${loss.remote_projection_reconstruct_offset_to_point_detach_loss_weight},
+      projection_reconstruct_global_to_point_detach_loss_weight=${loss.remote_projection_reconstruct_global_to_point_detach_loss_weight},
+      projection_reconstruct_to_gt_use_pointmap_norm=${loss.remote_projection_reconstruct_to_gt_use_pointmap_norm},
+      projection_reconstruct_to_gt_high_z_quantile=${loss.remote_projection_reconstruct_to_gt_high_z_quantile},
+      projection_reconstruct_to_gt_high_z_min_pixels=${loss.remote_projection_reconstruct_to_gt_high_z_min_pixels},
+      projection_grid_global_to_gt_loss_weight=${loss.remote_projection_grid_global_to_gt_loss_weight},
+      projection_grid_global_to_gt_high_z_quantile=${loss.remote_projection_grid_global_to_gt_high_z_quantile},
+      projection_grid_global_to_gt_high_z_min_pixels=${loss.remote_projection_grid_global_to_gt_high_z_min_pixels}
     ),
     scale_remote_loss_by_num_aerial_views=${loss.scale_remote_loss_by_num_aerial_views}
   )
@@ -145,7 +254,29 @@ test_criterion: >
       pointmap_criterion=L1Loss(reduction='none'),
       height_criterion=L1Loss(reduction='none'),
       pointmap_loss_weight=${loss.test_remote_pointmap_loss_weight},
+      raw_pointmap_loss_weight=0.0,
       height_loss_weight=${loss.test_remote_height_loss_weight},
+      pointmap_top_n_percent=${loss.test_remote_pointmap_top_n_percent},
+      pointmap_gradient_loss_weight=${loss.remote_pointmap_gradient_loss_weight},
+      pointmap_gradient_scales=${loss.remote_pointmap_gradient_scales},
+      pointmap_gradient_channels='${loss.remote_pointmap_gradient_channels}',
+      pointmap_z_distribution_loss_weight=${loss.remote_pointmap_z_distribution_loss_weight},
+      pointmap_high_z_loss_weight=${loss.remote_pointmap_high_z_loss_weight},
+      pointmap_high_z_quantile=${loss.remote_pointmap_high_z_quantile},
+      pointmap_high_z_min_pixels=${loss.remote_pointmap_high_z_min_pixels},
+      moge_gradient_loss_weight=${loss.remote_moge_gradient_loss_weight},
+      moge_edge_loss_weight=${loss.remote_moge_edge_loss_weight},
+      pointmap_moge_height_loss_weight=${loss.remote_pointmap_moge_height_loss_weight},
+      pointmap_moge_height_prior_min_weight=${loss.remote_pointmap_moge_height_prior_min_weight},
+      pointmap_moge_height_ground_quantile=${loss.remote_pointmap_moge_height_ground_quantile},
+      overlap_pointmap_loss_weight=${loss.remote_overlap_pointmap_loss_weight},
+      overlap_depth_tolerance=${loss.remote_overlap_depth_tolerance},
+      overlap_relative_depth_tolerance=${loss.remote_overlap_relative_depth_tolerance},
+      overlap_min_pixels=${loss.remote_overlap_min_pixels},
+      overlap_min_depth=${loss.remote_overlap_min_depth},
+      moge_prior_min_weight=${loss.remote_moge_prior_min_weight},
+      moge_edge_temperature=${loss.remote_moge_edge_temperature},
+      moge_edge_threshold=${loss.remote_moge_edge_threshold},
       compare_in_view0_frame=${loss.remote_compare_in_view0_frame},
       compare_gt_in_view0_frame_only=${loss.remote_compare_gt_in_view0_frame_only},
       detach_pose_for_view0_align=${loss.remote_detach_pose_for_view0_align},
@@ -156,10 +287,15 @@ test_criterion: >
       projection_offset_dir_loss_weight=${loss.remote_projection_offset_dir_loss_weight},
       projection_global_dir_loss_weight=${loss.remote_projection_global_dir_loss_weight},
       projection_global_slope_loss_weight=${loss.remote_projection_global_slope_loss_weight},
+      projection_global_vector_loss_weight=${loss.remote_projection_global_vector_loss_weight},
       projection_consistency_loss_weight=${loss.remote_projection_consistency_loss_weight},
       projection_global_dir_from_offset=${loss.remote_projection_global_dir_from_offset},
+      projection_global_target_from_pointmap=${loss.remote_projection_global_target_from_pointmap},
+      projection_global_target_min_rel_height=${loss.remote_projection_global_target_min_rel_height},
+      projection_global_target_min_pixels=${loss.remote_projection_global_target_min_pixels},
       projection_rel_height_scale=${loss.remote_projection_rel_height_scale},
       projection_rel_height_scale_mode='${loss.remote_projection_rel_height_scale_mode}',
+      projection_rel_height_scale_quantile=${loss.remote_projection_rel_height_scale_quantile},
       projection_rel_height_clip=${loss.remote_projection_rel_height_clip},
       projection_rel_height_min=${loss.remote_projection_rel_height_min},
       projection_rel_height_use_tilt_mask=${loss.remote_projection_rel_height_use_tilt_mask},
@@ -181,6 +317,14 @@ test_criterion: >
       projection_rel_height_low_overpred_loss_weight=${loss.remote_projection_rel_height_low_overpred_loss_weight},
       projection_rel_height_low_overpred_start_epoch=${loss.remote_projection_rel_height_low_overpred_start_epoch},
       projection_rel_height_low_overpred_ramp_epochs=${loss.remote_projection_rel_height_low_overpred_ramp_epochs},
+      projection_dense_rel_height_loss_weight=${loss.remote_projection_dense_rel_height_loss_weight},
+      projection_dense_rel_height_exclude_hard_mask=${loss.remote_projection_dense_rel_height_exclude_hard_mask},
+      projection_dense_rel_height_low_weight=${loss.remote_projection_dense_rel_height_low_weight},
+      projection_dense_rel_height_low_quantile=${loss.remote_projection_dense_rel_height_low_quantile},
+      projection_dense_rel_height_min_abs_quantile=${loss.remote_projection_dense_rel_height_min_abs_quantile},
+      projection_dense_global_offset_loss_weight=${loss.remote_projection_dense_global_offset_loss_weight},
+      projection_dense_global_offset_low_weight=${loss.remote_projection_dense_global_offset_low_weight},
+      projection_dense_global_offset_low_quantile=${loss.remote_projection_dense_global_offset_low_quantile},
       projection_offset_target_weight=${loss.remote_projection_offset_target_weight},
       projection_offset_target_weight_gamma=${loss.remote_projection_offset_target_weight_gamma},
       projection_offset_balanced_loss_weight=${loss.remote_projection_offset_balanced_loss_weight},
@@ -189,7 +333,26 @@ test_criterion: >
       projection_offset_bucket_mean_loss_weight=${loss.remote_projection_offset_bucket_mean_loss_weight},
       projection_offset_low_overpred_loss_weight=${loss.remote_projection_offset_low_overpred_loss_weight},
       projection_offset_low_overpred_start_epoch=${loss.remote_projection_offset_low_overpred_start_epoch},
-      projection_offset_low_overpred_ramp_epochs=${loss.remote_projection_offset_low_overpred_ramp_epochs}
+      projection_offset_low_overpred_ramp_epochs=${loss.remote_projection_offset_low_overpred_ramp_epochs},
+      projection_moge_gradient_loss_weight=${loss.remote_projection_moge_gradient_loss_weight},
+      projection_moge_edge_loss_weight=${loss.remote_projection_moge_edge_loss_weight},
+      projection_moge_height_loss_weight=${loss.remote_projection_moge_height_loss_weight},
+      projection_moge_height_prior_min_weight=${loss.remote_projection_moge_height_prior_min_weight},
+      projection_moge_height_ground_quantile=${loss.remote_projection_moge_height_ground_quantile},
+      projection_moge_height_exclude_hard_mask=${loss.remote_projection_moge_height_exclude_hard_mask},
+      projection_moge_prior_min_weight=${loss.remote_projection_moge_prior_min_weight},
+      projection_moge_edge_temperature=${loss.remote_projection_moge_edge_temperature},
+      projection_moge_edge_threshold=${loss.remote_projection_moge_edge_threshold},
+      projection_reconstruct_offset_to_gt_loss_weight=${loss.remote_projection_reconstruct_offset_to_gt_loss_weight},
+      projection_reconstruct_global_to_gt_loss_weight=${loss.remote_projection_reconstruct_global_to_gt_loss_weight},
+      projection_reconstruct_offset_to_point_detach_loss_weight=${loss.remote_projection_reconstruct_offset_to_point_detach_loss_weight},
+      projection_reconstruct_global_to_point_detach_loss_weight=${loss.remote_projection_reconstruct_global_to_point_detach_loss_weight},
+      projection_reconstruct_to_gt_use_pointmap_norm=${loss.remote_projection_reconstruct_to_gt_use_pointmap_norm},
+      projection_reconstruct_to_gt_high_z_quantile=${loss.remote_projection_reconstruct_to_gt_high_z_quantile},
+      projection_reconstruct_to_gt_high_z_min_pixels=${loss.remote_projection_reconstruct_to_gt_high_z_min_pixels},
+      projection_grid_global_to_gt_loss_weight=${loss.remote_projection_grid_global_to_gt_loss_weight},
+      projection_grid_global_to_gt_high_z_quantile=${loss.remote_projection_grid_global_to_gt_high_z_quantile},
+      projection_grid_global_to_gt_high_z_min_pixels=${loss.remote_projection_grid_global_to_gt_high_z_min_pixels}
     ),
     scale_remote_loss_by_num_aerial_views=${loss.scale_remote_loss_by_num_aerial_views}
   )

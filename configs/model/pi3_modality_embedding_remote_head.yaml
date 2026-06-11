@@ -4,6 +4,16 @@ model_str: "pi3_modality_embedding_remote_head"
 model_config:
   name: "pi3_modality_embedding_remote_head"
   load_pretrained_weights: true
+  use_remote_projection_aux_head: false
+  remote_projection_aux_hidden_dim: 96
+  remote_projection_aux_use_rgb: true
+  remote_projection_aux_use_coord: true
+  remote_projection_aux_image_stem_dim: 32
+  remote_projection_aux_positive_slope: true
+  remote_projection_aux_slope_init: 0.1
+  remote_projection_aux_num_blocks: 6
+  remote_projection_aux_rel_height_output_scale: 1.0
+  remote_projection_aux_offset_output_scale: 1.0
 # Image Normalization Type
 data_norm_type: "identity"
 pretrained: null

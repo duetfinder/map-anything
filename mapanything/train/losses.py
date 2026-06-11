@@ -207,13 +207,15 @@ def compute_gradient_loss(prediction, gt_target, mask):
         gt_target (torch.Tensor): Ground truth scene representation. Shape: (B, H, W, C).
         mask (torch.Tensor): Mask indicating valid points. Shape: (B, H, W).
     """
-    # Expand mask to match number of channels in prediction
+    # Expand mask to match number of channels in prediction. Invalid remote
+    # pointmaps may store NaNs outside the mask; multiplying by zero would not
+    # remove them, so fold finite checks into the mask before differencing.
     mask = mask[..., None].expand(-1, -1, -1, prediction.shape[-1])
+    mask = mask & torch.isfinite(prediction) & torch.isfinite(gt_target)
     summed_mask = torch.sum(mask, (1, 2, 3))
 
     # Compute the gradient of the prediction and GT target
-    diff = prediction - gt_target
-    diff = torch.mul(mask, diff)
+    diff = torch.where(mask, prediction - gt_target, torch.zeros_like(prediction))
 
     # Gradient in x direction
     grad_x = torch.abs(diff[:, :, 1:] - diff[:, :, :-1])
@@ -311,7 +313,29 @@ class RSPointmapHeightLoss(nn.Module):
         pointmap_criterion=None,
         height_criterion=None,
         pointmap_loss_weight=1.0,
+        raw_pointmap_loss_weight=0.0,
         height_loss_weight=0.1,
+        pointmap_top_n_percent=0.0,
+        pointmap_gradient_loss_weight=0.0,
+        pointmap_gradient_scales=4,
+        pointmap_gradient_channels="z",
+        pointmap_z_distribution_loss_weight=0.0,
+        pointmap_high_z_loss_weight=0.0,
+        pointmap_high_z_quantile=0.8,
+        pointmap_high_z_min_pixels=16,
+        moge_gradient_loss_weight=0.0,
+        moge_edge_loss_weight=0.0,
+        pointmap_moge_height_loss_weight=0.0,
+        pointmap_moge_height_prior_min_weight=0.02,
+        pointmap_moge_height_ground_quantile=0.2,
+        overlap_pointmap_loss_weight=0.0,
+        overlap_depth_tolerance=3.0,
+        overlap_relative_depth_tolerance=0.05,
+        overlap_min_pixels=64,
+        overlap_min_depth=1e-3,
+        moge_prior_min_weight=0.02,
+        moge_edge_temperature=10.0,
+        moge_edge_threshold=0.5,
         compare_in_view0_frame=False,
         compare_gt_in_view0_frame_only=False,
         detach_pose_for_view0_align=False,
@@ -321,7 +345,50 @@ class RSPointmapHeightLoss(nn.Module):
         self.pointmap_criterion = pointmap_criterion or L1Loss(reduction="none")
         self.height_criterion = height_criterion or L1Loss(reduction="none")
         self.pointmap_loss_weight = pointmap_loss_weight
+        self.raw_pointmap_loss_weight = float(raw_pointmap_loss_weight)
         self.height_loss_weight = height_loss_weight
+        self.pointmap_top_n_percent = float(pointmap_top_n_percent)
+        self.pointmap_bottom_n_percent = 100.0 - self.pointmap_top_n_percent
+        if not (0.0 <= self.pointmap_top_n_percent < 100.0):
+            raise ValueError(
+                "pointmap_top_n_percent must be in [0, 100), "
+                f"got {pointmap_top_n_percent!r}"
+            )
+        self.pointmap_gradient_loss_weight = float(pointmap_gradient_loss_weight)
+        self.pointmap_gradient_scales = int(pointmap_gradient_scales)
+        self.pointmap_gradient_channels = str(pointmap_gradient_channels)
+        self.pointmap_z_distribution_loss_weight = float(pointmap_z_distribution_loss_weight)
+        self.pointmap_high_z_loss_weight = float(pointmap_high_z_loss_weight)
+        self.pointmap_high_z_quantile = float(pointmap_high_z_quantile)
+        self.pointmap_high_z_min_pixels = int(pointmap_high_z_min_pixels)
+        self.moge_gradient_loss_weight = float(moge_gradient_loss_weight)
+        self.moge_edge_loss_weight = float(moge_edge_loss_weight)
+        self.pointmap_moge_height_loss_weight = float(pointmap_moge_height_loss_weight)
+        self.pointmap_moge_height_prior_min_weight = float(pointmap_moge_height_prior_min_weight)
+        self.pointmap_moge_height_ground_quantile = float(pointmap_moge_height_ground_quantile)
+        self.overlap_pointmap_loss_weight = float(overlap_pointmap_loss_weight)
+        self.overlap_depth_tolerance = float(overlap_depth_tolerance)
+        self.overlap_relative_depth_tolerance = float(overlap_relative_depth_tolerance)
+        self.overlap_min_pixels = int(overlap_min_pixels)
+        self.overlap_min_depth = float(overlap_min_depth)
+        self.moge_prior_min_weight = float(moge_prior_min_weight)
+        self.moge_edge_temperature = float(moge_edge_temperature)
+        self.moge_edge_threshold = float(moge_edge_threshold)
+        if not (0.0 <= self.pointmap_moge_height_ground_quantile <= 1.0):
+            raise ValueError(
+                "pointmap_moge_height_ground_quantile must satisfy 0 <= q <= 1, "
+                f"got {pointmap_moge_height_ground_quantile!r}"
+            )
+        if self.pointmap_gradient_channels not in {"z", "xyz"}:
+            raise ValueError(
+                "pointmap_gradient_channels must be 'z' or 'xyz', "
+                f"got {pointmap_gradient_channels!r}"
+            )
+        if not 0.0 <= self.pointmap_high_z_quantile < 1.0:
+            raise ValueError(
+                "pointmap_high_z_quantile must be in [0, 1), "
+                f"got {pointmap_high_z_quantile!r}"
+            )
         self.compare_in_view0_frame = compare_in_view0_frame
         self.compare_gt_in_view0_frame_only = compare_gt_in_view0_frame_only
         self.detach_pose_for_view0_align = detach_pose_for_view0_align
@@ -340,6 +407,47 @@ class RSPointmapHeightLoss(nn.Module):
         if mask.any():
             return loss_map[mask].mean()
         return loss_map.new_zeros(())
+
+    @staticmethod
+    def _weighted_masked_mean(loss_map, mask, weight):
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if not mask.any():
+            return loss_map.new_zeros(())
+        return (loss_map[mask] * weight[mask]).mean()
+
+    def _pointmap_masked_mean(self, loss_map, mask):
+        if self.pointmap_top_n_percent <= 0:
+            return self._masked_mean(loss_map, mask)
+        if mask.dtype != torch.bool:
+            mask = mask.bool()
+        if loss_map.ndim == mask.ndim + 1:
+            loss_map = loss_map.mean(dim=-1)
+        if loss_map.ndim == 2:
+            loss_map = loss_map.unsqueeze(0)
+            mask = mask.unsqueeze(0)
+        elif loss_map.ndim == 1:
+            loss_map = loss_map.view(1, -1)
+            mask = mask.view(1, -1)
+        else:
+            loss_map = loss_map.reshape(loss_map.shape[0], -1)
+            mask = mask.reshape(mask.shape[0], -1)
+
+        kept_losses = []
+        for sample_loss, sample_mask in zip(loss_map, mask):
+            valid_losses = sample_loss[sample_mask]
+            if valid_losses.numel() == 0:
+                continue
+            num_keep = max(
+                1,
+                int(valid_losses.numel() * self.pointmap_bottom_n_percent / 100.0),
+            )
+            sorted_losses, _ = torch.sort(valid_losses, descending=False)
+            kept_losses.append(sorted_losses[:num_keep])
+
+        if not kept_losses:
+            return loss_map.new_zeros(())
+        return torch.cat(kept_losses, dim=0).mean()
 
     @staticmethod
     def _get_pred_in_view0(aerial_preds, detach_pose_for_view0_align=False):
@@ -427,6 +535,354 @@ class RSPointmapHeightLoss(nn.Module):
             gt_norm_factor,
         )
 
+    def _remote_overlap_mask(self, remote_pointmap_view0, remote_valid_mask, aerial_gts):
+        if (
+            self.overlap_pointmap_loss_weight <= 0
+            or not aerial_gts
+            or "camera_pose" not in aerial_gts[0]
+        ):
+            return None, {}
+
+        required = {"camera_pose", "camera_intrinsics", "pts3d", "valid_mask"}
+        if any(not required.issubset(gt.keys()) for gt in aerial_gts):
+            return None, {"rs_overlap_required_present": 0.0}
+
+        with torch.no_grad():
+            remote_pts_v0 = remote_pointmap_view0.float()
+            valid_mask = remote_valid_mask.bool() & torch.isfinite(remote_pts_v0).all(dim=-1)
+            camera0_pose = aerial_gts[0]["camera_pose"].float()
+            remote_pts_world = geotrf(camera0_pose, remote_pts_v0)
+            overlap = torch.zeros_like(valid_mask, dtype=torch.bool)
+            per_view_ratios = []
+
+            for aerial_gt in aerial_gts:
+                camera_pose = aerial_gt["camera_pose"].float()
+                world_to_cam = closed_form_pose_inverse(camera_pose)
+                intrinsics = aerial_gt["camera_intrinsics"].float()
+
+                remote_cam = geotrf(world_to_cam, remote_pts_world)
+                remote_z = remote_cam[..., 2]
+                finite_remote = torch.isfinite(remote_cam).all(dim=-1)
+                in_front = remote_z > self.overlap_min_depth
+
+                x = intrinsics[:, 0, 0].view(-1, 1, 1) * remote_cam[..., 0] / remote_z.clamp_min(1e-6)
+                x = x + intrinsics[:, 0, 2].view(-1, 1, 1)
+                y = intrinsics[:, 1, 1].view(-1, 1, 1) * remote_cam[..., 1] / remote_z.clamp_min(1e-6)
+                y = y + intrinsics[:, 1, 2].view(-1, 1, 1)
+
+                aerial_valid = aerial_gt["valid_mask"].bool()
+                aerial_pts_cam = (
+                    aerial_gt["pts3d_cam"].float()
+                    if "pts3d_cam" in aerial_gt
+                    else geotrf(world_to_cam, aerial_gt["pts3d"].float())
+                )
+                aerial_z = aerial_pts_cam[..., 2]
+                batch_size, aerial_h, aerial_w = aerial_z.shape
+
+                xi = torch.round(x).long()
+                yi = torch.round(y).long()
+                in_bounds = (
+                    (xi >= 0)
+                    & (xi < aerial_w)
+                    & (yi >= 0)
+                    & (yi < aerial_h)
+                )
+
+                flat_idx = (yi.clamp(0, aerial_h - 1) * aerial_w + xi.clamp(0, aerial_w - 1))
+                flat_idx = flat_idx.reshape(batch_size, -1)
+                sampled_z = torch.gather(aerial_z.reshape(batch_size, -1), 1, flat_idx)
+                sampled_valid = torch.gather(
+                    aerial_valid.reshape(batch_size, -1), 1, flat_idx
+                ).reshape_as(valid_mask)
+                sampled_z = sampled_z.reshape_as(remote_z)
+
+                abs_depth_err = (sampled_z - remote_z).abs()
+                rel_depth_err = abs_depth_err / sampled_z.abs().clamp_min(1e-6)
+                view_overlap = (
+                    valid_mask
+                    & finite_remote
+                    & in_front
+                    & in_bounds
+                    & sampled_valid
+                    & torch.isfinite(sampled_z)
+                    & (sampled_z > self.overlap_min_depth)
+                    & (abs_depth_err <= self.overlap_depth_tolerance)
+                    & (rel_depth_err <= self.overlap_relative_depth_tolerance)
+                )
+                overlap = overlap | view_overlap
+                per_view_ratios.append(float(view_overlap.float().mean().detach()))
+
+            overlap_pixels = int(overlap.sum().detach().item())
+            details = {
+                "rs_overlap_required_present": 1.0,
+                "rs_overlap_mask_ratio": float(overlap.float().mean().detach()),
+                "rs_overlap_pixels": float(overlap_pixels),
+            }
+            if per_view_ratios:
+                details["rs_overlap_per_view_mask_ratio"] = sum(per_view_ratios) / len(per_view_ratios)
+            if overlap_pixels < self.overlap_min_pixels:
+                return None, details
+            return overlap, details
+
+    def _pointmap_gradient_loss(self, pred_pts3d, gt_pointmap, valid_mask):
+        pred_for_grad = pred_pts3d
+        gt_for_grad = gt_pointmap
+        if self.pointmap_gradient_channels == "z":
+            pred_for_grad = pred_for_grad[..., 2:3]
+            gt_for_grad = gt_for_grad[..., 2:3]
+        return compute_gradient_matching_loss(
+            pred_for_grad,
+            gt_for_grad,
+            valid_mask,
+            scales=self.pointmap_gradient_scales,
+        )
+
+    @staticmethod
+    def _pointmap_z_distribution_loss(pred_pts3d, gt_pointmap, valid_mask):
+        if valid_mask.dtype != torch.bool:
+            valid_mask = valid_mask.bool()
+        pred_z = pred_pts3d[..., 2]
+        gt_z = gt_pointmap[..., 2]
+        losses = []
+        pred_means = []
+        gt_means = []
+        pred_stds = []
+        gt_stds = []
+        for sample_pred_z, sample_gt_z, sample_mask in zip(pred_z, gt_z, valid_mask):
+            if not sample_mask.any():
+                continue
+            pred_valid = sample_pred_z[sample_mask]
+            gt_valid = sample_gt_z[sample_mask]
+            pred_mean = pred_valid.mean()
+            gt_mean = gt_valid.mean()
+            pred_std = pred_valid.std(unbiased=False)
+            gt_std = gt_valid.std(unbiased=False)
+            losses.append((pred_mean - gt_mean).abs() + (pred_std - gt_std).abs())
+            pred_means.append(float(pred_mean.detach()))
+            gt_means.append(float(gt_mean.detach()))
+            pred_stds.append(float(pred_std.detach()))
+            gt_stds.append(float(gt_std.detach()))
+        if not losses:
+            zero = pred_pts3d.sum() * 0
+            return zero, None
+        details = {
+            "pred_mean": sum(pred_means) / len(pred_means),
+            "gt_mean": sum(gt_means) / len(gt_means),
+            "pred_std": sum(pred_stds) / len(pred_stds),
+            "gt_std": sum(gt_stds) / len(gt_stds),
+        }
+        return sum(losses) / len(losses), details
+
+    @staticmethod
+    def _pointmap_high_z_loss(pred_pts3d, gt_pointmap, valid_mask, quantile, min_pixels):
+        if valid_mask.dtype != torch.bool:
+            valid_mask = valid_mask.bool()
+        pred_z = pred_pts3d[..., 2]
+        gt_z = gt_pointmap[..., 2]
+        losses = []
+        mask_ratios = []
+        pred_means = []
+        gt_means = []
+        thresholds = []
+        for sample_pred_z, sample_gt_z, sample_mask in zip(pred_z, gt_z, valid_mask):
+            valid_count = int(sample_mask.sum().item())
+            if valid_count <= 0:
+                continue
+            gt_valid = sample_gt_z[sample_mask]
+            threshold = torch.quantile(gt_valid, quantile)
+            high_mask = sample_mask & (sample_gt_z >= threshold)
+            if int(high_mask.sum().item()) < min_pixels:
+                topk = min(valid_count, max(1, min_pixels))
+                _, top_indices = torch.topk(gt_valid, k=topk, largest=True)
+                flat_high = torch.zeros_like(gt_valid, dtype=torch.bool)
+                flat_high[top_indices] = True
+                high_mask = torch.zeros_like(sample_mask, dtype=torch.bool)
+                high_mask[sample_mask] = flat_high
+            pred_high = sample_pred_z[high_mask]
+            gt_high = sample_gt_z[high_mask]
+            if pred_high.numel() == 0:
+                continue
+            losses.append((pred_high - gt_high).abs().mean())
+            mask_ratios.append(float(high_mask.float().mean().detach()))
+            pred_means.append(float(pred_high.mean().detach()))
+            gt_means.append(float(gt_high.mean().detach()))
+            thresholds.append(float(threshold.detach()))
+        if not losses:
+            zero = pred_pts3d.sum() * 0
+            return zero, None
+        details = {
+            "mask_ratio": sum(mask_ratios) / len(mask_ratios),
+            "pred_mean": sum(pred_means) / len(pred_means),
+            "gt_mean": sum(gt_means) / len(gt_means),
+            "threshold": sum(thresholds) / len(thresholds),
+        }
+        return sum(losses) / len(losses), details
+
+    def _moge_prior_loss(self, pred_pts3d, gt):
+        required = {
+            'remote_moge_grad_xy',
+            'remote_moge_edge_mask',
+            'remote_moge_prior_weight',
+        }
+        if not required.issubset(gt.keys()):
+            zero = pred_pts3d.new_zeros(())
+            return zero, {
+                'rs_moge_required_present': 0.0,
+                'rs_moge_prior_active_ratio': 0.0,
+            }
+
+        height = pred_pts3d[..., 2].float()
+        if height.shape[-2] < 3 or height.shape[-1] < 3:
+            zero = pred_pts3d.new_zeros(())
+            return zero, {}
+
+        prior_grad = gt['remote_moge_grad_xy'].float()
+        edge_mask = gt['remote_moge_edge_mask'].bool()
+        prior_weight = gt['remote_moge_prior_weight'].float()
+        if 'remote_moge_confidence_mask' in gt:
+            prior_weight = prior_weight * gt['remote_moge_confidence_mask'].float()
+
+        finite_height = torch.isfinite(height)
+        height_for_grad = torch.where(finite_height, height, torch.zeros_like(height))
+        pred_gx = height_for_grad[..., 1:-1, 2:] - height_for_grad[..., 1:-1, :-2]
+        pred_gy = height_for_grad[..., 2:, 1:-1] - height_for_grad[..., :-2, 1:-1]
+        pred_grad = torch.stack([pred_gx, pred_gy], dim=-1)
+        pred_dir = torch.nn.functional.normalize(pred_grad, dim=-1, eps=1e-6)
+
+        prior_dir = prior_grad[..., 1:-1, 1:-1, :]
+        prior_dir = torch.nn.functional.normalize(prior_dir, dim=-1, eps=1e-6)
+        weight = prior_weight[..., 1:-1, 1:-1].clamp_min(0.0)
+        finite_x = finite_height[..., 1:-1, 2:] & finite_height[..., 1:-1, :-2]
+        finite_y = finite_height[..., 2:, 1:-1] & finite_height[..., :-2, 1:-1]
+        finite_prior = torch.isfinite(prior_dir).all(dim=-1) & torch.isfinite(weight)
+        finite_pred = torch.isfinite(pred_grad).all(dim=-1)
+        active = (weight > self.moge_prior_min_weight) & finite_x & finite_y & finite_prior & finite_pred
+
+        details = {
+            'rs_moge_required_present': 1.0,
+            'rs_moge_prior_weight_positive_ratio': float((weight > 0).float().mean().detach()),
+            'rs_moge_prior_active_ratio': float(active.float().mean().detach()),
+        }
+        total = pred_pts3d.new_zeros(())
+        if active.any() and self.moge_gradient_loss_weight > 0:
+            cosine = (pred_dir * prior_dir).sum(dim=-1).clamp(-1.0, 1.0)
+            grad_loss_map = 1.0 - cosine
+            grad_loss = (grad_loss_map[active] * weight[active]).sum() / weight[active].sum().clamp_min(1e-6)
+            total = total + self.moge_gradient_loss_weight * grad_loss
+            details['rs_moge_gradient_loss'] = float(grad_loss.detach())
+            details['rs_moge_gradient_loss_weighted'] = float(
+                (self.moge_gradient_loss_weight * grad_loss).detach()
+            )
+            details['rs_moge_prior_weight_mean'] = float(weight[active].mean().detach())
+
+        if active.any() and self.moge_edge_loss_weight > 0:
+            pred_mag = torch.linalg.norm(pred_grad, dim=-1)
+            pred_mag_norm = []
+            for sample_mag, sample_active in zip(pred_mag, active):
+                if sample_active.any():
+                    scale = torch.quantile(sample_mag[sample_active].detach(), 0.95).clamp_min(1e-6)
+                else:
+                    scale = sample_mag.detach().mean().clamp_min(1e-6)
+                pred_mag_norm.append((sample_mag / scale).clamp(0.0, 2.0))
+            pred_mag_norm = torch.stack(pred_mag_norm, dim=0)
+            logits = self.moge_edge_temperature * (pred_mag_norm - self.moge_edge_threshold)
+            edge_target = edge_mask[..., 1:-1, 1:-1].float()
+            edge_loss_map = torch.nn.functional.binary_cross_entropy_with_logits(
+                logits,
+                edge_target,
+                reduction='none',
+            )
+            edge_loss = (edge_loss_map[active] * weight[active]).sum() / weight[active].sum().clamp_min(1e-6)
+            total = total + self.moge_edge_loss_weight * edge_loss
+            details['rs_moge_edge_loss'] = float(edge_loss.detach())
+            details['rs_moge_edge_loss_weighted'] = float(
+                (self.moge_edge_loss_weight * edge_loss).detach()
+            )
+            details['rs_moge_edge_ratio'] = float(edge_target[active].mean().detach())
+
+        return total, details
+
+    def _pointmap_moge_height_loss(self, pred_pts3d_for_loss, gt, valid_mask, gt_norm_factor):
+        required = {
+            'remote_moge_aligned_height',
+            'remote_moge_prior_weight',
+        }
+        if not required.issubset(gt.keys()):
+            zero = pred_pts3d_for_loss.new_zeros(())
+            return zero, {
+                'rs_pointmap_moge_height_required_present': 0.0,
+                'rs_pointmap_moge_height_active_ratio': 0.0,
+            }
+
+        pred_height = pred_pts3d_for_loss[..., 2].float()
+        aligned_height = gt['remote_moge_aligned_height'].float()
+        prior_weight = gt['remote_moge_prior_weight'].float()
+        if gt_norm_factor is not None:
+            scale = gt_norm_factor.to(device=aligned_height.device, dtype=aligned_height.dtype).clamp_min(1e-6)
+            while scale.ndim > 1 and scale.shape[-1] == 1:
+                scale = scale.squeeze(-1)
+            while scale.ndim < aligned_height.ndim:
+                scale = scale.unsqueeze(-1)
+            aligned_height = aligned_height / scale
+        if 'remote_moge_confidence_mask' in gt:
+            prior_weight = prior_weight * gt['remote_moge_confidence_mask'].float()
+
+        active = (
+            valid_mask.bool()
+            & torch.isfinite(pred_height)
+            & torch.isfinite(aligned_height)
+            & torch.isfinite(prior_weight)
+            & (prior_weight > self.pointmap_moge_height_prior_min_weight)
+        )
+        details = {
+            'rs_pointmap_moge_height_required_present': 1.0,
+            'rs_pointmap_moge_height_weight_positive_ratio': float((prior_weight > 0).float().mean().detach()),
+            'rs_pointmap_moge_height_active_ratio': float(active.float().mean().detach()),
+        }
+        if not active.any():
+            return pred_pts3d_for_loss.new_zeros(()), details
+
+        pred_targets = []
+        gt_targets = []
+        batch = pred_height.shape[0] if pred_height.ndim >= 3 else 1
+        if pred_height.ndim < 3:
+            pred_ground = torch.quantile(pred_height[active].float(), self.pointmap_moge_height_ground_quantile)
+            gt_ground = torch.quantile(aligned_height[active].float(), self.pointmap_moge_height_ground_quantile)
+            pred_target = (pred_height - pred_ground).clamp_min(0.0)
+            gt_target = (aligned_height - gt_ground).clamp_min(0.0)
+        else:
+            for batch_idx in range(batch):
+                sample_mask = active[batch_idx]
+                if sample_mask.any():
+                    pred_ground = torch.quantile(
+                        pred_height[batch_idx][sample_mask].float(),
+                        self.pointmap_moge_height_ground_quantile,
+                    )
+                    gt_ground = torch.quantile(
+                        aligned_height[batch_idx][sample_mask].float(),
+                        self.pointmap_moge_height_ground_quantile,
+                    )
+                    pred_targets.append((pred_height[batch_idx] - pred_ground).clamp_min(0.0))
+                    gt_targets.append((aligned_height[batch_idx] - gt_ground).clamp_min(0.0))
+                else:
+                    pred_targets.append(torch.zeros_like(pred_height[batch_idx]))
+                    gt_targets.append(torch.zeros_like(aligned_height[batch_idx]))
+            pred_target = torch.stack(pred_targets, dim=0)
+            gt_target = torch.stack(gt_targets, dim=0)
+
+        loss_map = (pred_target - gt_target).abs()
+        loss = self._weighted_masked_mean(loss_map, active, prior_weight)
+        details['rs_pointmap_moge_height_loss'] = float(loss.detach())
+        details['rs_pointmap_moge_height_pred_mean'] = float(
+            self._masked_mean(pred_target, active).detach()
+        )
+        details['rs_pointmap_moge_height_target_mean'] = float(
+            self._masked_mean(gt_target, active).detach()
+        )
+        details['rs_pointmap_moge_height_weight_mean'] = float(
+            self._masked_mean(prior_weight, active).detach()
+        )
+        return self.pointmap_moge_height_loss_weight * loss, details
 
     def forward(self, gts, preds, **kwargs):
         if len(gts) != len(preds):
@@ -436,10 +892,36 @@ class RSPointmapHeightLoss(nn.Module):
         pointmap_losses = []
         pointmap_losses_weighted = []
         pointmap_raw_losses = []
+        pointmap_raw_losses_weighted = []
         pred_pointmap_norm_factors = []
         gt_pointmap_norm_factors = []
         height_losses = []
         height_losses_weighted = []
+        pointmap_gradient_losses = []
+        pointmap_gradient_losses_weighted = []
+        pointmap_z_distribution_losses = []
+        pointmap_z_distribution_losses_weighted = []
+        pointmap_z_distribution_detail_values = {
+            "pred_mean": [],
+            "gt_mean": [],
+            "pred_std": [],
+            "gt_std": [],
+        }
+        pointmap_high_z_losses = []
+        pointmap_high_z_losses_weighted = []
+        pointmap_high_z_detail_values = {
+            "mask_ratio": [],
+            "pred_mean": [],
+            "gt_mean": [],
+            "threshold": [],
+        }
+        moge_prior_losses = []
+        moge_prior_detail_values = {}
+        pointmap_moge_height_losses = []
+        pointmap_moge_height_detail_values = {}
+        overlap_pointmap_losses = []
+        overlap_pointmap_losses_weighted = []
+        overlap_detail_values = {}
         pred_in_view0 = None
         aerial_preds = kwargs.get('aerial_preds')
         aerial_gts = kwargs.get('aerial_gts')
@@ -468,7 +950,11 @@ class RSPointmapHeightLoss(nn.Module):
 
             raw_pointmap_loss_map = self.pointmap_criterion(pred_pts3d, gt_pointmap)
             raw_pointmap_loss = self._masked_mean(raw_pointmap_loss_map, valid_mask)
-            pointmap_raw_losses.append(float(raw_pointmap_loss))
+            pointmap_raw_losses.append(float(raw_pointmap_loss.detach()))
+            if self.raw_pointmap_loss_weight > 0:
+                pointmap_raw_losses_weighted.append(
+                    float((self.raw_pointmap_loss_weight * raw_pointmap_loss).detach())
+                )
 
             norm_mode = self.pointmap_norm_mode
             if isinstance(norm_mode, str) and norm_mode.startswith("aerial_"):
@@ -488,19 +974,120 @@ class RSPointmapHeightLoss(nn.Module):
                 gt_pointmap_norm_factors.append(float(gt_norm_factor.mean()))
 
             pointmap_loss_map = self.pointmap_criterion(pred_pts3d_for_loss, gt_pointmap_for_loss)
-            pointmap_loss = self._masked_mean(pointmap_loss_map, valid_mask)
-            pointmap_losses.append(float(pointmap_loss))
-            pointmap_losses_weighted.append(float(self.pointmap_loss_weight * pointmap_loss))
+            pointmap_loss = self._pointmap_masked_mean(pointmap_loss_map, valid_mask)
+            pointmap_losses.append(float(pointmap_loss.detach()))
+            pointmap_losses_weighted.append(
+                float((self.pointmap_loss_weight * pointmap_loss).detach())
+            )
 
             loss = self.pointmap_loss_weight * pointmap_loss
+            if self.raw_pointmap_loss_weight > 0:
+                loss = loss + self.raw_pointmap_loss_weight * raw_pointmap_loss
+
+            if self.overlap_pointmap_loss_weight > 0:
+                overlap_mask, overlap_details = self._remote_overlap_mask(
+                    gt_pointmap,
+                    valid_mask,
+                    aerial_gts,
+                )
+                for key, value in overlap_details.items():
+                    overlap_detail_values.setdefault(key, []).append(value)
+                if overlap_mask is not None:
+                    overlap_loss = self._masked_mean(pointmap_loss_map, overlap_mask)
+                    overlap_pointmap_losses.append(float(overlap_loss.detach()))
+                    overlap_pointmap_losses_weighted.append(
+                        float((self.overlap_pointmap_loss_weight * overlap_loss).detach())
+                    )
+                    loss = loss + self.overlap_pointmap_loss_weight * overlap_loss
+
+            if self.pointmap_gradient_loss_weight > 0:
+                pointmap_gradient_loss = self._pointmap_gradient_loss(
+                    pred_pts3d_for_loss,
+                    gt_pointmap_for_loss,
+                    valid_mask,
+                )
+                pointmap_gradient_losses.append(float(pointmap_gradient_loss))
+                pointmap_gradient_losses_weighted.append(
+                    float(
+                        (
+                            self.pointmap_gradient_loss_weight
+                            * pointmap_gradient_loss
+                        ).detach()
+                    )
+                )
+                loss = loss + self.pointmap_gradient_loss_weight * pointmap_gradient_loss
+
+            if self.pointmap_z_distribution_loss_weight > 0:
+                z_dist_loss, z_dist_details = self._pointmap_z_distribution_loss(
+                    pred_pts3d_for_loss,
+                    gt_pointmap_for_loss,
+                    valid_mask,
+                )
+                pointmap_z_distribution_losses.append(float(z_dist_loss))
+                pointmap_z_distribution_losses_weighted.append(
+                    float(
+                        (
+                            self.pointmap_z_distribution_loss_weight
+                            * z_dist_loss
+                        ).detach()
+                    )
+                )
+                if z_dist_details:
+                    for key, value in z_dist_details.items():
+                        pointmap_z_distribution_detail_values[key].append(value)
+                loss = loss + self.pointmap_z_distribution_loss_weight * z_dist_loss
+
+            if self.pointmap_high_z_loss_weight > 0:
+                high_z_loss, high_z_details = self._pointmap_high_z_loss(
+                    pred_pts3d_for_loss,
+                    gt_pointmap_for_loss,
+                    valid_mask,
+                    self.pointmap_high_z_quantile,
+                    self.pointmap_high_z_min_pixels,
+                )
+                pointmap_high_z_losses.append(float(high_z_loss))
+                pointmap_high_z_losses_weighted.append(
+                    float(
+                        (
+                            self.pointmap_high_z_loss_weight
+                            * high_z_loss
+                        ).detach()
+                    )
+                )
+                if high_z_details:
+                    for key, value in high_z_details.items():
+                        pointmap_high_z_detail_values[key].append(value)
+                loss = loss + self.pointmap_high_z_loss_weight * high_z_loss
+
+            if self.moge_gradient_loss_weight > 0 or self.moge_edge_loss_weight > 0:
+                moge_loss, moge_details = self._moge_prior_loss(pred_pts3d_for_loss, gt)
+                if moge_details:
+                    moge_prior_losses.append(float(moge_loss.detach()))
+                    for key, value in moge_details.items():
+                        moge_prior_detail_values.setdefault(key, []).append(value)
+                loss = loss + moge_loss
+
+            if self.pointmap_moge_height_loss_weight > 0:
+                pointmap_moge_height_loss, pointmap_moge_height_details = self._pointmap_moge_height_loss(
+                    pred_pts3d_for_loss,
+                    gt,
+                    valid_mask,
+                    gt_norm_factor,
+                )
+                pointmap_moge_height_losses.append(float(pointmap_moge_height_loss.detach()))
+                for key, value in pointmap_moge_height_details.items():
+                    pointmap_moge_height_detail_values.setdefault(key, []).append(value)
+                loss = loss + pointmap_moge_height_loss
 
             if self.height_loss_weight > 0 and 'remote_height_map' in gt:
                 pred_height = pred_pts3d[..., 2:3]
                 gt_height = gt['remote_height_map'].float().unsqueeze(-1)
                 height_loss_map = self.height_criterion(pred_height, gt_height)
                 height_loss = self._masked_mean(height_loss_map, valid_mask)
-                height_losses.append(float(height_loss))
-                height_losses_weighted.append(float(self.height_loss_weight * height_loss))
+                height_losses.append(float(height_loss.detach()))
+                height_losses_weighted.append(
+                    float((self.height_loss_weight * height_loss).detach())
+                )
                 loss = loss + self.height_loss_weight * height_loss
 
             total_loss = loss if total_loss is None else total_loss + loss
@@ -511,15 +1098,72 @@ class RSPointmapHeightLoss(nn.Module):
 
         details = {}
         if pointmap_losses:
+            if self.pointmap_top_n_percent > 0:
+                details[f'rs_pointmap_bot{self.pointmap_bottom_n_percent:g}%_loss'] = (
+                    sum(pointmap_losses) / len(pointmap_losses)
+                )
             details['rs_pointmap_loss'] = sum(pointmap_losses) / len(pointmap_losses)
             details['rs_pointmap_loss_weighted'] = sum(pointmap_losses_weighted) / len(pointmap_losses_weighted)
             details['rs_pointmap_loss_raw_metric'] = sum(pointmap_raw_losses) / len(pointmap_raw_losses)
+        if pointmap_raw_losses_weighted:
+            details['rs_pointmap_loss_raw_weighted'] = (
+                sum(pointmap_raw_losses_weighted) / len(pointmap_raw_losses_weighted)
+            )
         if pred_pointmap_norm_factors:
             details['rs_pointmap_pred_norm_factor'] = sum(pred_pointmap_norm_factors) / len(pred_pointmap_norm_factors)
             details['rs_pointmap_gt_norm_factor'] = sum(gt_pointmap_norm_factors) / len(gt_pointmap_norm_factors)
         if height_losses:
             details['rs_height_loss'] = sum(height_losses) / len(height_losses)
             details['rs_height_loss_weighted'] = sum(height_losses_weighted) / len(height_losses_weighted)
+        if pointmap_gradient_losses:
+            details['rs_pointmap_gradient_loss'] = sum(pointmap_gradient_losses) / len(pointmap_gradient_losses)
+            details['rs_pointmap_gradient_loss_weighted'] = (
+                sum(pointmap_gradient_losses_weighted) / len(pointmap_gradient_losses_weighted)
+            )
+        if pointmap_z_distribution_losses:
+            details['rs_pointmap_z_distribution_loss'] = (
+                sum(pointmap_z_distribution_losses) / len(pointmap_z_distribution_losses)
+            )
+            details['rs_pointmap_z_distribution_loss_weighted'] = (
+                sum(pointmap_z_distribution_losses_weighted) / len(pointmap_z_distribution_losses_weighted)
+            )
+            for key, values in pointmap_z_distribution_detail_values.items():
+                if values:
+                    details[f'rs_pointmap_z_distribution_{key}'] = sum(values) / len(values)
+        if pointmap_high_z_losses:
+            details['rs_pointmap_high_z_loss'] = (
+                sum(pointmap_high_z_losses) / len(pointmap_high_z_losses)
+            )
+            details['rs_pointmap_high_z_loss_weighted'] = (
+                sum(pointmap_high_z_losses_weighted) / len(pointmap_high_z_losses_weighted)
+            )
+            for key, values in pointmap_high_z_detail_values.items():
+                if values:
+                    details[f'rs_pointmap_high_z_{key}'] = sum(values) / len(values)
+        if moge_prior_losses:
+            details['rs_moge_prior_loss_weighted'] = (
+                sum(moge_prior_losses) / len(moge_prior_losses)
+            )
+            for key, values in moge_prior_detail_values.items():
+                if values:
+                    details[key] = sum(values) / len(values)
+        if pointmap_moge_height_losses:
+            details['rs_pointmap_moge_height_loss_weighted'] = (
+                sum(pointmap_moge_height_losses) / len(pointmap_moge_height_losses)
+            )
+            for key, values in pointmap_moge_height_detail_values.items():
+                if values:
+                    details[key] = sum(values) / len(values)
+        if overlap_pointmap_losses:
+            details['rs_overlap_pointmap_loss'] = (
+                sum(overlap_pointmap_losses) / len(overlap_pointmap_losses)
+            )
+            details['rs_overlap_pointmap_loss_weighted'] = (
+                sum(overlap_pointmap_losses_weighted) / len(overlap_pointmap_losses_weighted)
+            )
+        for key, values in overlap_detail_values.items():
+            if values:
+                details[key] = sum(values) / len(values)
 
         return total_loss, details
 
@@ -536,10 +1180,15 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         projection_offset_dir_loss_weight=0.0,
         projection_global_dir_loss_weight=0.0,
         projection_global_slope_loss_weight=0.0,
+        projection_global_vector_loss_weight=0.0,
         projection_consistency_loss_weight=0.0,
         projection_global_dir_from_offset=False,
+        projection_global_target_from_pointmap=False,
+        projection_global_target_min_rel_height=0.0,
+        projection_global_target_min_pixels=64,
         projection_rel_height_scale=1.0,
         projection_rel_height_scale_mode="fixed",
+        projection_rel_height_scale_quantile=0.9,
         projection_rel_height_clip=0.0,
         projection_rel_height_min=0.0,
         projection_rel_height_use_tilt_mask=False,
@@ -561,6 +1210,14 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         projection_rel_height_low_overpred_loss_weight=0.0,
         projection_rel_height_low_overpred_start_epoch=0.0,
         projection_rel_height_low_overpred_ramp_epochs=0.0,
+        projection_dense_rel_height_loss_weight=0.0,
+        projection_dense_rel_height_exclude_hard_mask=True,
+        projection_dense_rel_height_low_weight=0.25,
+        projection_dense_rel_height_low_quantile=0.5,
+        projection_dense_rel_height_min_abs_quantile=0.0,
+        projection_dense_global_offset_loss_weight=0.0,
+        projection_dense_global_offset_low_weight=0.5,
+        projection_dense_global_offset_low_quantile=0.5,
         projection_offset_target_weight=0.0,
         projection_offset_target_weight_gamma=1.0,
         projection_offset_balanced_loss_weight=0.0,
@@ -570,6 +1227,25 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         projection_offset_low_overpred_loss_weight=0.0,
         projection_offset_low_overpred_start_epoch=0.0,
         projection_offset_low_overpred_ramp_epochs=0.0,
+        projection_moge_gradient_loss_weight=0.0,
+        projection_moge_edge_loss_weight=0.0,
+        projection_moge_height_loss_weight=0.0,
+        projection_moge_height_prior_min_weight=0.02,
+        projection_moge_height_ground_quantile=0.2,
+        projection_moge_height_exclude_hard_mask=True,
+        projection_moge_prior_min_weight=0.02,
+        projection_moge_edge_temperature=10.0,
+        projection_moge_edge_threshold=0.5,
+        projection_reconstruct_offset_to_gt_loss_weight=0.0,
+        projection_reconstruct_global_to_gt_loss_weight=0.0,
+        projection_reconstruct_offset_to_point_detach_loss_weight=0.0,
+        projection_reconstruct_global_to_point_detach_loss_weight=0.0,
+        projection_reconstruct_to_gt_use_pointmap_norm=False,
+        projection_reconstruct_to_gt_high_z_quantile=0.0,
+        projection_reconstruct_to_gt_high_z_min_pixels=16,
+        projection_grid_global_to_gt_loss_weight=0.0,
+        projection_grid_global_to_gt_high_z_quantile=0.0,
+        projection_grid_global_to_gt_high_z_min_pixels=16,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -579,14 +1255,24 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         self.projection_offset_dir_loss_weight = float(projection_offset_dir_loss_weight)
         self.projection_global_dir_loss_weight = float(projection_global_dir_loss_weight)
         self.projection_global_slope_loss_weight = float(projection_global_slope_loss_weight)
+        self.projection_global_vector_loss_weight = float(projection_global_vector_loss_weight)
         self.projection_consistency_loss_weight = float(projection_consistency_loss_weight)
         self.projection_global_dir_from_offset = bool(projection_global_dir_from_offset)
+        self.projection_global_target_from_pointmap = bool(projection_global_target_from_pointmap)
+        self.projection_global_target_min_rel_height = float(projection_global_target_min_rel_height)
+        self.projection_global_target_min_pixels = int(projection_global_target_min_pixels)
         self.projection_rel_height_scale = float(projection_rel_height_scale)
         self.projection_rel_height_scale_mode = str(projection_rel_height_scale_mode)
-        if self.projection_rel_height_scale_mode not in {"fixed", "gt_pointmap_norm"}:
+        if self.projection_rel_height_scale_mode not in {"fixed", "gt_pointmap_norm", "valid_quantile"}:
             raise ValueError(
-                "projection_rel_height_scale_mode must be 'fixed' or 'gt_pointmap_norm', "
+                "projection_rel_height_scale_mode must be 'fixed', 'gt_pointmap_norm', or 'valid_quantile', "
                 f"got {projection_rel_height_scale_mode!r}"
+            )
+        self.projection_rel_height_scale_quantile = float(projection_rel_height_scale_quantile)
+        if not (0.0 < self.projection_rel_height_scale_quantile <= 1.0):
+            raise ValueError(
+                "projection_rel_height_scale_quantile must satisfy 0 < q <= 1, "
+                f"got {projection_rel_height_scale_quantile!r}"
             )
         self.projection_rel_height_clip = float(projection_rel_height_clip)
         self.projection_rel_height_min = float(projection_rel_height_min)
@@ -611,6 +1297,45 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         self.projection_rel_height_low_overpred_loss_weight = float(projection_rel_height_low_overpred_loss_weight)
         self.projection_rel_height_low_overpred_start_epoch = float(projection_rel_height_low_overpred_start_epoch)
         self.projection_rel_height_low_overpred_ramp_epochs = float(projection_rel_height_low_overpred_ramp_epochs)
+        self.projection_dense_rel_height_loss_weight = float(projection_dense_rel_height_loss_weight)
+        self.projection_dense_rel_height_exclude_hard_mask = bool(projection_dense_rel_height_exclude_hard_mask)
+        self.projection_dense_rel_height_low_weight = float(projection_dense_rel_height_low_weight)
+        self.projection_dense_rel_height_low_quantile = float(projection_dense_rel_height_low_quantile)
+        self.projection_dense_rel_height_min_abs_quantile = float(projection_dense_rel_height_min_abs_quantile)
+        self.projection_dense_global_offset_loss_weight = float(
+            projection_dense_global_offset_loss_weight
+        )
+        self.projection_dense_global_offset_low_weight = float(
+            projection_dense_global_offset_low_weight
+        )
+        self.projection_dense_global_offset_low_quantile = float(
+            projection_dense_global_offset_low_quantile
+        )
+        if not (0.0 <= self.projection_dense_rel_height_low_weight <= 1.0):
+            raise ValueError(
+                "projection_dense_rel_height_low_weight must satisfy 0 <= w <= 1, "
+                f"got {projection_dense_rel_height_low_weight!r}"
+            )
+        if not (0.0 <= self.projection_dense_global_offset_low_weight <= 1.0):
+            raise ValueError(
+                "projection_dense_global_offset_low_weight must satisfy 0 <= w <= 1, "
+                f"got {projection_dense_global_offset_low_weight!r}"
+            )
+        if not (0.0 < self.projection_dense_rel_height_low_quantile < 1.0):
+            raise ValueError(
+                "projection_dense_rel_height_low_quantile must satisfy 0 < q < 1, "
+                f"got {projection_dense_rel_height_low_quantile!r}"
+            )
+        if not (0.0 < self.projection_dense_global_offset_low_quantile < 1.0):
+            raise ValueError(
+                "projection_dense_global_offset_low_quantile must satisfy 0 < q < 1, "
+                f"got {projection_dense_global_offset_low_quantile!r}"
+            )
+        if not (0.0 <= self.projection_dense_rel_height_min_abs_quantile < 1.0):
+            raise ValueError(
+                "projection_dense_rel_height_min_abs_quantile must satisfy 0 <= q < 1, "
+                f"got {projection_dense_rel_height_min_abs_quantile!r}"
+            )
         self.projection_offset_target_weight = float(projection_offset_target_weight)
         self.projection_offset_target_weight_gamma = float(projection_offset_target_weight_gamma)
         self.projection_offset_balanced_loss_weight = float(projection_offset_balanced_loss_weight)
@@ -622,6 +1347,60 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         self.projection_offset_low_overpred_loss_weight = float(projection_offset_low_overpred_loss_weight)
         self.projection_offset_low_overpred_start_epoch = float(projection_offset_low_overpred_start_epoch)
         self.projection_offset_low_overpred_ramp_epochs = float(projection_offset_low_overpred_ramp_epochs)
+        self.projection_moge_gradient_loss_weight = float(projection_moge_gradient_loss_weight)
+        self.projection_moge_edge_loss_weight = float(projection_moge_edge_loss_weight)
+        self.projection_moge_height_loss_weight = float(projection_moge_height_loss_weight)
+        self.projection_moge_height_prior_min_weight = float(projection_moge_height_prior_min_weight)
+        self.projection_moge_height_ground_quantile = float(projection_moge_height_ground_quantile)
+        if not (0.0 <= self.projection_moge_height_ground_quantile <= 1.0):
+            raise ValueError(
+                "projection_moge_height_ground_quantile must satisfy 0 <= q <= 1, "
+                f"got {projection_moge_height_ground_quantile!r}"
+            )
+        self.projection_moge_height_exclude_hard_mask = bool(projection_moge_height_exclude_hard_mask)
+        self.projection_moge_prior_min_weight = float(projection_moge_prior_min_weight)
+        self.projection_moge_edge_temperature = float(projection_moge_edge_temperature)
+        self.projection_moge_edge_threshold = float(projection_moge_edge_threshold)
+        self.projection_reconstruct_offset_to_gt_loss_weight = float(
+            projection_reconstruct_offset_to_gt_loss_weight
+        )
+        self.projection_reconstruct_global_to_gt_loss_weight = float(
+            projection_reconstruct_global_to_gt_loss_weight
+        )
+        self.projection_reconstruct_to_gt_use_pointmap_norm = bool(
+            projection_reconstruct_to_gt_use_pointmap_norm
+        )
+        self.projection_reconstruct_to_gt_high_z_quantile = float(
+            projection_reconstruct_to_gt_high_z_quantile
+        )
+        self.projection_reconstruct_to_gt_high_z_min_pixels = int(
+            projection_reconstruct_to_gt_high_z_min_pixels
+        )
+        if not (0.0 <= self.projection_reconstruct_to_gt_high_z_quantile < 1.0):
+            raise ValueError(
+                "projection_reconstruct_to_gt_high_z_quantile must satisfy 0 <= q < 1, "
+                f"got {projection_reconstruct_to_gt_high_z_quantile!r}"
+            )
+        self.projection_reconstruct_offset_to_point_detach_loss_weight = float(
+            projection_reconstruct_offset_to_point_detach_loss_weight
+        )
+        self.projection_reconstruct_global_to_point_detach_loss_weight = float(
+            projection_reconstruct_global_to_point_detach_loss_weight
+        )
+        self.projection_grid_global_to_gt_loss_weight = float(
+            projection_grid_global_to_gt_loss_weight
+        )
+        self.projection_grid_global_to_gt_high_z_quantile = float(
+            projection_grid_global_to_gt_high_z_quantile
+        )
+        self.projection_grid_global_to_gt_high_z_min_pixels = int(
+            projection_grid_global_to_gt_high_z_min_pixels
+        )
+        if not (0.0 <= self.projection_grid_global_to_gt_high_z_quantile < 1.0):
+            raise ValueError(
+                "projection_grid_global_to_gt_high_z_quantile must satisfy 0 <= q < 1, "
+                f"got {projection_grid_global_to_gt_high_z_quantile!r}"
+            )
 
     @staticmethod
     def _scheduled_weight(base_weight, start_epoch, ramp_epochs, train_epoch):
@@ -670,6 +1449,84 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
                 raise ValueError('offset_gt is required when projection min-magnitude masking is enabled')
             mask = mask & (torch.linalg.norm(offset_gt.float(), dim=-1) >= min_magnitude)
         return mask
+
+    def _projection_reconstruct_points(self, gt, rel_height, offset_xy=None, direction_xy=None, slope=None):
+        if 'remote_projection_projected_xyz_centered' not in gt or 'remote_projection_center_xy' not in gt:
+            return None
+        projected = gt['remote_projection_projected_xyz_centered'].float()
+        center_xy = gt['remote_projection_center_xy'].float()
+        if center_xy.ndim == 1:
+            center_xy = center_xy.view(1, 1, 1, 2).expand(projected.shape[0], -1, -1, -1)
+        elif center_xy.ndim == 2:
+            center_xy = center_xy.view(center_xy.shape[0], 1, 1, 2)
+        if offset_xy is None:
+            if direction_xy is None or slope is None:
+                raise ValueError('direction_xy and slope are required when offset_xy is not provided')
+            direction_xy = torch.nn.functional.normalize(direction_xy.float(), dim=-1, eps=1e-6)
+            offset_xy = (
+                rel_height.unsqueeze(-1)
+                * slope.float().view(slope.shape[0], 1, 1, 1)
+                * direction_xy.view(direction_xy.shape[0], 1, 1, 2)
+            )
+        recon = projected.clone()
+        recon[..., :2] = projected[..., :2] + center_xy - offset_xy
+        return recon
+
+    @staticmethod
+    def _projection_pixel_grid(shape, device, dtype):
+        batch, height, width = shape
+        if width > 1:
+            xs = torch.linspace(-1.0, 1.0, width, device=device, dtype=dtype)
+        else:
+            xs = torch.zeros(width, device=device, dtype=dtype)
+        if height > 1:
+            ys = torch.linspace(-1.0, 1.0, height, device=device, dtype=dtype)
+        else:
+            ys = torch.zeros(height, device=device, dtype=dtype)
+        yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+        grid = torch.stack([xx, yy], dim=-1)
+        return grid.unsqueeze(0).expand(batch, -1, -1, -1)
+
+    def _projection_reconstruct_grid_global_points(self, rel_height, direction_xy, slope):
+        if rel_height.ndim != 3:
+            return None
+        direction_xy = torch.nn.functional.normalize(direction_xy.float(), dim=-1, eps=1e-6)
+        batch, height, width = rel_height.shape
+        grid_xy = self._projection_pixel_grid(
+            (batch, height, width),
+            rel_height.device,
+            rel_height.dtype,
+        )
+        offset_xy = (
+            rel_height.unsqueeze(-1)
+            * slope.float().view(slope.shape[0], 1, 1, 1).to(dtype=rel_height.dtype)
+            * direction_xy.view(direction_xy.shape[0], 1, 1, 2).to(dtype=rel_height.dtype)
+        )
+        z = rel_height
+        return torch.cat([grid_xy - offset_xy, z.unsqueeze(-1)], dim=-1)
+
+    @staticmethod
+    def _high_z_mask_from_gt_pointmap(gt_pointmap, valid_mask, quantile, min_pixels):
+        if quantile <= 0:
+            return valid_mask, None
+        z = gt_pointmap[..., 2].float()
+        out = torch.zeros_like(valid_mask, dtype=torch.bool)
+        thresholds = []
+        for b in range(z.shape[0]):
+            mask_b = valid_mask[b] & torch.isfinite(z[b])
+            if int(mask_b.sum()) < int(min_pixels):
+                continue
+            threshold = torch.quantile(z[b][mask_b], float(quantile))
+            keep_b = mask_b & (z[b] >= threshold)
+            if int(keep_b.sum()) < int(min_pixels):
+                continue
+            out[b] = keep_b
+            thresholds.append(threshold.detach())
+        if thresholds:
+            threshold_value = torch.stack(thresholds).mean()
+        else:
+            threshold_value = None
+        return out, threshold_value
 
     @staticmethod
     def _broadcast_projection_scale(scale, target):
@@ -878,6 +1735,34 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         if self.projection_rel_height_scale_mode == 'fixed':
             return pred['remote_projection_rel_height_pred'].new_tensor(self.projection_rel_height_scale)
 
+        if self.projection_rel_height_scale_mode == 'valid_quantile':
+            rel_gt = gt['remote_projection_rel_height'].float().abs()
+            mask = base_mask.bool() & torch.isfinite(rel_gt)
+            fallback = pred['remote_projection_rel_height_pred'].new_tensor(
+                self.projection_rel_height_scale
+            ).clamp_min(1e-6)
+            if rel_gt.ndim < 3:
+                if not mask.any():
+                    return fallback
+                return torch.quantile(
+                    rel_gt[mask].float(),
+                    self.projection_rel_height_scale_quantile,
+                ).to(device=fallback.device, dtype=fallback.dtype).clamp_min(1e-6)
+
+            scales = []
+            batch = rel_gt.shape[0]
+            for batch_idx in range(batch):
+                sample_mask = mask[batch_idx]
+                if sample_mask.any():
+                    scale = torch.quantile(
+                        rel_gt[batch_idx][sample_mask].float(),
+                        self.projection_rel_height_scale_quantile,
+                    )
+                    scales.append(scale.to(device=fallback.device, dtype=fallback.dtype).clamp_min(1e-6))
+                else:
+                    scales.append(fallback)
+            return torch.stack(scales, dim=0)
+
         gt_pointmap = gt['remote_pointmap'].float() if 'remote_pointmap' in gt else gt['pts3d'].float()
         pred_pts3d = pred['pts3d'].float()
         norm_mode = self.pointmap_norm_mode
@@ -894,6 +1779,277 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
                 pred_pts3d, gt_pointmap, gt['remote_valid_mask'].bool(), norm_mode
             )
         return gt_norm_factor
+
+    def _projection_moge_prior_loss(self, rel_pred, gt):
+        required = [
+            'remote_moge_grad_xy',
+            'remote_moge_edge_mask',
+            'remote_moge_prior_weight',
+        ]
+        if any(key not in gt for key in required):
+            return rel_pred.new_zeros(()), {
+                'rs_projection_moge_required_present': 0.0,
+                'rs_projection_moge_prior_active_ratio': 0.0,
+            }
+
+        if rel_pred.shape[-2] < 3 or rel_pred.shape[-1] < 3:
+            return rel_pred.new_zeros(()), {
+                'rs_projection_moge_required_present': 1.0,
+                'rs_projection_moge_prior_active_ratio': 0.0,
+            }
+
+        prior_grad = gt['remote_moge_grad_xy'].float()
+        edge_mask = gt['remote_moge_edge_mask'].bool()
+        prior_weight = gt['remote_moge_prior_weight'].float()
+        if 'remote_moge_confidence_mask' in gt:
+            prior_weight = prior_weight * gt['remote_moge_confidence_mask'].float()
+
+        rel = rel_pred.float()
+        pred_dx = 0.5 * (rel[..., 1:-1, 2:] - rel[..., 1:-1, :-2])
+        pred_dy = 0.5 * (rel[..., 2:, 1:-1] - rel[..., :-2, 1:-1])
+        pred_grad = torch.stack([pred_dx, pred_dy], dim=-1)
+        pred_mag = torch.linalg.norm(pred_grad, dim=-1)
+
+        prior_grad_center = prior_grad[..., 1:-1, 1:-1, :]
+        edge_center = edge_mask[..., 1:-1, 1:-1]
+        weight_center = prior_weight[..., 1:-1, 1:-1]
+        prior_mag = torch.linalg.norm(prior_grad_center, dim=-1)
+        finite = (
+            torch.isfinite(pred_grad).all(dim=-1)
+            & torch.isfinite(prior_grad_center).all(dim=-1)
+            & torch.isfinite(weight_center)
+            & torch.isfinite(pred_mag)
+            & torch.isfinite(prior_mag)
+        )
+        active = (weight_center > self.projection_moge_prior_min_weight) & finite
+
+        details = {
+            'rs_projection_moge_required_present': 1.0,
+            'rs_projection_moge_prior_weight_positive_ratio': float((prior_weight > 0).float().mean().detach()),
+            'rs_projection_moge_prior_active_ratio': float(active.float().mean().detach()),
+        }
+
+        total = rel_pred.new_zeros(())
+        if active.any() and self.projection_moge_gradient_loss_weight > 0:
+            pred_dir = torch.nn.functional.normalize(pred_grad, dim=-1, eps=1e-6)
+            prior_dir = torch.nn.functional.normalize(prior_grad_center, dim=-1, eps=1e-6)
+            grad_loss_map = 1.0 - (pred_dir * prior_dir).sum(dim=-1).clamp(-1.0, 1.0)
+            grad_loss = self._weighted_masked_mean(grad_loss_map, active, weight_center)
+            total = total + self.projection_moge_gradient_loss_weight * grad_loss
+            details['rs_projection_moge_gradient_loss'] = float(grad_loss.detach())
+            details['rs_projection_moge_gradient_loss_weighted'] = float(
+                (self.projection_moge_gradient_loss_weight * grad_loss).detach()
+            )
+            details['rs_projection_moge_prior_weight_mean'] = float(weight_center[active].mean().detach())
+
+        if active.any() and self.projection_moge_edge_loss_weight > 0:
+            edge_target = edge_center.float()
+            mean_mag = self._masked_mean(pred_mag.detach(), active).detach().clamp_min(1e-6)
+            pred_mag_norm = (pred_mag / mean_mag).clamp(max=10.0)
+            logits = self.projection_moge_edge_temperature * (
+                pred_mag_norm - self.projection_moge_edge_threshold
+            )
+            edge_loss_map = torch.nn.functional.binary_cross_entropy_with_logits(
+                logits,
+                edge_target,
+                reduction='none',
+            )
+            edge_loss = self._weighted_masked_mean(edge_loss_map, active, weight_center)
+            total = total + self.projection_moge_edge_loss_weight * edge_loss
+            details['rs_projection_moge_edge_loss'] = float(edge_loss.detach())
+            details['rs_projection_moge_edge_loss_weighted'] = float(
+                (self.projection_moge_edge_loss_weight * edge_loss).detach()
+            )
+            details['rs_projection_moge_edge_ratio'] = float(edge_target[active].mean().detach())
+
+        return total, details
+
+    def _projection_moge_height_loss(self, rel_pred_for_loss, rel_height_scale, gt, hard_mask):
+        required = [
+            'remote_moge_aligned_height',
+            'remote_moge_prior_weight',
+        ]
+        if any(key not in gt for key in required):
+            return rel_pred_for_loss.new_zeros(()), {
+                'rs_projection_moge_height_required_present': 0.0,
+                'rs_projection_moge_height_active_ratio': 0.0,
+            }
+
+        aligned_height = gt['remote_moge_aligned_height'].float()
+        prior_weight = gt['remote_moge_prior_weight'].float()
+        if 'remote_moge_confidence_mask' in gt:
+            prior_weight = prior_weight * gt['remote_moge_confidence_mask'].float()
+
+        finite = (
+            torch.isfinite(aligned_height)
+            & torch.isfinite(prior_weight)
+            & torch.isfinite(rel_pred_for_loss)
+            & torch.isfinite(rel_height_scale)
+        )
+        base_mask = (prior_weight > self.projection_moge_height_prior_min_weight) & finite
+        if self.projection_moge_height_exclude_hard_mask:
+            base_mask = base_mask & (~hard_mask.bool())
+
+        details = {
+            'rs_projection_moge_height_required_present': 1.0,
+            'rs_projection_moge_height_weight_positive_ratio': float((prior_weight > 0).float().mean().detach()),
+            'rs_projection_moge_height_active_ratio': float(base_mask.float().mean().detach()),
+        }
+        if not base_mask.any():
+            return rel_pred_for_loss.new_zeros(()), details
+
+        target = torch.zeros_like(aligned_height)
+        batch = aligned_height.shape[0] if aligned_height.ndim >= 3 else 1
+        if aligned_height.ndim < 3:
+            height_values = aligned_height[base_mask]
+            ground = torch.quantile(height_values.float(), self.projection_moge_height_ground_quantile)
+            target = (aligned_height - ground).clamp_min(0.0)
+        else:
+            targets = []
+            for batch_idx in range(batch):
+                sample_height = aligned_height[batch_idx]
+                sample_mask = base_mask[batch_idx]
+                if sample_mask.any():
+                    ground = torch.quantile(
+                        sample_height[sample_mask].float(),
+                        self.projection_moge_height_ground_quantile,
+                    )
+                    targets.append((sample_height - ground).clamp_min(0.0))
+                else:
+                    targets.append(torch.zeros_like(sample_height))
+            target = torch.stack(targets, dim=0)
+
+        target_for_loss = target / rel_height_scale.clamp_min(1e-6)
+        if self.projection_rel_height_clip > 0:
+            target_for_loss = target_for_loss.clamp(
+                -self.projection_rel_height_clip,
+                self.projection_rel_height_clip,
+            )
+        pred_for_loss = rel_pred_for_loss.abs()
+        loss_map = (pred_for_loss - target_for_loss).abs()
+        loss = self._weighted_masked_mean(loss_map, base_mask, prior_weight)
+        details['rs_projection_moge_height_loss'] = float(loss.detach())
+        details['rs_projection_moge_height_pred_mean'] = float(
+            self._masked_mean(pred_for_loss, base_mask).detach()
+        )
+        details['rs_projection_moge_height_target_mean'] = float(
+            self._masked_mean(target_for_loss, base_mask).detach()
+        )
+        details['rs_projection_moge_height_weight_mean'] = float(
+            self._masked_mean(prior_weight, base_mask).detach()
+        )
+        return self.projection_moge_height_loss_weight * loss, details
+
+    def _dense_pointmap_rel_height_target(self, gt, rel_gt, hard_mask):
+        if 'remote_pointmap' in gt:
+            pointmap = gt['remote_pointmap'].float()
+        elif 'pts3d' in gt:
+            pointmap = gt['pts3d'].float()
+        else:
+            return None, None, {}
+        if 'remote_valid_mask' in gt:
+            point_valid = gt['remote_valid_mask'].bool()
+        elif 'valid_mask' in gt:
+            point_valid = gt['valid_mask'].bool()
+        else:
+            point_valid = torch.isfinite(pointmap).all(dim=-1)
+        point_valid = point_valid & torch.isfinite(pointmap).all(dim=-1)
+        common = point_valid & hard_mask.bool() & torch.isfinite(rel_gt)
+        details = {
+            'rs_projection_dense_rel_height_point_valid_ratio': float(point_valid.float().mean().detach()),
+            'rs_projection_dense_rel_height_common_ratio': float(common.float().mean().detach()),
+        }
+        if not common.any():
+            return None, None, details
+
+        z = pointmap[..., 2].float()
+        dense_targets = []
+        dense_masks = []
+        if z.ndim < 3:
+            ground = torch.median((z - rel_gt.float())[common])
+            dense_target = z - ground
+            dense_mask = point_valid
+            if self.projection_dense_rel_height_exclude_hard_mask:
+                dense_mask = dense_mask & (~hard_mask.bool())
+            return dense_target, dense_mask & torch.isfinite(dense_target), details
+
+        for batch_idx in range(z.shape[0]):
+            sample_common = common[batch_idx]
+            if sample_common.any():
+                ground = torch.median((z[batch_idx] - rel_gt[batch_idx].float())[sample_common])
+                sample_target = z[batch_idx] - ground
+                sample_mask = point_valid[batch_idx]
+                if self.projection_dense_rel_height_exclude_hard_mask:
+                    sample_mask = sample_mask & (~hard_mask[batch_idx].bool())
+                sample_mask = sample_mask & torch.isfinite(sample_target)
+            else:
+                sample_target = torch.zeros_like(z[batch_idx])
+                sample_mask = torch.zeros_like(point_valid[batch_idx], dtype=torch.bool)
+            dense_targets.append(sample_target)
+            dense_masks.append(sample_mask)
+        return torch.stack(dense_targets, dim=0), torch.stack(dense_masks, dim=0), details
+
+    def _fit_global_projection_vector_from_pointmap(self, gt, rel_gt, base_mask):
+        required = ['remote_projection_projected_xyz_centered', 'remote_projection_center_xy']
+        if any(key not in gt for key in required):
+            return None, None, {}
+        if 'remote_pointmap' in gt:
+            pointmap = gt['remote_pointmap'].float()
+        elif 'pts3d' in gt:
+            pointmap = gt['pts3d'].float()
+        else:
+            return None, None, {}
+
+        projected = gt['remote_projection_projected_xyz_centered'].float()
+        center_xy = gt['remote_projection_center_xy'].float()
+        if center_xy.ndim == 1:
+            center_xy = center_xy.view(1, 1, 1, 2).expand(projected.shape[0], -1, -1, -1)
+        elif center_xy.ndim == 2:
+            center_xy = center_xy.view(center_xy.shape[0], 1, 1, 2)
+
+        fit_mask = (
+            base_mask.bool()
+            & torch.isfinite(pointmap).all(dim=-1)
+            & torch.isfinite(projected).all(dim=-1)
+            & torch.isfinite(rel_gt)
+        )
+        if 'remote_valid_mask' in gt:
+            fit_mask = fit_mask & gt['remote_valid_mask'].bool()
+        if self.projection_global_target_min_rel_height > 0:
+            fit_mask = fit_mask & (rel_gt.abs() >= self.projection_global_target_min_rel_height)
+
+        offset_xy = projected[..., :2] + center_xy - pointmap[..., :2]
+        vectors = []
+        valid_flags = []
+        for batch_idx in range(rel_gt.shape[0]):
+            sample_mask = fit_mask[batch_idx]
+            if int(sample_mask.sum()) < self.projection_global_target_min_pixels:
+                vectors.append(rel_gt.new_zeros(2))
+                valid_flags.append(False)
+                continue
+            sample_rel = rel_gt[batch_idx][sample_mask].float()
+            sample_offset = offset_xy[batch_idx][sample_mask].float()
+            denom = (sample_rel * sample_rel).sum().clamp_min(1e-6)
+            vector = (sample_rel.unsqueeze(-1) * sample_offset).sum(dim=0) / denom
+            if not torch.isfinite(vector).all():
+                vectors.append(rel_gt.new_zeros(2))
+                valid_flags.append(False)
+                continue
+            vectors.append(vector.to(dtype=rel_gt.dtype))
+            valid_flags.append(True)
+
+        vector = torch.stack(vectors, dim=0)
+        valid = torch.tensor(valid_flags, device=rel_gt.device, dtype=torch.bool)
+        slope = vector.norm(dim=-1, keepdim=True)
+        direction = torch.nn.functional.normalize(vector, dim=-1, eps=1e-6)
+        details = {
+            'rs_projection_global_target_pointmap_valid_ratio': float(fit_mask.float().mean().detach()),
+            'rs_projection_global_target_pointmap_valid_batch_ratio': float(valid.float().mean().detach()),
+            'rs_projection_global_target_pointmap_slope_mean': float(
+                slope[valid].mean().detach() if valid.any() else slope.new_zeros(())
+            ),
+        }
+        return direction, slope, details
 
     def _projection_aux_loss_one(self, gt, pred, **kwargs):
         required_pred = [
@@ -918,6 +2074,8 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
                 self.projection_rel_height_contrast_loss_weight,
                 self.projection_rel_height_bucket_mean_loss_weight,
                 self.projection_rel_height_low_overpred_loss_weight,
+                self.projection_dense_rel_height_loss_weight,
+                self.projection_dense_global_offset_loss_weight,
                 self.projection_offset_loss_weight,
                 self.projection_offset_balanced_loss_weight,
                 self.projection_offset_contrast_loss_weight,
@@ -927,11 +2085,39 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
                 self.projection_offset_dir_loss_weight,
                 self.projection_global_dir_loss_weight,
                 self.projection_global_slope_loss_weight,
+                self.projection_global_vector_loss_weight,
                 self.projection_consistency_loss_weight,
+                self.projection_moge_gradient_loss_weight,
+                self.projection_moge_edge_loss_weight,
+                self.projection_moge_height_loss_weight,
+                self.projection_reconstruct_offset_to_gt_loss_weight,
+                self.projection_reconstruct_global_to_gt_loss_weight,
+                self.projection_reconstruct_offset_to_point_detach_loss_weight,
+                self.projection_reconstruct_global_to_point_detach_loss_weight,
+                self.projection_grid_global_to_gt_loss_weight,
             ]
         )
         missing_pred = [key for key in required_pred if key not in pred]
         missing_gt = [key for key in required_gt if key not in gt]
+        reconstruct_weight_active = (
+            self.projection_reconstruct_offset_to_gt_loss_weight > 0
+            or self.projection_reconstruct_global_to_gt_loss_weight > 0
+            or self.projection_reconstruct_offset_to_point_detach_loss_weight > 0
+            or self.projection_reconstruct_global_to_point_detach_loss_weight > 0
+        )
+        grid_global_weight_active = self.projection_grid_global_to_gt_loss_weight > 0
+        if reconstruct_weight_active:
+            for key in ['remote_projection_projected_xyz_centered', 'remote_projection_center_xy']:
+                if key not in gt:
+                    missing_gt.append(key)
+            if (
+                self.projection_reconstruct_offset_to_point_detach_loss_weight > 0
+                or self.projection_reconstruct_global_to_point_detach_loss_weight > 0
+            ) and 'pts3d' not in pred:
+                missing_pred.append('pts3d')
+        if grid_global_weight_active:
+            if 'remote_pointmap' not in gt and 'pts3d' not in gt:
+                missing_gt.append('remote_pointmap/pts3d')
         if missing_pred or missing_gt:
             if active_weight:
                 raise ValueError(
@@ -961,6 +2147,25 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
         finite_mask = self._finite_mask(rel_gt, offset_gt, rel_pred, offset_pred)
         base_mask = valid_mask & finite_mask
         global_offset_mask = self._projection_mask(gt, 'offset', base_mask, offset_gt=offset_gt)
+        if self.projection_global_target_from_pointmap:
+            fit_dir_gt, fit_slope_gt, fit_details = self._fit_global_projection_vector_from_pointmap(
+                gt,
+                rel_gt,
+                base_mask,
+            )
+            details_from_fit = fit_details
+            if fit_dir_gt is not None and fit_slope_gt is not None:
+                fit_valid = fit_slope_gt.squeeze(-1) > 1e-8
+                if fit_valid.any():
+                    dir_gt = torch.where(fit_valid.unsqueeze(-1), fit_dir_gt, dir_gt)
+                    slope_gt = torch.where(fit_valid.unsqueeze(-1), fit_slope_gt, slope_gt)
+            else:
+                details_from_fit = {
+                    'rs_projection_global_target_pointmap_valid_ratio': 0.0,
+                    'rs_projection_global_target_pointmap_valid_batch_ratio': 0.0,
+                }
+        else:
+            details_from_fit = {}
         dir_pred_for_global = dir_pred
         if self.projection_global_dir_from_offset:
             mask_f = global_offset_mask.unsqueeze(-1).float()
@@ -989,6 +2194,7 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
 
         total = None
         details = {}
+        details.update(details_from_fit)
 
         def add_loss(name, value, weight):
             nonlocal total
@@ -1089,6 +2295,161 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             details['rs_projection_rel_height_affine_scale_mean'] = float(affine_scale)
             details['rs_projection_rel_height_affine_shift_mean'] = float(affine_shift)
             details['rs_projection_rel_height_affine_pred_abs_mean'] = float(affine_pred_abs)
+
+        dense_gt = None
+        dense_mask = None
+        if (
+            self.projection_dense_rel_height_loss_weight > 0
+            or self.projection_dense_global_offset_loss_weight > 0
+        ):
+            dense_gt, dense_mask, dense_details = self._dense_pointmap_rel_height_target(
+                gt,
+                rel_gt,
+                rel_height_mask,
+            )
+            details.update(dense_details)
+        if self.projection_dense_rel_height_loss_weight > 0:
+            if dense_gt is not None and dense_mask is not None and dense_mask.any():
+                dense_gt_for_loss = dense_gt / rel_height_scale
+                if self.projection_rel_height_clip > 0:
+                    dense_gt_for_loss = dense_gt_for_loss.clamp(
+                        -self.projection_rel_height_clip,
+                        self.projection_rel_height_clip,
+                    )
+                dense_loss_map = (rel_pred_for_loss - dense_gt_for_loss).abs()
+                dense_weight = torch.ones_like(dense_gt_for_loss)
+                if self.projection_dense_rel_height_min_abs_quantile > 0.0:
+                    min_abs_q = self._masked_quantile(
+                        dense_gt_for_loss.abs(),
+                        dense_mask,
+                        self.projection_dense_rel_height_min_abs_quantile,
+                    )
+                    if min_abs_q is not None:
+                        dense_mask = dense_mask & (dense_gt_for_loss.abs() >= min_abs_q)
+                        details['rs_projection_dense_rel_height_min_abs_q'] = float(min_abs_q.detach())
+                        details['rs_projection_dense_rel_height_high_mask_ratio'] = float(
+                            dense_mask.float().mean().detach()
+                        )
+                if dense_mask.any():
+                    low_q = self._masked_quantile(
+                        dense_gt_for_loss.abs(),
+                        dense_mask,
+                        self.projection_dense_rel_height_low_quantile,
+                    )
+                    if low_q is not None and self.projection_dense_rel_height_low_weight < 1.0:
+                        low_mask = dense_mask & (dense_gt_for_loss.abs() < low_q)
+                        dense_weight = torch.where(
+                            low_mask,
+                            dense_weight.new_full((), self.projection_dense_rel_height_low_weight),
+                            dense_weight,
+                        )
+                        details['rs_projection_dense_rel_height_low_q'] = float(low_q.detach())
+                        details['rs_projection_dense_rel_height_low_ratio'] = float(
+                            low_mask.float().mean().detach()
+                        )
+                    dense_loss = self._weighted_masked_mean(dense_loss_map, dense_mask, dense_weight)
+                    add_loss(
+                        'dense_rel_height',
+                        dense_loss,
+                        self.projection_dense_rel_height_loss_weight,
+                    )
+                    details['rs_projection_dense_rel_height_mask_ratio'] = float(
+                        dense_mask.float().mean().detach()
+                    )
+                    details['rs_projection_dense_rel_height_weight_mean'] = float(
+                        self._masked_mean(dense_weight, dense_mask).detach()
+                    )
+                    details['rs_projection_dense_rel_height_pred_loss_abs_mean'] = float(
+                        self._masked_mean(rel_pred_for_loss.abs(), dense_mask).detach()
+                    )
+                    details['rs_projection_dense_rel_height_gt_loss_abs_mean'] = float(
+                        self._masked_mean(dense_gt_for_loss.abs(), dense_mask).detach()
+                    )
+                else:
+                    details['rs_projection_dense_rel_height_mask_ratio'] = 0.0
+            else:
+                details['rs_projection_dense_rel_height_mask_ratio'] = 0.0
+
+        if self.projection_dense_global_offset_loss_weight > 0:
+            if dense_gt is not None and dense_mask is not None and dense_mask.any():
+                dense_offset_world = (
+                    dense_gt.unsqueeze(-1)
+                    * slope_gt.view(slope_gt.shape[0], 1, 1, -1)[..., :1]
+                    * dir_gt.view(dir_gt.shape[0], 1, 1, -1)
+                )
+                dense_offset_for_loss = dense_offset_world / self.projection_offset_scale
+                dense_offset_loss_map = (
+                    offset_pred_for_loss - dense_offset_for_loss
+                ).abs().mean(dim=-1)
+                dense_offset_weight = torch.ones_like(dense_offset_loss_map)
+                dense_offset_mag = torch.linalg.norm(dense_offset_for_loss, dim=-1)
+                low_q = self._masked_quantile(
+                    dense_offset_mag,
+                    dense_mask,
+                    self.projection_dense_global_offset_low_quantile,
+                )
+                if low_q is not None and self.projection_dense_global_offset_low_weight < 1.0:
+                    low_mask = dense_mask & (dense_offset_mag < low_q)
+                    dense_offset_weight = torch.where(
+                        low_mask,
+                        dense_offset_weight.new_full(
+                            (), self.projection_dense_global_offset_low_weight
+                        ),
+                        dense_offset_weight,
+                    )
+                    details['rs_projection_dense_global_offset_low_q'] = float(low_q.detach())
+                    details['rs_projection_dense_global_offset_low_ratio'] = float(
+                        low_mask.float().mean().detach()
+                    )
+                dense_offset_loss = self._weighted_masked_mean(
+                    dense_offset_loss_map,
+                    dense_mask,
+                    dense_offset_weight,
+                )
+                add_loss(
+                    'dense_global_offset',
+                    dense_offset_loss,
+                    self.projection_dense_global_offset_loss_weight,
+                )
+                details['rs_projection_dense_global_offset_mask_ratio'] = float(
+                    dense_mask.float().mean().detach()
+                )
+                details['rs_projection_dense_global_offset_weight_mean'] = float(
+                    self._masked_mean(dense_offset_weight, dense_mask).detach()
+                )
+                details['rs_projection_dense_global_offset_pred_norm_mean'] = float(
+                    self._masked_mean(
+                        torch.linalg.norm(offset_pred_for_loss, dim=-1),
+                        dense_mask,
+                    ).detach()
+                )
+                details['rs_projection_dense_global_offset_gt_norm_mean'] = float(
+                    self._masked_mean(dense_offset_mag, dense_mask).detach()
+                )
+            else:
+                details['rs_projection_dense_global_offset_mask_ratio'] = 0.0
+
+        if self.projection_moge_gradient_loss_weight > 0 or self.projection_moge_edge_loss_weight > 0:
+            projection_moge_loss, projection_moge_details = self._projection_moge_prior_loss(
+                rel_pred_for_loss,
+                gt,
+            )
+            total = projection_moge_loss if total is None else total + projection_moge_loss
+            details.update(projection_moge_details)
+            details['rs_projection_moge_prior_loss_weighted'] = float(projection_moge_loss.detach())
+
+        if self.projection_moge_height_loss_weight > 0:
+            projection_moge_height_loss, projection_moge_height_details = self._projection_moge_height_loss(
+                rel_pred_for_loss,
+                rel_height_scale,
+                gt,
+                rel_height_mask,
+            )
+            total = projection_moge_height_loss if total is None else total + projection_moge_height_loss
+            details.update(projection_moge_height_details)
+            details['rs_projection_moge_height_loss_weighted'] = float(
+                projection_moge_height_loss.detach()
+            )
 
         if (
             self.projection_offset_loss_weight > 0
@@ -1224,6 +2585,19 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             slope_loss = (slope_pred - slope_gt).abs().mean()
             add_loss('global_slope', slope_loss, self.projection_global_slope_loss_weight)
 
+        if self.projection_global_vector_loss_weight > 0:
+            global_vec_pred = slope_pred * dir_pred_for_global
+            global_vec_gt = slope_gt * dir_gt
+            global_vec_loss = (global_vec_pred - global_vec_gt).abs().mean()
+            add_loss('global_vector', global_vec_loss, self.projection_global_vector_loss_weight)
+            details['rs_projection_global_vector_loss'] = float(global_vec_loss)
+            details['rs_projection_global_vector_pred_norm'] = float(
+                global_vec_pred.norm(dim=-1).mean()
+            )
+            details['rs_projection_global_vector_gt_norm'] = float(
+                global_vec_gt.norm(dim=-1).mean()
+            )
+
         if self.projection_consistency_loss_weight > 0:
             consistency_mask = self._projection_mask(gt, 'consistency', base_mask, offset_gt=offset_gt)
             rel_for_consistency = rel_pred_for_loss if self.projection_consistency_use_loss_space else rel_pred
@@ -1238,6 +2612,192 @@ class RSPointmapHeightProjectionAuxLoss(RSPointmapHeightLoss):
             )
             add_loss('consistency', consistency_loss, self.projection_consistency_loss_weight)
             details['rs_projection_consistency_mask_ratio'] = float(consistency_mask.float().mean())
+
+        if reconstruct_weight_active:
+            rel_pred_world = rel_pred * rel_height_scale
+            offset_pred_world = offset_pred * self.projection_offset_scale
+            recon_offset = self._projection_reconstruct_points(
+                gt,
+                rel_pred_world,
+                offset_xy=offset_pred_world,
+            )
+            recon_global = self._projection_reconstruct_points(
+                gt,
+                rel_pred_world,
+                direction_xy=dir_pred,
+                slope=slope_pred,
+            )
+            gt_pointmap = gt['remote_pointmap'].float() if 'remote_pointmap' in gt else gt['pts3d'].float()
+            recon_mask = base_mask & self._finite_mask(gt_pointmap)
+            if recon_offset is not None:
+                recon_mask = recon_mask & self._finite_mask(recon_offset)
+            if recon_global is not None:
+                recon_mask = recon_mask & self._finite_mask(recon_global)
+            if 'remote_valid_mask' in gt:
+                recon_mask = recon_mask & gt['remote_valid_mask'].bool()
+            details['rs_projection_reconstruct_mask_ratio'] = float(recon_mask.float().mean())
+            if self.projection_reconstruct_to_gt_high_z_quantile > 0:
+                high_z_mask, high_z_threshold = self._high_z_mask_from_gt_pointmap(
+                    gt_pointmap,
+                    recon_mask,
+                    self.projection_reconstruct_to_gt_high_z_quantile,
+                    self.projection_reconstruct_to_gt_high_z_min_pixels,
+                )
+                recon_mask = recon_mask & high_z_mask
+                details['rs_projection_reconstruct_high_z_mask_ratio'] = float(
+                    recon_mask.float().mean()
+                )
+                if high_z_threshold is not None:
+                    details['rs_projection_reconstruct_high_z_threshold'] = float(
+                        high_z_threshold
+                    )
+
+            def prepare_recon_pair_for_loss(recon_pts, target_pts, mask, log_prefix):
+                if not self.projection_reconstruct_to_gt_use_pointmap_norm:
+                    return recon_pts, target_pts
+                norm_mode = self.pointmap_norm_mode
+                if isinstance(norm_mode, str) and norm_mode.startswith("aerial_"):
+                    norm_mode = norm_mode[len("aerial_") :]
+                recon_for_loss, target_for_loss, recon_norm_factor, target_norm_factor = self._normalize_pair(
+                    recon_pts,
+                    target_pts,
+                    mask,
+                    norm_mode,
+                )
+                if recon_norm_factor is not None:
+                    details[f'{log_prefix}_pred_norm_factor'] = float(
+                        recon_norm_factor.mean()
+                    )
+                    details[f'{log_prefix}_target_norm_factor'] = float(
+                        target_norm_factor.mean()
+                    )
+                return recon_for_loss, target_for_loss
+
+            if self.projection_reconstruct_offset_to_gt_loss_weight > 0 and recon_offset is not None:
+                recon_for_loss, gt_for_loss = prepare_recon_pair_for_loss(
+                    recon_offset,
+                    gt_pointmap,
+                    recon_mask,
+                    'rs_projection_reconstruct_offset_to_gt',
+                )
+                loss_map = (recon_for_loss - gt_for_loss).abs().mean(dim=-1)
+                recon_loss = self._masked_mean(loss_map, recon_mask)
+                add_loss(
+                    'reconstruct_offset_to_gt',
+                    recon_loss,
+                    self.projection_reconstruct_offset_to_gt_loss_weight,
+                )
+            if self.projection_reconstruct_global_to_gt_loss_weight > 0 and recon_global is not None:
+                recon_for_loss, gt_for_loss = prepare_recon_pair_for_loss(
+                    recon_global,
+                    gt_pointmap,
+                    recon_mask,
+                    'rs_projection_reconstruct_global_to_gt',
+                )
+                loss_map = (recon_for_loss - gt_for_loss).abs().mean(dim=-1)
+                recon_loss = self._masked_mean(loss_map, recon_mask)
+                add_loss(
+                    'reconstruct_global_to_gt',
+                    recon_loss,
+                    self.projection_reconstruct_global_to_gt_loss_weight,
+                )
+            if (
+                self.projection_reconstruct_offset_to_point_detach_loss_weight > 0
+                and recon_offset is not None
+                and 'pts3d' in pred
+            ):
+                point_target = pred['pts3d'].float().detach()
+                point_mask = recon_mask & self._finite_mask(point_target)
+                recon_for_loss, point_for_loss = prepare_recon_pair_for_loss(
+                    recon_offset,
+                    point_target,
+                    point_mask,
+                    'rs_projection_reconstruct_offset_to_point_detach',
+                )
+                loss_map = (recon_for_loss - point_for_loss).abs().mean(dim=-1)
+                recon_loss = self._masked_mean(loss_map, point_mask)
+                add_loss(
+                    'reconstruct_offset_to_point_detach',
+                    recon_loss,
+                    self.projection_reconstruct_offset_to_point_detach_loss_weight,
+                )
+            if (
+                self.projection_reconstruct_global_to_point_detach_loss_weight > 0
+                and recon_global is not None
+                and 'pts3d' in pred
+            ):
+                point_target = pred['pts3d'].float().detach()
+                point_mask = recon_mask & self._finite_mask(point_target)
+                recon_for_loss, point_for_loss = prepare_recon_pair_for_loss(
+                    recon_global,
+                    point_target,
+                    point_mask,
+                    'rs_projection_reconstruct_global_to_point_detach',
+                )
+                loss_map = (recon_for_loss - point_for_loss).abs().mean(dim=-1)
+                recon_loss = self._masked_mean(loss_map, point_mask)
+                add_loss(
+                    'reconstruct_global_to_point_detach',
+                    recon_loss,
+                    self.projection_reconstruct_global_to_point_detach_loss_weight,
+                )
+
+        if grid_global_weight_active:
+            gt_pointmap = gt['remote_pointmap'].float() if 'remote_pointmap' in gt else gt['pts3d'].float()
+            grid_recon = self._projection_reconstruct_grid_global_points(
+                rel_pred_for_loss,
+                dir_pred,
+                slope_pred,
+            )
+            grid_mask = base_mask & self._finite_mask(gt_pointmap)
+            if 'remote_valid_mask' in gt:
+                grid_mask = grid_mask & gt['remote_valid_mask'].bool()
+            if grid_recon is not None:
+                grid_mask = grid_mask & self._finite_mask(grid_recon)
+            if self.projection_grid_global_to_gt_high_z_quantile > 0:
+                high_z_mask, high_z_threshold = self._high_z_mask_from_gt_pointmap(
+                    gt_pointmap,
+                    grid_mask,
+                    self.projection_grid_global_to_gt_high_z_quantile,
+                    self.projection_grid_global_to_gt_high_z_min_pixels,
+                )
+                grid_mask = grid_mask & high_z_mask
+                details['rs_projection_grid_global_to_gt_high_z_mask_ratio'] = float(
+                    grid_mask.float().mean()
+                )
+                if high_z_threshold is not None:
+                    details['rs_projection_grid_global_to_gt_high_z_threshold'] = float(
+                        high_z_threshold
+                    )
+            details['rs_projection_grid_global_to_gt_mask_ratio'] = float(
+                grid_mask.float().mean()
+            )
+            if grid_recon is not None and grid_mask.any():
+                norm_mode = self.pointmap_norm_mode
+                if isinstance(norm_mode, str) and norm_mode.startswith("aerial_"):
+                    norm_mode = norm_mode[len("aerial_") :]
+                grid_for_loss, gt_for_loss, grid_norm_factor, gt_norm_factor = self._normalize_pair(
+                    grid_recon,
+                    gt_pointmap,
+                    grid_mask,
+                    norm_mode,
+                )
+                if grid_norm_factor is not None:
+                    details['rs_projection_grid_global_to_gt_pred_norm_factor'] = float(
+                        grid_norm_factor.mean()
+                    )
+                    details['rs_projection_grid_global_to_gt_target_norm_factor'] = float(
+                        gt_norm_factor.mean()
+                    )
+                loss_map = (grid_for_loss - gt_for_loss).abs().mean(dim=-1)
+                grid_loss = self._masked_mean(loss_map, grid_mask)
+            else:
+                grid_loss = rel_pred_for_loss.sum() * 0.0
+            add_loss(
+                'grid_global_to_gt',
+                grid_loss,
+                self.projection_grid_global_to_gt_loss_weight,
+            )
 
         details['rs_projection_global_slope_pred_mean'] = float(slope_pred.mean())
         details['rs_projection_global_slope_gt_mean'] = float(slope_gt.mean())

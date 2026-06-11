@@ -8,7 +8,7 @@ Unified RS-Aerial benchmark.
 
 Current executable scope:
 - Aerial-only metrics on paired scenes
-- RS-only height metrics on paired scenes
+- RS-only height and pointmap metrics on paired scenes
 - Joint aerial+RS forward inference on paired scenes
 - joint_global_pointmaps_abs_rel
 """
@@ -17,8 +17,10 @@ import ast
 import json
 import logging
 import os
+import re
 import sys
 import warnings
+from functools import lru_cache
 from pathlib import Path
 
 import hydra
@@ -156,6 +158,27 @@ def is_raw_vggt_checkpoint(args, model_name):
     return False
 
 
+@lru_cache(maxsize=32)
+def checkpoint_has_key_prefix(checkpoint_path, *prefixes):
+    if not checkpoint_path:
+        return False
+    checkpoint_path = Path(str(checkpoint_path))
+    if not checkpoint_path.is_file():
+        return False
+    try:
+        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    except Exception as exc:
+        log.warning("Failed to inspect checkpoint %s: %s", checkpoint_path, exc)
+        return False
+    state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+    has_prefix = any(
+        any(str(key).startswith(prefix) for prefix in prefixes)
+        for key in state_dict.keys()
+    )
+    del ckpt, state_dict
+    return has_prefix
+
+
 def resolve_vggt_output_heads(args, model_name):
     if model_name != "vggt":
         return None, None
@@ -178,6 +201,100 @@ def resolve_vggt_output_heads(args, model_name):
         remote_head = remote_head or "depth"
 
     return ordinary_head, remote_head
+
+
+def is_vggt_p7_p5b_projection_aux_checkpoint(checkpoint_path):
+    if not checkpoint_path:
+        return False
+    checkpoint_path_lower = str(checkpoint_path).lower()
+    return (
+        "p7_vggt_p5b_shared_norm_projection_aux" in checkpoint_path_lower
+        or "p7_chicago_newyork_full_p5b_joint" in checkpoint_path_lower
+        or "p7_allcities_p5b_joint" in checkpoint_path_lower
+        or "p7_allcities_p5b_parallel_token_aux" in checkpoint_path_lower
+        or "p7_p5b_parallel_token_aux" in checkpoint_path_lower
+        or "p7_proj_moge_aux" in checkpoint_path_lower
+        or "p7_proj_moge_denseheight" in checkpoint_path_lower
+        or "p7_proj_moge_pmheight" in checkpoint_path_lower
+        or "p7_proj_moge_robustpm" in checkpoint_path_lower
+        or "p7_proj_denseh" in checkpoint_path_lower
+        or "p7_proj_headonly" in checkpoint_path_lower
+        or "p7_proj_robust" in checkpoint_path_lower
+        or "p7_proj_tokenres" in checkpoint_path_lower
+        or "p7_proj_views" in checkpoint_path_lower
+        or "overlappm" in checkpoint_path_lower
+        or checkpoint_has_key_prefix(
+            checkpoint_path,
+            "remote_projection_aux_token_",
+            "remote_projection_aux_image_stem.",
+            "remote_projection_aux_head.",
+        )
+    )
+
+
+def resolve_vggt_projection_aux_source(checkpoint_path):
+    checkpoint_path_lower = str(checkpoint_path or "").lower()
+    if (
+        "parallel_token_aux" in checkpoint_path_lower
+        or "parallel_tokens_aux" in checkpoint_path_lower
+        or "private_tokens" in checkpoint_path_lower
+        or "p7_proj_moge_pmheight" in checkpoint_path_lower
+        or "p7_proj_moge_robustpm" in checkpoint_path_lower
+        or "p7_proj_denseh" in checkpoint_path_lower
+        or "p7_proj_headonly" in checkpoint_path_lower
+        or "p7_proj_robust" in checkpoint_path_lower
+        or "p7_proj_tokenres" in checkpoint_path_lower
+        or "p7_proj_views" in checkpoint_path_lower
+        or "overlappm" in checkpoint_path_lower
+        or checkpoint_has_key_prefix(
+            checkpoint_path,
+            "remote_projection_aux_token_",
+        )
+    ):
+        return "tokens"
+    return "pointmap"
+
+
+def is_vggt_p7_token_residual_checkpoint(checkpoint_path):
+    checkpoint_path_lower = str(checkpoint_path or "").lower()
+    return (
+        "p7_proj_tokenres" in checkpoint_path_lower
+        or "tokenres" in checkpoint_path_lower
+        or "token_residual" in checkpoint_path_lower
+        or checkpoint_has_key_prefix(checkpoint_path, "remote_projection_aux_token_residual")
+    )
+
+
+def is_vggt_pre_aggregator_view_type_bias_checkpoint(checkpoint_path):
+    return checkpoint_has_key_prefix(checkpoint_path, "pre_aggregator_view_type_embedding.")
+
+
+def is_vggt_remote_to_aerial_gated_residual_checkpoint(checkpoint_path):
+    return checkpoint_has_key_prefix(
+        checkpoint_path, "remote_to_aerial_gate", "remote_to_aerial_residual."
+    )
+
+
+def resolve_vggt_late_fusion_type(checkpoint_path):
+    checkpoint_path_lower = str(checkpoint_path or "").lower()
+    if checkpoint_has_key_prefix(checkpoint_path, "remote_to_aerial_late_film."):
+        return "film"
+    if checkpoint_has_key_prefix(
+        checkpoint_path,
+        "remote_to_aerial_late_cross_attention.",
+        "remote_to_aerial_late_query_norm.",
+        "remote_to_aerial_late_key_value_norm.",
+    ):
+        return "cross_attention"
+    if "crossattn" in checkpoint_path_lower or "cross_attention" in checkpoint_path_lower:
+        return "cross_attention"
+    if "film" in checkpoint_path_lower:
+        return "film"
+    return "none"
+
+
+def is_vggt_split_remote_aggregator_checkpoint(checkpoint_path):
+    return resolve_vggt_late_fusion_type(checkpoint_path) != "none"
 
 
 def resolve_config_overrides(args, model_name):
@@ -225,6 +342,86 @@ def resolve_config_overrides(args, model_name):
             ]
         )
 
+    if model_name == "vggt" and checkpoint_path:
+        if is_vggt_p7_p5b_projection_aux_checkpoint(checkpoint_path):
+            use_pre_aggregator_bias = is_vggt_pre_aggregator_view_type_bias_checkpoint(
+                checkpoint_path
+            )
+            use_remote_gated_residual = is_vggt_remote_to_aerial_gated_residual_checkpoint(
+                checkpoint_path
+            )
+            use_split_remote_aggregator = is_vggt_split_remote_aggregator_checkpoint(
+                checkpoint_path
+            )
+            late_fusion_type = resolve_vggt_late_fusion_type(checkpoint_path)
+            overrides.extend(
+                [
+                    "model.model_config.load_pretrained_weights=false",
+                    "model.model_config.load_custom_ckpt=false",
+                    "model.model_config.use_point_head_for_remote=true",
+                    "model.model_config.ordinary_output_head=depth",
+                    "model.model_config.remote_output_head=point",
+                    "model.model_config.use_remote_private_point_head=true",
+                    "model.model_config.output_point_head_for_consistency=true",
+                    "model.model_config.use_view_type_bias=false",
+                    f"model.model_config.use_pre_aggregator_view_type_bias={str(use_pre_aggregator_bias).lower()}",
+                    f"model.model_config.use_remote_to_aerial_gated_residual={str(use_remote_gated_residual).lower()}",
+                    "model.model_config.remote_to_aerial_residual_hidden_scale=0.25",
+                    "model.model_config.remote_to_aerial_gate_init=0.0",
+                    f"model.model_config.use_split_remote_aggregator={str(use_split_remote_aggregator).lower()}",
+                    f"model.model_config.remote_to_aerial_late_fusion_type={late_fusion_type}",
+                    "model.model_config.remote_to_aerial_late_fusion_hidden_scale=0.25",
+                    "model.model_config.remote_to_aerial_late_fusion_gate_init=0.0",
+                    "model.model_config.remote_to_aerial_cross_attention_heads=8",
+                    "model.model_config.remote_to_aerial_max_remote_tokens=256",
+                    "model.model_config.protect_ordinary_heads_from_remote=false",
+                    "model.model_config.use_remote_projection_aux_head=true",
+                    "model.model_config.remote_projection_aux_hidden_dim=96",
+                    f"model.model_config.remote_projection_aux_source={resolve_vggt_projection_aux_source(checkpoint_path)}",
+                    "model.model_config.remote_projection_aux_detach_pointmap=false",
+                    "model.model_config.remote_projection_aux_use_rgb=true",
+                    "model.model_config.remote_projection_aux_use_coord=true",
+                    "model.model_config.remote_projection_aux_image_stem_dim=32",
+                    "model.model_config.remote_projection_aux_positive_slope=true",
+                    "model.model_config.remote_projection_aux_slope_init=0.1",
+                    "model.model_config.remote_projection_aux_num_blocks=6",
+                ]
+            )
+            if is_vggt_p7_token_residual_checkpoint(checkpoint_path):
+                overrides.extend(
+                    [
+                        "model.model_config.use_remote_projection_aux_token_residual=true",
+                        "model.model_config.remote_projection_aux_token_residual_hidden_scale=0.25",
+                        "model.model_config.remote_projection_aux_token_residual_gate_init=0.01",
+                    ]
+                )
+
+    if (
+        model_name == "pi3_modality_embedding_remote_head"
+        and checkpoint_path
+        and "p7_pi3_remote_head_projection_aux" in str(checkpoint_path).lower()
+    ):
+        checkpoint_path_lower = str(checkpoint_path).lower()
+        rel_match = re.search(r"relscale([0-9]+(?:p[0-9]+)?)", checkpoint_path_lower)
+        offset_match = re.search(r"offsetscale([0-9]+(?:p[0-9]+)?)", checkpoint_path_lower)
+        rel_scale = float(rel_match.group(1).replace("p", ".")) if rel_match else 1.0
+        offset_scale = float(offset_match.group(1).replace("p", ".")) if offset_match else 1.0
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.use_remote_projection_aux_head=true",
+                "model.model_config.remote_projection_aux_hidden_dim=96",
+                "model.model_config.remote_projection_aux_use_rgb=true",
+                "model.model_config.remote_projection_aux_use_coord=true",
+                "model.model_config.remote_projection_aux_image_stem_dim=32",
+                "model.model_config.remote_projection_aux_positive_slope=true",
+                "model.model_config.remote_projection_aux_slope_init=0.1",
+                "model.model_config.remote_projection_aux_num_blocks=6",
+                f"model.model_config.remote_projection_aux_rel_height_output_scale={rel_scale}",
+                f"model.model_config.remote_projection_aux_offset_output_scale={offset_scale}",
+            ]
+        )
+
     return overrides
 
 
@@ -234,7 +431,10 @@ def resolve_effective_model_name(args, requested_model_name):
         return requested_model_name
 
     checkpoint_path_lower = str(checkpoint_path).lower()
-    if "pi3_modality_embedding_remote_head" in checkpoint_path_lower:
+    if (
+        "pi3_modality_embedding_remote_head" in checkpoint_path_lower
+        or "p7_pi3_remote_head_projection_aux" in checkpoint_path_lower
+    ):
         print(
             "Auto-detected Pi3 variant from checkpoint path: "
             "pi3_modality_embedding_remote_head"
@@ -571,6 +771,56 @@ def compute_remote_height_metrics_affine(gt_height, pred_pts, valid_mask):
         "rs_height_rmse_affine": float(np.sqrt(np.mean(np.square(height_err)))),
         "rs_z_scale_affine": float(scale),
         "rs_z_offset_affine": float(offset),
+    }
+
+
+def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
+    overlap = (
+        valid_mask
+        & np.isfinite(gt_pts).all(axis=-1)
+        & np.isfinite(pred_pts).all(axis=-1)
+    )
+    if not overlap.any():
+        return {
+            "rs_point_l1": float("nan"),
+            "rs_point_l1_centered": float("nan"),
+            "rs_point_l1_scale_aligned": float("nan"),
+            "rs_point_scale_aligned_scale": float("nan"),
+            "rs_point_abs_rel": float("nan"),
+        }
+
+    gt_vec = gt_pts[overlap]
+    pred_vec = pred_pts[overlap]
+    point_err = np.linalg.norm(pred_vec - gt_vec, axis=-1)
+
+    gt_center = gt_vec.mean(axis=0, keepdims=True)
+    pred_center = pred_vec.mean(axis=0, keepdims=True)
+    centered_err = np.linalg.norm(
+        (pred_vec - pred_center) - (gt_vec - gt_center),
+        axis=-1,
+    )
+
+    pred_centered = pred_vec - pred_center
+    gt_centered = gt_vec - gt_center
+    denom = float(np.sum(pred_centered * pred_centered))
+    if denom > 1e-12:
+        scale = max(float(np.sum(pred_centered * gt_centered) / denom), 1e-8)
+        pred_scale_aligned = pred_centered * scale
+        scale_aligned_err = np.linalg.norm(pred_scale_aligned - gt_centered, axis=-1)
+        scale_aligned_l1 = float(np.mean(scale_aligned_err))
+    else:
+        scale = float("nan")
+        scale_aligned_l1 = float("nan")
+
+    gt_norm = np.linalg.norm(gt_vec, axis=-1)
+    abs_rel = point_err / np.clip(gt_norm, 1e-8, None)
+
+    return {
+        "rs_point_l1": float(np.mean(point_err)),
+        "rs_point_l1_centered": float(np.mean(centered_err)),
+        "rs_point_l1_scale_aligned": scale_aligned_l1,
+        "rs_point_scale_aligned_scale": scale,
+        "rs_point_abs_rel": float(np.mean(abs_rel)),
     }
 
 
@@ -924,6 +1174,7 @@ def benchmark(args):
             aerial_per_scene[scene] = aerial_metrics
 
             gt_height = remote_sample["remote_height_map"]
+            gt_pointmap = remote_sample["remote_pointmap"]
             valid_mask = remote_sample["remote_valid_mask"].astype(bool)
 
             rs_pts = rs_preds[0]["pts3d"][sample_idx].detach().cpu().numpy()
@@ -931,6 +1182,13 @@ def benchmark(args):
                 gt_height,
                 rs_pts,
                 valid_mask,
+            )
+            rs_metrics.update(
+                compute_remote_pointmap_metrics(
+                    gt_pointmap,
+                    rs_pts,
+                    valid_mask,
+                )
             )
             if rs_supports_metric_outputs:
                 rs_metrics.update(
@@ -948,6 +1206,13 @@ def benchmark(args):
                 gt_height,
                 joint_rs_pts,
                 valid_mask,
+            )
+            joint_rs_metrics.update(
+                compute_remote_pointmap_metrics(
+                    gt_pointmap,
+                    joint_rs_pts,
+                    valid_mask,
+                )
             )
             if joint_supports_metric_outputs:
                 joint_rs_metrics.update(

@@ -144,6 +144,46 @@ def load_projection_aux_modalities(projection_aux_path: Path):
         'remote_projection_tilt_mask': aux_npz['tilt_projected_mask'].astype(bool),
         'remote_projection_global_dir_xy': aux_npz['global_dir_xy'].astype(np.float32),
         'remote_projection_global_slope': aux_npz['global_slope'].astype(np.float32),
+        'remote_projection_projected_xyz_centered': aux_npz['projected_xyz_centered'].astype(np.float32),
+        'remote_projection_center_xy': aux_npz['projection_center_xy'].astype(np.float32),
+    }
+
+
+def load_moge_prior_modalities(moge_prior_path: Path):
+    if moge_prior_path is None or not Path(moge_prior_path).exists():
+        return None
+    prior_npz = np.load(moge_prior_path)
+    required = {
+        'moge_grad_xy',
+        'moge_grad_mag',
+        'moge_edge_mask',
+        'moge_prior_weight',
+    }
+    missing = required - set(prior_npz.files)
+    if missing:
+        raise KeyError(f'Missing MoGe prior keys in {moge_prior_path}: {sorted(missing)}')
+    result = {
+        'remote_moge_grad_xy': prior_npz['moge_grad_xy'].astype(np.float32),
+        'remote_moge_grad_mag': prior_npz['moge_grad_mag'].astype(np.float32),
+        'remote_moge_edge_mask': prior_npz['moge_edge_mask'].astype(bool),
+        'remote_moge_prior_weight': prior_npz['moge_prior_weight'].astype(np.float32),
+    }
+    if 'moge_confidence_mask' in prior_npz.files:
+        result['remote_moge_confidence_mask'] = prior_npz['moge_confidence_mask'].astype(bool)
+    if 'moge_aligned_height' in prior_npz.files:
+        result['remote_moge_aligned_height'] = prior_npz['moge_aligned_height'].astype(np.float32)
+    return result
+
+
+def empty_moge_prior_modalities(resolution):
+    height, width = int(resolution[0]), int(resolution[1])
+    return {
+        'remote_moge_grad_xy': np.zeros((height, width, 2), dtype=np.float32),
+        'remote_moge_grad_mag': np.zeros((height, width), dtype=np.float32),
+        'remote_moge_edge_mask': np.zeros((height, width), dtype=bool),
+        'remote_moge_prior_weight': np.zeros((height, width), dtype=np.float32),
+        'remote_moge_confidence_mask': np.zeros((height, width), dtype=bool),
+        'remote_moge_aligned_height': np.zeros((height, width), dtype=np.float32),
     }
 
 
@@ -239,6 +279,7 @@ def preprocess_projection_aux_modalities(projection_aux, box, resolution, label_
         'remote_projection_valid_mask',
         'remote_projection_rel_height',
         'remote_projection_offset_xy',
+        'remote_projection_projected_xyz_centered',
         'remote_projection_building_mask',
         'remote_projection_tilt_mask',
     }
@@ -257,6 +298,39 @@ def preprocess_projection_aux_modalities(projection_aux, box, resolution, label_
             result[key] = resized
         else:
             result[key] = value.astype(np.float32) if hasattr(value, 'astype') else value
+    return result
+
+
+def preprocess_moge_prior_modalities(moge_prior, box, resolution, label_resize_mode='bilinear'):
+    if moge_prior is None:
+        return None
+    left, top, right, bottom = box
+    result = {}
+    mask_keys = {
+        'remote_moge_edge_mask',
+        'remote_moge_confidence_mask',
+    }
+    map_keys = {
+        'remote_moge_grad_xy',
+        'remote_moge_grad_mag',
+        'remote_moge_edge_mask',
+        'remote_moge_prior_weight',
+        'remote_moge_confidence_mask',
+        'remote_moge_aligned_height',
+    }
+    for key, value in moge_prior.items():
+        if key not in map_keys:
+            result[key] = value.astype(np.float32) if hasattr(value, 'astype') else value
+            continue
+        cropped = value[top:bottom, left:right]
+        if key in mask_keys:
+            resized = _resize_label_array(cropped.astype(np.float32), resolution, mode='nearest') > 0.5
+        else:
+            resized = _resize_label_array(cropped.astype(np.float32), resolution, mode=label_resize_mode)
+        if key == 'remote_moge_grad_xy':
+            norm = np.linalg.norm(resized, axis=-1, keepdims=True)
+            resized = resized / np.maximum(norm, 1e-6)
+        result[key] = resized
     return result
 
 

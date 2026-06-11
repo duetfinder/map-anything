@@ -1,54 +1,84 @@
 defaults:
   - default
 
-# P5h starts from a finetuned wrapper checkpoint, freezes the base model and
-# trains only the late remote-to-aerial adapter. This keeps ordinary VGGT/p5e
-# behavior stable while testing whether correct remote context adds value.
+# P5H control objective with enough capacity to affect ordinary reconstruction.
+# Keep prediction heads frozen as geometry anchors; finetune the shared
+# aggregator conservatively plus view-type and late remote-to-aerial fusion.
 lr: 0
 min_lr: 0
 
 submodule_configs:
   remote_to_aerial_late_gate:
-    lr: 5e-04
-    min_lr: 5e-06
+    lr: 8e-04
+    min_lr: 8e-06
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: 0.0
     schedule_type: ${train_params.schedule_type}
   remote_to_aerial_late_film:
-    lr: 5e-05
-    min_lr: 5e-07
+    lr: 1e-04
+    min_lr: 1e-06
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
   remote_to_aerial_late_query_norm:
-    lr: 5e-05
-    min_lr: 5e-07
+    lr: 1e-04
+    min_lr: 1e-06
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: 0.0
     schedule_type: ${train_params.schedule_type}
   remote_to_aerial_late_key_value_norm:
-    lr: 5e-05
-    min_lr: 5e-07
+    lr: 1e-04
+    min_lr: 1e-06
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: 0.0
     schedule_type: ${train_params.schedule_type}
   remote_to_aerial_late_cross_attention:
-    lr: 5e-05
-    min_lr: 5e-07
+    lr: 1e-04
+    min_lr: 1e-06
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
   aerial_view_type_embedding:
-    lr: 0
-    min_lr: 0
+    lr: 5e-05
+    min_lr: 5e-07
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: 0.0
     schedule_type: ${train_params.schedule_type}
   remote_view_type_embedding:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  model.aggregator.patch_embed:
+    lr: 5e-07
+    min_lr: 5e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.aggregator:
+    lr: 1e-06
+    min_lr: 1e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.camera_head:
     lr: 0
     min_lr: 0
     warmup_epochs: ${train_params.warmup_epochs}
-    weight_decay: 0.0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.depth_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.point_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
   remote_point_head:
     lr: 0
@@ -62,10 +92,10 @@ submodule_configs:
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
-# Optional remote-control ranking objective. Disabled by default; experiment
-# wrappers can enable it to force same remote to beat blank/shuffled controls.
+
 remote_control_ranking_loss_weight: 0.0
 remote_control_ranking_margin: 0.0
 remote_control_ranking_modes: [blank, shuffled]
 remote_control_blank_value: 0.5
 remote_control_ranking_differentiable: false
+remote_control_same_loss_source: primary

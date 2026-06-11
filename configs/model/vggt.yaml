@@ -42,6 +42,9 @@ model_config:
   # P7: train lightweight remote projection auxiliary heads.
   use_remote_projection_aux_head: false
   remote_projection_aux_hidden_dim: 64
+  # pointmap: current cascaded head; tokens: lightweight parallel token head;
+  # dpt_init: DPT aux heads initialized from VGGT depth/point heads.
+  remote_projection_aux_source: "pointmap"
   remote_projection_aux_detach_pointmap: false
   remote_projection_aux_use_rgb: false
   remote_projection_aux_use_coord: false
@@ -49,6 +52,10 @@ model_config:
   remote_projection_aux_positive_slope: false
   remote_projection_aux_slope_init: 0.1
   remote_projection_aux_num_blocks: 0
+  # P7 structural test: small gated residual on remote patch tokens before point heads.
+  use_remote_projection_aux_token_residual: false
+  remote_projection_aux_token_residual_hidden_scale: 0.25
+  remote_projection_aux_token_residual_gate_init: 0.0
 # Image Normalization Type
 data_norm_type: "identity"
 # VGGT checkpoint is already loaded in the inference wrapper

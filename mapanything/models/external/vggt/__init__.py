@@ -69,6 +69,7 @@ class VGGTWrapper(torch.nn.Module):
         protect_ordinary_heads_from_remote=False,
         use_remote_projection_aux_head=False,
         remote_projection_aux_hidden_dim=64,
+        remote_projection_aux_source="pointmap",
         remote_projection_aux_detach_pointmap=False,
         remote_projection_aux_use_rgb=False,
         remote_projection_aux_use_coord=False,
@@ -76,6 +77,9 @@ class VGGTWrapper(torch.nn.Module):
         remote_projection_aux_positive_slope=False,
         remote_projection_aux_slope_init=0.1,
         remote_projection_aux_num_blocks=0,
+        use_remote_projection_aux_token_residual=False,
+        remote_projection_aux_token_residual_hidden_scale=0.25,
+        remote_projection_aux_token_residual_gate_init=0.0,
     ):
         super().__init__()
         self.name = name
@@ -102,6 +106,13 @@ class VGGTWrapper(torch.nn.Module):
         self.protect_ordinary_heads_from_remote = protect_ordinary_heads_from_remote
         self.use_remote_projection_aux_head = use_remote_projection_aux_head
         self.remote_projection_aux_hidden_dim = int(remote_projection_aux_hidden_dim)
+        self.remote_projection_aux_source = str(remote_projection_aux_source)
+        if self.remote_projection_aux_source not in {"pointmap", "tokens", "dpt_init"}:
+            raise ValueError(
+                "remote_projection_aux_source must be 'pointmap', 'tokens', or "
+                "'dpt_init', "
+                f"got {remote_projection_aux_source!r}"
+            )
         self.remote_projection_aux_detach_pointmap = remote_projection_aux_detach_pointmap
         self.remote_projection_aux_use_rgb = remote_projection_aux_use_rgb
         self.remote_projection_aux_use_coord = remote_projection_aux_use_coord
@@ -109,6 +120,15 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_projection_aux_positive_slope = remote_projection_aux_positive_slope
         self.remote_projection_aux_slope_init = float(remote_projection_aux_slope_init)
         self.remote_projection_aux_num_blocks = int(remote_projection_aux_num_blocks)
+        self.use_remote_projection_aux_token_residual = bool(
+            use_remote_projection_aux_token_residual
+        )
+        self.remote_projection_aux_token_residual_hidden_scale = float(
+            remote_projection_aux_token_residual_hidden_scale
+        )
+        self.remote_projection_aux_token_residual_gate_init = float(
+            remote_projection_aux_token_residual_gate_init
+        )
         self.embed_dim = 1024
         self.latest_remote_to_aerial_stats = {}
 
@@ -207,7 +227,22 @@ class VGGTWrapper(torch.nn.Module):
         if self.use_remote_private_point_head:
             self.remote_point_head = deepcopy(self.model.point_head)
 
-        if self.use_remote_projection_aux_head:
+        if self.use_remote_projection_aux_token_residual:
+            hidden_dim = max(
+                1,
+                int(token_dim * self.remote_projection_aux_token_residual_hidden_scale),
+            )
+            self.remote_projection_aux_token_residual = torch.nn.Sequential(
+                torch.nn.LayerNorm(token_dim),
+                torch.nn.Linear(token_dim, hidden_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_dim, token_dim),
+            )
+            self.remote_projection_aux_token_residual_gate = torch.nn.Parameter(
+                torch.tensor(float(self.remote_projection_aux_token_residual_gate_init))
+            )
+
+        if self.use_remote_projection_aux_head and self.remote_projection_aux_source == "pointmap":
             hidden_dim = max(1, int(remote_projection_aux_hidden_dim))
             aux_pixel_in_channels = 3
             if self.remote_projection_aux_use_rgb:
@@ -262,6 +297,88 @@ class VGGTWrapper(torch.nn.Module):
                     final_linear.weight[2].zero_()
                     final_linear.bias[2].copy_(raw_slope_init)
 
+        if self.use_remote_projection_aux_head and self.remote_projection_aux_source == "tokens":
+            hidden_dim = max(1, int(remote_projection_aux_hidden_dim))
+            token_dim = 2 * self.embed_dim
+            self.remote_projection_aux_token_norm = torch.nn.LayerNorm(token_dim)
+            self.remote_projection_aux_token_proj = torch.nn.Linear(token_dim, hidden_dim)
+            aux_pixel_in_channels = hidden_dim
+            if self.remote_projection_aux_use_rgb:
+                aux_pixel_in_channels += 3
+            if self.remote_projection_aux_use_coord:
+                aux_pixel_in_channels += 2
+            if self.remote_projection_aux_image_stem_dim > 0:
+                aux_pixel_in_channels += self.remote_projection_aux_image_stem_dim
+                self.remote_projection_aux_image_stem = torch.nn.Sequential(
+                    torch.nn.Conv2d(3, self.remote_projection_aux_image_stem_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                    torch.nn.Conv2d(
+                        self.remote_projection_aux_image_stem_dim,
+                        self.remote_projection_aux_image_stem_dim,
+                        kernel_size=3,
+                        padding=1,
+                    ),
+                    torch.nn.GELU(),
+                )
+            if self.remote_projection_aux_num_blocks > 0:
+                pixel_layers = [
+                    torch.nn.Conv2d(aux_pixel_in_channels, hidden_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                ]
+                pixel_layers.extend(
+                    _ProjectionAuxResidualBlock(hidden_dim)
+                    for _ in range(self.remote_projection_aux_num_blocks)
+                )
+                pixel_layers.append(torch.nn.Conv2d(hidden_dim, 3, kernel_size=1))
+                self.remote_projection_aux_token_pixel_head = torch.nn.Sequential(*pixel_layers)
+            else:
+                self.remote_projection_aux_token_pixel_head = torch.nn.Sequential(
+                    torch.nn.Conv2d(aux_pixel_in_channels, hidden_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                    torch.nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
+                    torch.nn.GELU(),
+                    torch.nn.Conv2d(hidden_dim, 3, kernel_size=1),
+                )
+            self.remote_projection_aux_token_global_head = torch.nn.Sequential(
+                torch.nn.LayerNorm(hidden_dim),
+                torch.nn.Linear(hidden_dim, hidden_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_dim, 3),
+            )
+            if self.remote_projection_aux_positive_slope and self.remote_projection_aux_slope_init > 0:
+                final_linear = self.remote_projection_aux_token_global_head[-1]
+                slope_init = torch.tensor(
+                    float(self.remote_projection_aux_slope_init), dtype=final_linear.bias.dtype
+                )
+                raw_slope_init = torch.log(torch.expm1(slope_init).clamp_min(1e-6))
+                with torch.no_grad():
+                    final_linear.weight[2].zero_()
+                    final_linear.bias[2].copy_(raw_slope_init)
+
+        if self.use_remote_projection_aux_head and self.remote_projection_aux_source == "dpt_init":
+            self.remote_projection_aux_height_head = deepcopy(self.model.depth_head)
+            self.remote_projection_aux_offset_head = deepcopy(self.model.point_head)
+            # Reuse the pretrained dense decoder, but predict normalized relative
+            # height in loss space rather than positive metric depth.
+            self.remote_projection_aux_height_head.activation = "linear"
+            hidden_dim = max(1, int(remote_projection_aux_hidden_dim))
+            token_dim = 2 * self.embed_dim
+            self.remote_projection_aux_dpt_global_head = torch.nn.Sequential(
+                torch.nn.LayerNorm(token_dim),
+                torch.nn.Linear(token_dim, hidden_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(hidden_dim, 3),
+            )
+            if self.remote_projection_aux_positive_slope and self.remote_projection_aux_slope_init > 0:
+                final_linear = self.remote_projection_aux_dpt_global_head[-1]
+                slope_init = torch.tensor(
+                    float(self.remote_projection_aux_slope_init), dtype=final_linear.bias.dtype
+                )
+                raw_slope_init = torch.log(torch.expm1(slope_init).clamp_min(1e-6))
+                with torch.no_grad():
+                    final_linear.weight[2].zero_()
+                    final_linear.bias[2].copy_(raw_slope_init)
+
         # Load custom checkpoint if requested
         if self.load_custom_ckpt:
             print(f"Loading checkpoint from {self.custom_ckpt_path} ...")
@@ -275,14 +392,19 @@ class VGGTWrapper(torch.nn.Module):
                 self.remote_point_head.load_state_dict(
                     deepcopy(self.model.point_head.state_dict())
                 )
+            if (
+                self.use_remote_projection_aux_head
+                and self.remote_projection_aux_source == "dpt_init"
+            ):
+                self.remote_projection_aux_height_head.load_state_dict(
+                    deepcopy(self.model.depth_head.state_dict())
+                )
+                self.remote_projection_aux_height_head.activation = "linear"
+                self.remote_projection_aux_offset_head.load_state_dict(
+                    deepcopy(self.model.point_head.state_dict())
+                )
 
-    def _apply_remote_projection_aux_head(self, output, source_pointmap, source_image=None):
-        if not self.use_remote_projection_aux_head:
-            return output
-        aux_input = source_pointmap
-        if self.remote_projection_aux_detach_pointmap:
-            aux_input = aux_input.detach()
-        aux_chw = aux_input.permute(0, 3, 1, 2).contiguous()
+    def _projection_aux_add_image_features(self, aux_chw, source_image):
         if self.remote_projection_aux_use_rgb:
             if source_image is None:
                 raise RuntimeError("remote_projection_aux_use_rgb=True requires source_image")
@@ -304,6 +426,33 @@ class VGGTWrapper(torch.nn.Module):
                 )
             image_for_stem = source_image.to(device=aux_chw.device, dtype=aux_chw.dtype)
             aux_chw = torch.cat([aux_chw, self.remote_projection_aux_image_stem(image_for_stem)], dim=1)
+        return aux_chw
+
+    def _apply_remote_projection_aux_head(
+        self,
+        output,
+        source_pointmap,
+        source_image=None,
+        source_tokens=None,
+        source_tokens_list=None,
+        patch_start_idx=None,
+        image_shape=None,
+    ):
+        if not self.use_remote_projection_aux_head:
+            return output
+        if self.remote_projection_aux_source == "dpt_init":
+            return self._apply_remote_projection_aux_dpt_init_head(
+                output, source_tokens_list, source_image, patch_start_idx
+            )
+        if self.remote_projection_aux_source == "tokens":
+            return self._apply_remote_projection_aux_token_head(
+                output, source_tokens, source_image, image_shape
+            )
+        aux_input = source_pointmap
+        if self.remote_projection_aux_detach_pointmap:
+            aux_input = aux_input.detach()
+        aux_chw = aux_input.permute(0, 3, 1, 2).contiguous()
+        aux_chw = self._projection_aux_add_image_features(aux_chw, source_image)
         pixel_pred = self.remote_projection_aux_pixel_head(aux_chw)
         pixel_pred = pixel_pred.permute(0, 2, 3, 1).contiguous()
         output["remote_projection_rel_height_pred"] = pixel_pred[..., 0]
@@ -314,6 +463,110 @@ class VGGTWrapper(torch.nn.Module):
         denom = finite_mask.float().sum(dim=(1, 2)).clamp_min(1.0)
         pooled = safe_input.sum(dim=(1, 2)) / denom
         global_raw = self.remote_projection_aux_global_head(pooled.float())
+        dir_xy = torch.nn.functional.normalize(global_raw[:, :2], dim=-1, eps=1e-6)
+        output["remote_projection_global_dir_xy_pred"] = dir_xy
+        slope_pred = global_raw[:, 2:3]
+        if self.remote_projection_aux_positive_slope:
+            slope_pred = torch.nn.functional.softplus(slope_pred)
+        output["remote_projection_global_slope_pred"] = slope_pred
+        return output
+
+    def _apply_remote_projection_aux_dpt_init_head(
+        self,
+        output,
+        source_tokens_list,
+        source_image,
+        patch_start_idx,
+    ):
+        if source_tokens_list is None:
+            raise RuntimeError(
+                "remote_projection_aux_source='dpt_init' requires source_tokens_list"
+            )
+        if source_image is None:
+            raise RuntimeError(
+                "remote_projection_aux_source='dpt_init' requires source_image"
+            )
+        if patch_start_idx is None:
+            patch_start_idx = getattr(self.model.aggregator, "patch_start_idx", 0)
+
+        head_image = source_image.unsqueeze(1)
+        rel_height, rel_height_conf = self._run_dpt_head(
+            self.remote_projection_aux_height_head,
+            source_tokens_list,
+            head_image,
+            patch_start_idx,
+        )
+        offset_xyz, offset_conf = self._run_dpt_head(
+            self.remote_projection_aux_offset_head,
+            source_tokens_list,
+            head_image,
+            patch_start_idx,
+        )
+        output["remote_projection_rel_height_pred"] = rel_height[:, 0, ..., 0]
+        output["remote_projection_rel_height_conf"] = rel_height_conf[:, 0, ...]
+        output["remote_projection_offset_xy_pred"] = offset_xyz[:, 0, ..., :2]
+        output["remote_projection_offset_conf"] = offset_conf[:, 0, ...]
+
+        patch_tokens = source_tokens_list[-1][:, 0, patch_start_idx:, :]
+        pooled = patch_tokens.float().mean(dim=1)
+        global_raw = self.remote_projection_aux_dpt_global_head(pooled)
+        dir_xy = torch.nn.functional.normalize(global_raw[:, :2], dim=-1, eps=1e-6)
+        output["remote_projection_global_dir_xy_pred"] = dir_xy
+        slope_pred = global_raw[:, 2:3]
+        if self.remote_projection_aux_positive_slope:
+            slope_pred = torch.nn.functional.softplus(slope_pred)
+        output["remote_projection_global_slope_pred"] = slope_pred
+        return output
+
+    def _apply_remote_projection_aux_token_head(
+        self,
+        output,
+        source_tokens,
+        source_image=None,
+        image_shape=None,
+    ):
+        if source_tokens is None:
+            raise RuntimeError("remote_projection_aux_source='tokens' requires source_tokens")
+        if image_shape is None:
+            if source_image is None:
+                raise RuntimeError("token projection aux requires image_shape or source_image")
+            image_shape = source_image.shape[-2:]
+        height, width = int(image_shape[0]), int(image_shape[1])
+        patch_size = int(getattr(self.model.aggregator, "patch_size", 14))
+        grid_h = max(1, height // patch_size)
+        grid_w = max(1, width // patch_size)
+        if source_tokens.shape[1] != grid_h * grid_w:
+            grid_h = int(round(source_tokens.shape[1] ** 0.5))
+            grid_w = source_tokens.shape[1] // max(1, grid_h)
+            if grid_h * grid_w != source_tokens.shape[1]:
+                raise RuntimeError(
+                    "Cannot reshape remote projection aux tokens: "
+                    f"num_tokens={source_tokens.shape[1]}, image_shape={image_shape}"
+                )
+
+        token_features = self.remote_projection_aux_token_proj(
+            self.remote_projection_aux_token_norm(source_tokens.float())
+        )
+        aux_chw = (
+            token_features.reshape(token_features.shape[0], grid_h, grid_w, -1)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+            .to(dtype=source_tokens.dtype)
+        )
+        aux_chw = torch.nn.functional.interpolate(
+            aux_chw,
+            size=(height, width),
+            mode="bilinear",
+            align_corners=False,
+        )
+        aux_chw = self._projection_aux_add_image_features(aux_chw, source_image)
+        pixel_pred = self.remote_projection_aux_token_pixel_head(aux_chw)
+        pixel_pred = pixel_pred.permute(0, 2, 3, 1).contiguous()
+        output["remote_projection_rel_height_pred"] = pixel_pred[..., 0]
+        output["remote_projection_offset_xy_pred"] = pixel_pred[..., 1:3]
+
+        pooled = token_features.mean(dim=1)
+        global_raw = self.remote_projection_aux_token_global_head(pooled.float())
         dir_xy = torch.nn.functional.normalize(global_raw[:, :2], dim=-1, eps=1e-6)
         output["remote_projection_global_dir_xy_pred"] = dir_xy
         slope_pred = global_raw[:, 2:3]
@@ -457,7 +710,7 @@ class VGGTWrapper(torch.nn.Module):
             return head(list(tokens), head_images, ps_idx)
 
         return torch.utils.checkpoint.checkpoint(
-            run_head, *tokens_list, use_reentrant=True
+            run_head, *tokens_list, use_reentrant=False
         )
 
     def _run_prediction_heads(self, aggregated_tokens_list, images, ps_idx, views):
@@ -716,6 +969,37 @@ class VGGTWrapper(torch.nn.Module):
 
         return updated_tokens_list
 
+    def _apply_remote_projection_aux_token_residual(self, aggregated_tokens_list, views):
+        if not self.use_remote_projection_aux_token_residual:
+            return aggregated_tokens_list
+
+        remote_mask = self._remote_view_mask(
+            views, device=aggregated_tokens_list[0].device
+        )
+        if not bool(remote_mask.any()):
+            return aggregated_tokens_list
+
+        patch_start_idx = getattr(self.model.aggregator, "patch_start_idx", 0)
+        gate = self.remote_projection_aux_token_residual_gate.to(
+            device=aggregated_tokens_list[0].device,
+            dtype=aggregated_tokens_list[0].dtype,
+        )
+        updated_tokens_list = []
+        for tokens in aggregated_tokens_list:
+            if tokens.shape[2] <= patch_start_idx:
+                updated_tokens_list.append(tokens)
+                continue
+            remote_patch_tokens = tokens[:, remote_mask, patch_start_idx:, :]
+            delta = self.remote_projection_aux_token_residual(remote_patch_tokens.float()).to(
+                dtype=tokens.dtype
+            )
+            updated_tokens = tokens.clone()
+            updated_tokens[:, remote_mask, patch_start_idx:, :] = (
+                remote_patch_tokens + gate * delta
+            )
+            updated_tokens_list.append(updated_tokens)
+        return updated_tokens_list
+
     def get_remote_to_aerial_regularization_terms(self):
         terms = {}
         if hasattr(self, "remote_to_aerial_late_gate"):
@@ -767,6 +1051,9 @@ class VGGTWrapper(torch.nn.Module):
                 aggregated_tokens_list, views
             )
             aggregated_tokens_list = self._apply_remote_to_aerial_gated_residual(
+                aggregated_tokens_list, views
+            )
+            aggregated_tokens_list = self._apply_remote_projection_aux_token_residual(
                 aggregated_tokens_list, views
             )
             aggregated_tokens_list = self._apply_view_type_bias(
@@ -873,8 +1160,22 @@ class VGGTWrapper(torch.nn.Module):
                     res[-1]["vggt_output_head"] = "depth"
 
                 if self._is_remote_view(views[view_idx]):
+                    patch_start_idx = getattr(self.model.aggregator, "patch_start_idx", ps_idx)
+                    source_tokens = aggregated_tokens_list[-1][
+                        :, view_idx, patch_start_idx:, :
+                    ]
+                    source_tokens_list = [
+                        tokens[:, view_idx : view_idx + 1, :, :]
+                        for tokens in aggregated_tokens_list
+                    ]
                     self._apply_remote_projection_aux_head(
-                        res[-1], res[-1]["pts3d"], views[view_idx]["img"]
+                        res[-1],
+                        res[-1]["pts3d"],
+                        views[view_idx]["img"],
+                        source_tokens=source_tokens,
+                        source_tokens_list=source_tokens_list,
+                        patch_start_idx=patch_start_idx,
+                        image_shape=(height, width),
                     )
 
         return res

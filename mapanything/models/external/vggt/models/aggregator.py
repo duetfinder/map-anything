@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+from pathlib import Path
 from typing import List, Tuple
 
 import torch
@@ -198,7 +199,15 @@ class Aggregator(nn.Module):
             # )
 
             ### Use pre-trained DINOv2 with gradient checkpointing
-            self.patch_embed = torch.hub.load("facebookresearch/dinov2", patch_embed)
+            dinov2_cache = Path("/root/.cache/torch/hub/facebookresearch_dinov2_main")
+            if dinov2_cache.exists():
+                self.patch_embed = torch.hub.load(
+                    str(dinov2_cache), patch_embed, source="local"
+                )
+            else:
+                self.patch_embed = torch.hub.load(
+                    "facebookresearch/dinov2", patch_embed, skip_validation=True
+                )
             for i in range(len(self.patch_embed.blocks)):
                 self.patch_embed.blocks[i] = (
                     self.wrap_module_with_gradient_checkpointing(

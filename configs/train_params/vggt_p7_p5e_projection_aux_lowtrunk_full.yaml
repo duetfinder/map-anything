@@ -1,0 +1,58 @@
+defaults:
+  - vggt_p7_p5e_projection_aux
+
+# P5E private remote head with conservative full finetuning.  This keeps the
+# learned remote/projection heads from the P5E run, but lets ordinary heads adapt
+# with a low LR instead of staying frozen.
+lr: 2e-06
+min_lr: 2e-08
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 1e-07
+    min_lr: 1e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.camera_head:
+    lr: 2e-06
+    min_lr: 2e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.depth_head:
+    lr: 2e-06
+    min_lr: 2e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.point_head:
+    lr: 2e-06
+    min_lr: 2e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_pixel_head:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_global_head:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

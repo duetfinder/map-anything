@@ -1,0 +1,17 @@
+defaults:
+  - vggt_p7_p5b_dptinit_auxonly
+
+# Frozen-trunk joint probe:
+# - train the private remote point head with pointmap supervision;
+# - train dpt-init projection aux heads in parallel;
+# - keep the shared VGGT trunk and ordinary heads frozen so aux supervision
+#   cannot degrade ordinary reconstruction features.
+remote_point_head_param_anchor_loss_weight: 0.0
+
+submodule_configs:
+  remote_point_head:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

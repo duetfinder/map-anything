@@ -23,6 +23,7 @@ from mapanything.datasets.wai.vigor_chicago_rs_common import (  # noqa: E402
     preprocess_projection_aux_modalities,
 )
 from mapanything.utils.image import load_images  # noqa: E402
+from mapanything.utils.geometry import normalize_multiple_pointclouds  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--preset",
         default="auto",
-        choices=["auto", "remote_head", "split"],
+        choices=["auto", "remote_head", "split", "p5b_shared_norm"],
         help="Export/model preset used to instantiate VGGT p7 checkpoint.",
     )
     parser.add_argument("--config-path", default="configs/train.yaml", help="Hydra config path used for local checkpoint loading.")
@@ -52,6 +53,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden channels in the P7 aux heads.")
     parser.add_argument("--image-stem-dim", type=int, default=0, help="RGB image-stem channels concatenated into the P7 aux pixel head.")
     parser.add_argument("--use-coord-aux", action="store_true", help="Instantiate P7 aux head with normalized coordinate input.")
+    parser.add_argument(
+        "--aux-source",
+        default="auto",
+        choices=["auto", "pointmap", "tokens"],
+        help="Feature source for the P7 projection aux head.",
+    )
     parser.add_argument("--positive-slope-aux", action="store_true", help="Instantiate P7 aux head with positive global slope output.")
     parser.add_argument("--slope-init", type=float, default=0.1, help="Initial positive global slope for the P7 aux head.")
     parser.add_argument(
@@ -59,7 +66,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Compute the projection direction used for consistency from the mean predicted offset field.",
     )
-    parser.add_argument("--rel-height-scale", type=float, default=1.0, help="Scale used for normalized rel-height diagnostics.")
+    parser.add_argument(
+        "--rel-height-scale-mode",
+        default="fixed",
+        choices=["fixed", "gt_pointmap_norm", "valid_quantile"],
+        help="How to convert normalized predicted rel-height to GT rel-height units for diagnostics.",
+    )
+    parser.add_argument("--rel-height-scale", type=float, default=1.0, help="Fixed scale used when --rel-height-scale-mode=fixed.")
+    parser.add_argument(
+        "--rel-height-scale-quantile",
+        type=float,
+        default=0.9,
+        help="Valid rel-height quantile used when --rel-height-scale-mode=valid_quantile.",
+    )
+    parser.add_argument(
+        "--pointmap-path",
+        type=Path,
+        default=None,
+        help="Optional pixel_to_point_map.npz path. Defaults to <remote-dir>/pixel_to_point_map.npz.",
+    )
     parser.add_argument("--offset-scale", type=float, default=1.0, help="Scale used for normalized offset diagnostics.")
     parser.add_argument(
         "--pred-normalized",
@@ -101,6 +126,8 @@ def make_export_args(args: argparse.Namespace) -> SimpleNamespace:
         vggt_p6b_export=False,
         vggt_p7_projection_aux_export=args.preset == "split",
         vggt_p7_remote_head_projection_aux_export=args.preset == "remote_head",
+        vggt_p7_p5b_shared_norm_projection_aux_export=args.preset == "p5b_shared_norm",
+        vggt_projection_aux_source=args.aux_source,
         vggt_projection_aux_hidden_dim=args.hidden_dim,
         vggt_projection_aux_detach_pointmap=args.detach_aux,
         vggt_projection_aux_use_rgb=args.use_rgb_aux,
@@ -109,11 +136,18 @@ def make_export_args(args: argparse.Namespace) -> SimpleNamespace:
         vggt_projection_aux_slope_init=args.slope_init,
         vggt_projection_aux_num_blocks=args.aux_num_blocks,
         vggt_projection_aux_image_stem_dim=args.image_stem_dim,
+        vggt_projection_aux_token_residual=False,
+        vggt_projection_aux_token_residual_hidden_scale=0.25,
+        vggt_projection_aux_token_residual_gate_init=0.0,
         include_remote_points=False,
-        vggt_late_fusion_type="cross_attention",
+        vggt_late_fusion_type="cross_attention" if args.preset == "split" else "none",
         vggt_late_gate_init=1e-3,
         vggt_max_remote_tokens=256,
         vggt_cross_attention_heads=8,
+        vggt_pre_aggregator_view_type_bias=False,
+        vggt_remote_to_aerial_gated_residual=False,
+        vggt_split_remote_aggregator=False,
+        vggt_protect_ordinary_heads_from_remote=False,
         force_remote_instance=False,
         remote_view_indices=None,
         remote_view_names=["image.png"],
@@ -208,6 +242,63 @@ def masked_mae(pred, gt, mask):
     return float(err[valid].mean()) if valid.any() else None
 
 
+def finite_xyz_mask(xyz: np.ndarray) -> np.ndarray:
+    return np.isfinite(xyz).all(axis=-1) & (np.linalg.norm(xyz, axis=-1) > 1e-6)
+
+
+def compute_pointmap_norm_scale(pointmap_path: Path) -> float:
+    if not pointmap_path.exists():
+        raise FileNotFoundError(pointmap_path)
+    data = np.load(pointmap_path)
+    if "xyz" in data:
+        xyz = data["xyz"].astype(np.float32)
+    elif "pts3d" in data:
+        xyz = data["pts3d"].astype(np.float32)
+    else:
+        raise KeyError(f"{pointmap_path} must contain 'xyz' or 'pts3d'")
+    mask = finite_xyz_mask(xyz)
+    if not mask.any():
+        raise ValueError(f"No valid points in {pointmap_path}")
+    pts = torch.from_numpy(xyz).unsqueeze(0)
+    valid = torch.from_numpy(mask).unsqueeze(0)
+    norm_output = normalize_multiple_pointclouds([pts], [valid], "avg_dis", ret_factor=True)
+    scale = float(norm_output[-1].detach().cpu().reshape(-1)[0])
+    if not np.isfinite(scale) or scale <= 1e-8:
+        raise ValueError(f"Invalid pointmap norm scale {scale} from {pointmap_path}")
+    return scale
+
+
+def resolve_rel_height_scale(args: argparse.Namespace, rel_gt: np.ndarray, mask: np.ndarray) -> float:
+    if args.rel_height_scale_mode == "fixed":
+        return float(args.rel_height_scale)
+    if args.rel_height_scale_mode == "valid_quantile":
+        valid = mask & np.isfinite(rel_gt)
+        if not valid.any():
+            raise ValueError("Cannot compute valid_quantile rel-height scale without valid rel_height labels")
+        q = float(np.clip(args.rel_height_scale_quantile, 0.0, 1.0))
+        return max(float(np.quantile(np.abs(rel_gt[valid]), q)), 1e-6)
+    pointmap_path = args.pointmap_path or (args.remote_dir / "pixel_to_point_map.npz")
+    return compute_pointmap_norm_scale(pointmap_path)
+
+
+def affine_align_scalar(pred: np.ndarray, gt: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, dict]:
+    valid = mask.astype(bool) & np.isfinite(pred) & np.isfinite(gt)
+    if int(valid.sum()) < 2:
+        return pred.copy(), {"scale": None, "shift": None, "valid_pixels": int(valid.sum())}
+    x = pred[valid].astype(np.float64)
+    y = gt[valid].astype(np.float64)
+    x_mean = float(x.mean())
+    y_mean = float(y.mean())
+    denom = float(((x - x_mean) ** 2).mean())
+    if denom < 1e-12:
+        scale = 0.0
+    else:
+        scale = float(((x - x_mean) * (y - y_mean)).mean() / denom)
+    shift = y_mean - scale * x_mean
+    aligned = pred.astype(np.float32) * np.float32(scale) + np.float32(shift)
+    return aligned, {"scale": scale, "shift": shift, "valid_pixels": int(valid.sum())}
+
+
 def main() -> int:
     args = parse_args()
     image_path = args.remote_dir / "image.png"
@@ -251,8 +342,9 @@ def main() -> int:
     offset_gt = gt["remote_projection_offset_xy"]
     rel_pred_raw = to_numpy(pred["remote_projection_rel_height_pred"])[0]
     offset_pred_raw = to_numpy(pred["remote_projection_offset_xy_pred"])[0]
+    rel_height_scale = resolve_rel_height_scale(args, rel_gt, mask)
     if args.pred_normalized:
-        rel_pred = rel_pred_raw * float(args.rel_height_scale)
+        rel_pred = rel_pred_raw * float(rel_height_scale)
         offset_pred = offset_pred_raw * float(args.offset_scale)
     else:
         rel_pred = rel_pred_raw
@@ -272,15 +364,21 @@ def main() -> int:
     field_dir_pred = field_dir_pred / (np.linalg.norm(field_dir_pred) + 1e-8)
     consistency_dir_pred = field_dir_pred if args.field_dir_from_offset else dir_pred
     offset_from_field = rel_pred[..., None] * float(slope_pred[0]) * consistency_dir_pred.reshape(1, 1, 2)
-    rel_gt_norm = rel_gt / float(args.rel_height_scale) if args.rel_height_scale != 1.0 else rel_gt
-    rel_pred_norm = rel_pred_raw if args.pred_normalized else rel_pred / float(args.rel_height_scale) if args.rel_height_scale != 1.0 else rel_pred
+    rel_gt_norm = rel_gt / float(rel_height_scale) if rel_height_scale != 1.0 else rel_gt
+    rel_pred_norm = rel_pred_raw if args.pred_normalized else rel_pred / float(rel_height_scale) if rel_height_scale != 1.0 else rel_pred
     offset_gt_norm = offset_gt / float(args.offset_scale) if args.offset_scale != 1.0 else offset_gt
     offset_pred_norm = offset_pred_raw if args.pred_normalized else offset_pred / float(args.offset_scale) if args.offset_scale != 1.0 else offset_pred
+    rel_pred_norm_affine, rel_affine = affine_align_scalar(rel_pred_norm, rel_gt_norm, mask)
 
     panels = [
         make_panel("rel_height GT", rel_gt, mask),
         make_panel("rel_height Pred", rel_pred, mask),
         make_panel("rel_height AbsErr", np.abs(rel_pred - rel_gt), mask),
+        make_panel("rel_height GT norm", rel_gt_norm, mask),
+        make_panel("rel_height Pred norm", rel_pred_norm, mask),
+        make_panel("rel_height Norm AbsErr", np.abs(rel_pred_norm - rel_gt_norm), mask),
+        make_panel("rel_height Pred affine", rel_pred_norm_affine, mask),
+        make_panel("rel_height Affine AbsErr", np.abs(rel_pred_norm_affine - rel_gt_norm), mask),
         make_panel("offset_x GT", offset_gt[..., 0], mask, symmetric=True),
         make_panel("offset_x Pred", offset_pred[..., 0], mask, symmetric=True),
         make_panel("offset_x AbsErr", np.abs(offset_pred[..., 0] - offset_gt[..., 0]), mask),
@@ -292,6 +390,30 @@ def main() -> int:
         make_panel("consistency |err|", np.linalg.norm(offset_pred - offset_from_field, axis=-1), mask),
     ]
     save_grid(panels, args.output_dir / "projection_aux_gt_pred_grid.png")
+    Image.fromarray(colorize(rel_gt, mask)[0]).save(args.output_dir / "rel_height_gt.png")
+    Image.fromarray(colorize(rel_pred, mask)[0]).save(args.output_dir / "rel_height_pred.png")
+    Image.fromarray(colorize(np.abs(rel_pred - rel_gt), mask)[0]).save(args.output_dir / "rel_height_abs_err.png")
+    Image.fromarray(colorize(rel_gt_norm, mask)[0]).save(args.output_dir / "rel_height_gt_norm.png")
+    Image.fromarray(colorize(rel_pred_norm, mask)[0]).save(args.output_dir / "rel_height_pred_norm.png")
+    Image.fromarray(colorize(np.abs(rel_pred_norm - rel_gt_norm), mask)[0]).save(
+        args.output_dir / "rel_height_norm_abs_err.png"
+    )
+    Image.fromarray(colorize(rel_pred_norm_affine, mask)[0]).save(args.output_dir / "rel_height_pred_norm_affine.png")
+    Image.fromarray(colorize(np.abs(rel_pred_norm_affine - rel_gt_norm), mask)[0]).save(
+        args.output_dir / "rel_height_norm_affine_abs_err.png"
+    )
+    np.savez_compressed(
+        args.output_dir / "projection_aux_height_arrays.npz",
+        rel_height_gt=rel_gt.astype(np.float32),
+        rel_height_pred=rel_pred.astype(np.float32),
+        rel_height_abs_err=np.abs(rel_pred - rel_gt).astype(np.float32),
+        rel_height_gt_norm=rel_gt_norm.astype(np.float32),
+        rel_height_pred_norm=rel_pred_norm.astype(np.float32),
+        rel_height_norm_abs_err=np.abs(rel_pred_norm - rel_gt_norm).astype(np.float32),
+        rel_height_pred_norm_affine=rel_pred_norm_affine.astype(np.float32),
+        rel_height_norm_affine_abs_err=np.abs(rel_pred_norm_affine - rel_gt_norm).astype(np.float32),
+        valid_mask=mask.astype(bool),
+    )
 
     summary = {
         "remote_dir": str(args.remote_dir),
@@ -300,8 +422,12 @@ def main() -> int:
         "rel_height_mae": masked_mae(rel_pred, rel_gt, mask),
         "offset_mae": masked_mae(offset_pred, offset_gt, mask),
         "rel_height_norm_mae": masked_mae(rel_pred_norm, rel_gt_norm, mask),
+        "rel_height_norm_affine_mae": masked_mae(rel_pred_norm_affine, rel_gt_norm, mask),
+        "rel_height_norm_affine": rel_affine,
         "offset_norm_mae": masked_mae(offset_pred_norm, offset_gt_norm, mask),
-        "rel_height_scale": float(args.rel_height_scale),
+        "rel_height_scale_mode": args.rel_height_scale_mode,
+        "rel_height_scale": float(rel_height_scale),
+        "rel_height_scale_quantile": float(args.rel_height_scale_quantile),
         "offset_scale": float(args.offset_scale),
         "pred_normalized": bool(args.pred_normalized),
         "consistency_mae": masked_mae(offset_pred, offset_from_field, mask),

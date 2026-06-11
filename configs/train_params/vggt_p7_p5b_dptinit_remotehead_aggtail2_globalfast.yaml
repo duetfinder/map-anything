@@ -1,0 +1,11 @@
+defaults:
+  - vggt_p7_p5b_dptinit_remotehead_aggtail2
+
+# Same structure as aggtail2, but let the tiny global dir/slope head adapt fast.
+submodule_configs:
+  remote_projection_aux_dpt_global_head:
+    lr: 5e-04
+    min_lr: 5e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

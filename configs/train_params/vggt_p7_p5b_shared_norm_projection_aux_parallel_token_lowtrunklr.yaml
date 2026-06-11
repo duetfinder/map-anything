@@ -1,0 +1,45 @@
+defaults:
+  - vggt_p7_p5b_shared_norm_projection_aux_lowtrunklr
+
+# P7 parallel-token projection aux head.
+# The aux decoder reads VGGT aggregated patch tokens directly instead of the
+# predicted remote pointmap, so aux gradients no longer pass through point_head
+# outputs. Keep trunk LR conservative; train the new token aux modules faster.
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 1e-07
+    min_lr: 1e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_norm:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_proj:
+    lr: 5e-05
+    min_lr: 5e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_pixel_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_token_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

@@ -1,0 +1,40 @@
+defaults:
+  - vggt_p7_p5b_shared_norm_projection_aux
+
+# Conservative full finetune from the current allcities best.
+# Keep projection aux heads fast, but reduce the VGGT trunk LR so aux gradients
+# do not immediately disturb the already strong 4-view reconstruction solution.
+lr: 2e-06
+min_lr: 2e-08
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 1e-07
+    min_lr: 1e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 2e-05
+    min_lr: 2e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_pixel_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
