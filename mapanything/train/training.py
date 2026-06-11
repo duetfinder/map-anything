@@ -24,6 +24,7 @@ from typing import Sized
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
+import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 
 import mapanything.utils.train_tools as train_tools
@@ -145,6 +146,8 @@ def train(args):
         print("Warm-starting model weights from: ", warmstart_ckpt)
         ckpt = torch.load(warmstart_ckpt, map_location=device, weights_only=False)
         state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+        if hasattr(model, "_migrate_remote_projection_aux_split_heads"):
+            state_dict = model._migrate_remote_projection_aux_split_heads(state_dict)
         model_state = model.state_dict()
         filtered_state_dict = {}
         skipped_shape_mismatch = []
@@ -442,6 +445,41 @@ def _get_train_param(args, name, default):
     return getattr(args.train_params, name, default)
 
 
+def _debug_print_optimizer_grads(
+    model,
+    optimizer,
+    param_groups_idx_to_name_map,
+    rank,
+):
+    if rank != 0:
+        return
+    param_to_name = {id(param): name for name, param in model.named_parameters()}
+    print("Optimizer gradient debug:")
+    print(f"  optimizer_state_entries={len(optimizer.state)}")
+    for group_idx, group in enumerate(optimizer.param_groups):
+        group_name = param_groups_idx_to_name_map.get(group_idx, f"group_{group_idx}")
+        params = list(group.get("params", []))
+        grad_params = [param for param in params if param.grad is not None]
+        grad_elements = sum(param.grad.numel() for param in grad_params)
+        abs_sum = sum(param.grad.detach().abs().sum().item() for param in grad_params)
+        max_abs = max(
+            (param.grad.detach().abs().max().item() for param in grad_params),
+            default=0.0,
+        )
+        mean_abs = abs_sum / max(grad_elements, 1)
+        sample_names = [
+            param_to_name.get(id(param), "<unnamed>") for param in grad_params[:3]
+        ]
+        print(
+            "  "
+            f"group={group_idx}:{group_name} "
+            f"lr={group.get('lr', 0):.6g} "
+            f"params={len(params)} grad_params={len(grad_params)} "
+            f"grad_elements={grad_elements} grad_abs_mean={mean_abs:.6g} "
+            f"grad_abs_max={max_abs:.6g} samples={sample_names}"
+        )
+
+
 def _make_remote_control_inputs(remote_gt_views, mode, blank_value):
     control_inputs = []
     for remote_gt_view in remote_gt_views:
@@ -512,6 +550,100 @@ def _compute_remote_adapter_regularization(model):
         return {}
     return unwrapped.get_remote_to_aerial_regularization_terms()
 
+
+def _gather_distributed_keys_for_local_queries(tensor, gather_distributed=False):
+    if not gather_distributed:
+        return tensor, 0, tensor.shape[0], False
+    if not (dist.is_available() and dist.is_initialized()):
+        return tensor, 0, tensor.shape[0], False
+    world_size = dist.get_world_size()
+    if world_size <= 1:
+        return tensor, 0, tensor.shape[0], False
+
+    local_batch = tensor.shape[0]
+    gathered = [torch.zeros_like(tensor) for _ in range(world_size)]
+    dist.all_gather(gathered, tensor.detach())
+    rank = dist.get_rank()
+    gathered[rank] = tensor
+    global_tensor = torch.cat(gathered, dim=0)
+    start = rank * local_batch
+    return global_tensor, start, local_batch, True
+
+
+def _compute_remote_scene_matching_loss(
+    model,
+    temperature=0.1,
+    gather_distributed=False,
+):
+    unwrapped = _unwrap_train_model(model)
+    if not hasattr(unwrapped, 'get_remote_scene_matching_descriptors'):
+        return None, {}
+    descriptors = unwrapped.get_remote_scene_matching_descriptors()
+    if not descriptors:
+        return None, {}
+    aerial_desc = descriptors.get('aerial')
+    remote_desc = descriptors.get('remote')
+    if aerial_desc is None or remote_desc is None:
+        return None, {}
+    if aerial_desc.ndim != 2 or remote_desc.ndim != 2:
+        return None, {}
+    batch_size = aerial_desc.shape[0]
+    if batch_size < 1 or remote_desc.shape[0] != batch_size:
+        return None, {}
+
+    temperature = max(float(temperature), 1e-6)
+    aerial_norm = torch.nn.functional.normalize(aerial_desc.float(), dim=-1, eps=1e-6)
+    remote_norm = torch.nn.functional.normalize(remote_desc.float(), dim=-1, eps=1e-6)
+    remote_keys, global_start, local_batch, did_gather = (
+        _gather_distributed_keys_for_local_queries(remote_norm, gather_distributed)
+    )
+    aerial_keys, _, _, _ = _gather_distributed_keys_for_local_queries(
+        aerial_norm, gather_distributed
+    )
+    global_batch_size = remote_keys.shape[0]
+    if global_batch_size < 2:
+        return None, {}
+
+    labels = torch.arange(
+        global_start,
+        global_start + local_batch,
+        device=aerial_norm.device,
+    )
+    logits_a2r = aerial_norm @ remote_keys.t() / temperature
+    logits_r2a = remote_norm @ aerial_keys.t() / temperature
+    loss_a2r = torch.nn.functional.cross_entropy(logits_a2r, labels)
+    loss_r2a = torch.nn.functional.cross_entropy(logits_r2a, labels)
+    loss = 0.5 * (loss_a2r + loss_r2a)
+
+    with torch.no_grad():
+        probs = torch.softmax(logits_a2r, dim=1)
+        local_cols = torch.arange(
+            global_start,
+            global_start + local_batch,
+            device=logits_a2r.device,
+        )
+        local_rows = torch.arange(local_batch, device=logits_a2r.device)
+        diag_sim = (logits_a2r * temperature)[local_rows, local_cols].mean()
+        offdiag_mask = torch.ones_like(logits_a2r, dtype=torch.bool)
+        offdiag_mask[local_rows, local_cols] = False
+        if offdiag_mask.any():
+            offdiag_sim = (logits_a2r * temperature)[offdiag_mask].mean()
+        else:
+            offdiag_sim = torch.zeros((), device=logits_a2r.device)
+        top1 = (logits_a2r.argmax(dim=1) == labels).float().mean()
+        diag_prob = probs[local_rows, local_cols].mean()
+        details = {
+            'remote_scene_matching_loss': float(loss.detach()),
+            'remote_scene_matching_diag_sim': float(diag_sim.detach()),
+            'remote_scene_matching_offdiag_sim': float(offdiag_sim.detach()),
+            'remote_scene_matching_top1': float(top1.detach()),
+            'remote_scene_matching_diag_prob': float(diag_prob.detach()),
+            'remote_scene_matching_global_batch': float(global_batch_size),
+            'remote_scene_matching_distributed': float(did_gather),
+        }
+    return loss, details
+
+
 def _compute_remote_control_ranking_loss(
     batch,
     model,
@@ -522,8 +654,9 @@ def _compute_remote_control_ranking_loss(
     modes,
     blank_value,
     same_loss,
+    same_loss_type='joint',
 ):
-    if same_loss is None or not has_joint_remote_supervision(batch):
+    if not has_joint_remote_supervision(batch):
         return None, {}
     aerial_criterion = getattr(criterion, 'aerial_criterion', None)
     if aerial_criterion is None:
@@ -537,6 +670,20 @@ def _compute_remote_control_ranking_loss(
     aerial_gts = list(batch)
     n_remote = len(remote_gt_views)
     amp_dtype = _resolve_amp_dtype(use_amp, amp_dtype)
+
+    def same_aerial_loss_for_grad():
+        remote_inputs = _make_remote_control_inputs(
+            remote_gt_views, 'same', blank_value
+        )
+        if remote_inputs is None:
+            return None
+        model_batch = model_aerial_views + remote_inputs
+        with torch.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
+            preds = model(model_batch)
+            aerial_preds = preds[:-n_remote]
+            with torch.autocast('cuda', enabled=False):
+                loss_value, _ = aerial_criterion(aerial_gts, aerial_preds)
+        return loss_value
 
     def control_aerial_loss_for(control_mode):
         remote_inputs = _make_remote_control_inputs(
@@ -558,9 +705,16 @@ def _compute_remote_control_ranking_loss(
             model.train(was_training)
         return control_loss.detach()
 
+    if same_loss_type == 'aerial_grad':
+        same_ranking_loss = same_aerial_loss_for_grad()
+    else:
+        same_ranking_loss = same_loss
+    if same_ranking_loss is None:
+        return None, {}
+
     ranking_terms = []
     details = {
-        'remote_control_same_aerial_loss': float(same_loss.detach()),
+        'remote_control_same_aerial_loss': float(same_ranking_loss.detach()),
     }
     for mode in modes:
         if mode == 'same':
@@ -568,7 +722,7 @@ def _compute_remote_control_ranking_loss(
         control_loss = control_aerial_loss_for(mode)
         if control_loss is None:
             continue
-        term = torch.relu(same_loss - control_loss + float(margin))
+        term = torch.relu(same_ranking_loss - control_loss + float(margin))
         ranking_terms.append(term)
         details[f'remote_control_{mode}_aerial_loss'] = float(control_loss.detach())
         details[f'remote_control_ranking_{mode}_loss'] = float(term.detach())
@@ -620,6 +774,10 @@ def train_one_epoch(
         dict: Dictionary containing training metrics averaged over the epoch.
     """
     model.train(True)
+    torch.autograd.set_detect_anomaly(
+        bool(_get_train_param(args, "debug_autograd_anomaly", False)),
+        check_nan=True,
+    )
     metric_logger = train_tools.MetricLogger(delimiter="  ")
     for submodule_name in param_groups_name_to_idx_map:
         lr_name = f"lr_{submodule_name}" if submodule_name != "default" else "lr"
@@ -694,6 +852,29 @@ def train_one_epoch(
                 loss = loss + weighted_reg
                 loss_details[f"{reg_name}_weighted"] = float(weighted_reg.detach())
 
+        scene_matching_weight = float(
+            _get_train_param(args, "remote_scene_matching_loss_weight", 0.0)
+        )
+        if scene_matching_weight > 0:
+            matching_loss, matching_details = _compute_remote_scene_matching_loss(
+                model,
+                temperature=float(
+                    _get_train_param(args, "remote_scene_matching_temperature", 0.1)
+                ),
+                gather_distributed=bool(
+                    _get_train_param(
+                        args, "remote_scene_matching_gather_distributed", False
+                    )
+                ),
+            )
+            if matching_loss is not None:
+                weighted_matching_loss = scene_matching_weight * matching_loss
+                loss = loss + weighted_matching_loss
+                loss_details.update(matching_details)
+                loss_details["remote_scene_matching_loss_weighted"] = float(
+                    weighted_matching_loss.detach()
+                )
+
         blank_preserve_weight = float(
             _get_train_param(args, "remote_blank_preserve_loss_weight", 0.0)
         )
@@ -733,6 +914,9 @@ def train_one_epoch(
                 modes=ranking_modes,
                 blank_value=blank_value,
                 same_loss=primary_same_loss,
+                same_loss_type=_get_train_param(
+                    args, "remote_control_ranking_same_loss", "joint"
+                ),
             )
             if ranking_loss is not None:
                 loss = loss + ranking_loss_weight * ranking_loss
@@ -785,13 +969,35 @@ def train_one_epoch(
         loss /= accum_iter
 
         # Compute the scaled gradients (also clip the gradients to max norm of 1)
-        gradient_norm = loss_scaler(
-            loss,
-            optimizer,
-            parameters=model.parameters(),
-            update_grad=(data_iter_step + 1) % accum_iter == 0,
-            clip_grad=1.0,
-        )
+        if bool(_get_train_param(args, "debug_autograd_anomaly", False)):
+            with torch.autograd.detect_anomaly(check_nan=True):
+                gradient_norm = loss_scaler(
+                    loss,
+                    optimizer,
+                    parameters=model.parameters(),
+                    update_grad=(data_iter_step + 1) % accum_iter == 0,
+                    clip_grad=1.0,
+                )
+        else:
+            gradient_norm = loss_scaler(
+                loss,
+                optimizer,
+                parameters=model.parameters(),
+                update_grad=(data_iter_step + 1) % accum_iter == 0,
+                clip_grad=1.0,
+            )
+
+        if bool(_get_train_param(args, "debug_optimizer_grads_once", False)) and (
+            data_iter_step + 1
+        ) % accum_iter == 0:
+            _debug_print_optimizer_grads(
+                model_without_ddp or _unwrap_train_model(model),
+                optimizer,
+                param_groups_idx_to_name_map,
+                train_tools.get_rank(),
+            )
+            if bool(_get_train_param(args, "debug_optimizer_grads_exit", False)):
+                sys.exit(0)
 
         # Zero out the gradients to prepare for the next iteration of gradient descent
         if (data_iter_step + 1) % accum_iter == 0:

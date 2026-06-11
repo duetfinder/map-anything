@@ -578,6 +578,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of residual conv blocks in the P7 projection auxiliary pixel head.",
     )
     parser.add_argument(
+        "--vggt_projection_aux_split_pixel_heads",
+        action="store_true",
+        default=False,
+        help="Use separate final pixel heads for projection aux rel-height and offset predictions.",
+    )
+    parser.add_argument(
         "--include_remote_points",
         action="store_true",
         default=False,
@@ -1024,6 +1030,7 @@ def resolve_config_overrides(args: argparse.Namespace):
                 f"model.model_config.remote_projection_aux_slope_init={args.vggt_projection_aux_slope_init}",
                 f"model.model_config.remote_projection_aux_num_blocks={args.vggt_projection_aux_num_blocks}",
                 f"model.model_config.remote_projection_aux_image_stem_dim={args.vggt_projection_aux_image_stem_dim}",
+                f"model.model_config.remote_projection_aux_split_pixel_heads={str(args.vggt_projection_aux_split_pixel_heads).lower()}",
             ]
         )
 
@@ -1044,6 +1051,7 @@ def resolve_config_overrides(args: argparse.Namespace):
                 f"model.model_config.remote_projection_aux_slope_init={args.vggt_projection_aux_slope_init}",
                 f"model.model_config.remote_projection_aux_num_blocks={args.vggt_projection_aux_num_blocks}",
                 f"model.model_config.remote_projection_aux_image_stem_dim={args.vggt_projection_aux_image_stem_dim}",
+                f"model.model_config.remote_projection_aux_split_pixel_heads={str(args.vggt_projection_aux_split_pixel_heads).lower()}",
             ]
         )
 

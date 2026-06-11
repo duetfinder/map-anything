@@ -24,6 +24,26 @@ def _safe_percentile(values: np.ndarray, q: float) -> float:
     return float(np.percentile(values, q))
 
 
+def load_scene_list(path: Path) -> list[str]:
+    if path.suffix == ".npy":
+        return [str(x) for x in np.load(path, allow_pickle=True).tolist()]
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def resolve_metadata_scene_list(metadata_dir: Path, kind: str, split: str) -> Path:
+    candidates = [
+        metadata_dir / kind / split / f"{kind}_scene_list_{split}.npy",
+        metadata_dir / kind / split / f"Crossview_scene_list_{split}.npy",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        "Could not find metadata scene list. Tried: "
+        + ", ".join(str(path) for path in candidates)
+    )
+
+
 def summarize_file(path: Path) -> dict[str, object]:
     data = np.load(path)
     rel_height = data["rel_height"].astype(np.float32)
@@ -91,13 +111,34 @@ def main() -> None:
     parser.add_argument("--scene-prefix", default=None)
     parser.add_argument("--output-csv", required=True, type=Path)
     parser.add_argument("--top-k", default=20, type=int)
+    parser.add_argument("--metadata-dir", default=None, type=Path)
+    parser.add_argument("--metadata-kind", default="Crossview_rs_aerial")
+    parser.add_argument("--split", default="train")
+    parser.add_argument("--scene-list-path", default=None, type=Path)
+    parser.add_argument("--output-top-scenes-npy", default=None, type=Path)
+    parser.add_argument("--output-top-scenes-txt", default=None, type=Path)
     args = parser.parse_args()
+
+    allowed_scenes = None
+    allowed_scene_source = None
+    if args.scene_list_path is not None:
+        allowed_scenes = set(load_scene_list(args.scene_list_path))
+        allowed_scene_source = args.scene_list_path
+    elif args.metadata_dir is not None:
+        metadata_scene_list = resolve_metadata_scene_list(
+            args.metadata_dir, args.metadata_kind, args.split
+        )
+        allowed_scenes = set(load_scene_list(metadata_scene_list))
+        allowed_scene_source = metadata_scene_list
 
     paths = sorted(args.root.glob("**/projection_aux.npz"))
     if args.provider:
         paths = [p for p in paths if p.parent.name == args.provider]
     if args.scene_prefix:
         paths = [p for p in paths if p.parent.parent.name.startswith(args.scene_prefix)]
+    before_allowed_filter = len(paths)
+    if allowed_scenes is not None:
+        paths = [p for p in paths if p.parent.parent.name in allowed_scenes]
     rows = [summarize_file(path) for path in paths]
     rows.sort(key=lambda row: float(row["score_height_offset"]), reverse=True)
 
@@ -109,7 +150,27 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(rows)
 
+    top_scene_names = [str(row["scene"]) for row in rows[: args.top_k]]
+    if args.output_top_scenes_npy is not None:
+        args.output_top_scenes_npy.parent.mkdir(parents=True, exist_ok=True)
+        np.save(args.output_top_scenes_npy, np.asarray(top_scene_names, dtype=object))
+    if args.output_top_scenes_txt is not None:
+        args.output_top_scenes_txt.parent.mkdir(parents=True, exist_ok=True)
+        args.output_top_scenes_txt.write_text(
+            "\n".join(top_scene_names) + ("\n" if top_scene_names else ""),
+            encoding="utf-8",
+        )
+
+    if allowed_scene_source is not None:
+        print(
+            f"metadata/scene-list filter: {allowed_scene_source} "
+            f"kept {len(paths)}/{before_allowed_filter} projection_aux files"
+        )
     print(f"wrote {len(rows)} rows to {args.output_csv}")
+    if args.output_top_scenes_npy is not None:
+        print(f"wrote top scenes npy to {args.output_top_scenes_npy}")
+    if args.output_top_scenes_txt is not None:
+        print(f"wrote top scenes txt to {args.output_top_scenes_txt}")
     print("top scenes:")
     for row in rows[: args.top_k]:
         print(

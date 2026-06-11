@@ -1,0 +1,86 @@
+defaults:
+  - vggt_p7_projection_aux
+
+# P7O adds a tiny projection head for scene-level aerial/remote matching.
+# The reconstruction path stays unchanged; the head only gives matching loss a
+# compact trainable descriptor space.
+submodule_configs:
+  remote_to_aerial_late_gate:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_to_aerial_late_film:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_to_aerial_late_query_norm:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_to_aerial_late_key_value_norm:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_to_aerial_late_cross_attention:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_pixel_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_scene_matching_projection_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 1e-05
+    min_lr: 1e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+
+
+# P7N2 strengthens direct scene-level cross-modal matching with distributed
+# negatives. Reconstruction-loss ranking stays disabled.
+remote_control_ranking_loss_weight: 0.0
+remote_control_ranking_margin: 0.0
+remote_control_ranking_modes: [shuffled]
+remote_control_blank_value: 0.5
+remote_blank_preserve_loss_weight: 0.0
+remote_scene_matching_loss_weight: 0.5
+remote_scene_matching_temperature: 0.07
+
+remote_scene_matching_gather_distributed: true

@@ -1,0 +1,42 @@
+defaults:
+  - vggt_p7_p5b_shared_norm_projection_aux
+
+# P7 main integration variant: keep the p7ad8 projection-aux mechanism fixed
+# and use its loss as a geometry regularizer for the remote point head.
+submodule_configs:
+  model:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: 0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.aggregator.patch_embed:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: 0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 2e-06
+    min_lr: 2e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_pixel_head:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: 0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_image_stem:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: 0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_global_head:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: 0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

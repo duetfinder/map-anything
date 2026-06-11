@@ -1,53 +1,44 @@
 defaults:
-  - vggt_finetune
+  - vggt_p7_p5b_shared_norm_projection_aux
 
-# P7 remote-head projection-aux keeps the official VGGT trunk and ordinary
-# camera/depth heads fixed. Only the remote point head and projection auxiliary
-# heads are trained, so this isolates remote multitask learning from ordinary
-# reconstruction drift.
-lr: 0
-min_lr: 0
-
+# P7 main-integration ablation: detach the predicted remote pointmap before
+# projection_aux so aux losses no longer backprop into the remote point head.
+# This keeps the p7main2-style mostly-frozen trunk and tests whether aux
+# gradients are part of the high-value height/offset degradation.
 submodule_configs:
+  model:
+    lr: 0.0
+    min_lr: 0.0
+    warmup_epochs: 0
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.aggregator.patch_embed:
+    lr: 5e-07
+    min_lr: 5e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
   remote_point_head:
-    lr: 2e-05
-    min_lr: 2e-07
+    lr: 5e-06
+    min_lr: 5e-08
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
   remote_projection_aux_pixel_head:
-    lr: 1e-04
-    min_lr: 1e-06
-    warmup_epochs: ${train_params.warmup_epochs}
-    weight_decay: ${train_params.weight_decay}
-    schedule_type: ${train_params.schedule_type}
-  remote_projection_aux_rel_height_head:
-    lr: 1e-04
-    min_lr: 1e-06
-    warmup_epochs: ${train_params.warmup_epochs}
-    weight_decay: ${train_params.weight_decay}
-    schedule_type: ${train_params.schedule_type}
-  remote_projection_aux_offset_head:
-    lr: 1e-04
-    min_lr: 1e-06
+    lr: 5e-05
+    min_lr: 5e-07
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
   remote_projection_aux_image_stem:
-    lr: 1e-04
-    min_lr: 1e-06
+    lr: 5e-05
+    min_lr: 5e-07
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}
   remote_projection_aux_global_head:
-    lr: 1e-04
-    min_lr: 1e-06
-    warmup_epochs: ${train_params.warmup_epochs}
-    weight_decay: ${train_params.weight_decay}
-    schedule_type: ${train_params.schedule_type}
-  model:
-    lr: 0
-    min_lr: 0
+    lr: 5e-05
+    min_lr: 5e-07
     warmup_epochs: ${train_params.warmup_epochs}
     weight_decay: ${train_params.weight_decay}
     schedule_type: ${train_params.schedule_type}

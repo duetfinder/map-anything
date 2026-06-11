@@ -283,6 +283,9 @@ def initialize_mapanything_local(local_config, device):
     else:
         state_dict = checkpoint
 
+    if hasattr(model, "_migrate_remote_projection_aux_split_heads"):
+        state_dict = model._migrate_remote_projection_aux_split_heads(state_dict)
+
     model.load_state_dict(state_dict, strict=strict)
 
     model = model.to(device).eval()

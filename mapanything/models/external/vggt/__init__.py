@@ -76,6 +76,10 @@ class VGGTWrapper(torch.nn.Module):
         remote_projection_aux_positive_slope=False,
         remote_projection_aux_slope_init=0.1,
         remote_projection_aux_num_blocks=0,
+        remote_projection_aux_split_pixel_heads=False,
+        use_remote_scene_matching_projection_head=False,
+        remote_scene_matching_projection_dim=128,
+        remote_scene_matching_projection_hidden_scale=0.25,
     ):
         super().__init__()
         self.name = name
@@ -109,6 +113,12 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_projection_aux_positive_slope = remote_projection_aux_positive_slope
         self.remote_projection_aux_slope_init = float(remote_projection_aux_slope_init)
         self.remote_projection_aux_num_blocks = int(remote_projection_aux_num_blocks)
+        self.remote_projection_aux_split_pixel_heads = bool(remote_projection_aux_split_pixel_heads)
+        self.use_remote_scene_matching_projection_head = use_remote_scene_matching_projection_head
+        self.remote_scene_matching_projection_dim = int(remote_scene_matching_projection_dim)
+        self.remote_scene_matching_projection_hidden_scale = float(
+            remote_scene_matching_projection_hidden_scale
+        )
         self.embed_dim = 1024
         self.latest_remote_to_aerial_stats = {}
 
@@ -204,6 +214,19 @@ class VGGTWrapper(torch.nn.Module):
                 torch.tensor(float(remote_to_aerial_late_fusion_gate_init))
             )
 
+        if self.use_remote_scene_matching_projection_head:
+            matching_hidden_dim = max(
+                1, int(token_dim * self.remote_scene_matching_projection_hidden_scale)
+            )
+            self.remote_scene_matching_projection_head = torch.nn.Sequential(
+                torch.nn.LayerNorm(token_dim),
+                torch.nn.Linear(token_dim, matching_hidden_dim),
+                torch.nn.GELU(),
+                torch.nn.Linear(
+                    matching_hidden_dim, self.remote_scene_matching_projection_dim
+                ),
+            )
+
         if self.use_remote_private_point_head:
             self.remote_point_head = deepcopy(self.model.point_head)
 
@@ -236,16 +259,22 @@ class VGGTWrapper(torch.nn.Module):
                     _ProjectionAuxResidualBlock(hidden_dim)
                     for _ in range(self.remote_projection_aux_num_blocks)
                 )
-                pixel_layers.append(torch.nn.Conv2d(hidden_dim, 3, kernel_size=1))
+                if not self.remote_projection_aux_split_pixel_heads:
+                    pixel_layers.append(torch.nn.Conv2d(hidden_dim, 3, kernel_size=1))
                 self.remote_projection_aux_pixel_head = torch.nn.Sequential(*pixel_layers)
             else:
-                self.remote_projection_aux_pixel_head = torch.nn.Sequential(
+                pixel_layers = [
                     torch.nn.Conv2d(aux_pixel_in_channels, hidden_dim, kernel_size=3, padding=1),
                     torch.nn.GELU(),
                     torch.nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
                     torch.nn.GELU(),
-                    torch.nn.Conv2d(hidden_dim, 3, kernel_size=1),
-                )
+                ]
+                if not self.remote_projection_aux_split_pixel_heads:
+                    pixel_layers.append(torch.nn.Conv2d(hidden_dim, 3, kernel_size=1))
+                self.remote_projection_aux_pixel_head = torch.nn.Sequential(*pixel_layers)
+            if self.remote_projection_aux_split_pixel_heads:
+                self.remote_projection_aux_rel_height_head = torch.nn.Conv2d(hidden_dim, 1, kernel_size=1)
+                self.remote_projection_aux_offset_head = torch.nn.Conv2d(hidden_dim, 2, kernel_size=1)
             self.remote_projection_aux_global_head = torch.nn.Sequential(
                 torch.nn.LayerNorm(3),
                 torch.nn.Linear(3, hidden_dim),
@@ -268,13 +297,91 @@ class VGGTWrapper(torch.nn.Module):
             assert self.custom_ckpt_path is not None, (
                 "custom_ckpt_path must be provided if load_custom_ckpt is set to True"
             )
-            custom_ckpt = torch.load(self.custom_ckpt_path, weights_only=False)
-            print(self.model.load_state_dict(custom_ckpt, strict=True))
+            custom_ckpt = torch.load(self.custom_ckpt_path, map_location="cpu", weights_only=False)
+            custom_state, is_wrapper_state = self._extract_custom_state_dict(custom_ckpt)
+            if is_wrapper_state:
+                custom_state = self._migrate_remote_projection_aux_split_heads(custom_state)
+                print(self.load_state_dict(custom_state, strict=False))
+            else:
+                print(self.model.load_state_dict(custom_state, strict=True))
             del custom_ckpt  # in case it occupies memory
-            if self.use_remote_private_point_head:
+            if self.use_remote_private_point_head and not is_wrapper_state:
                 self.remote_point_head.load_state_dict(
                     deepcopy(self.model.point_head.state_dict())
                 )
+
+    @staticmethod
+    def _extract_custom_state_dict(checkpoint):
+        if isinstance(checkpoint, dict):
+            for key in ("state_dict", "model", "model_state_dict"):
+                value = checkpoint.get(key)
+                if isinstance(value, dict):
+                    checkpoint = value
+                    break
+
+        if not isinstance(checkpoint, dict):
+            raise TypeError(f"Expected checkpoint state dict, got {type(checkpoint)}")
+
+        state_dict = {}
+        for key, value in checkpoint.items():
+            new_key = key
+            if new_key.startswith("module."):
+                new_key = new_key[len("module."):]
+            state_dict[new_key] = value
+
+        is_wrapper_state = any(
+            key.startswith(("model.", "remote_point_head.", "remote_projection_aux_"))
+            for key in state_dict
+        )
+        if is_wrapper_state:
+            return state_dict, True
+
+        inner_state = {}
+        for key, value in state_dict.items():
+            new_key = key
+            if new_key.startswith("model."):
+                new_key = new_key[len("model."):]
+            inner_state[new_key] = value
+        return inner_state, False
+
+    def _migrate_remote_projection_aux_split_heads(self, state_dict):
+        if not self.remote_projection_aux_split_pixel_heads:
+            return state_dict
+        rel_weight_key = "remote_projection_aux_rel_height_head.weight"
+        offset_weight_key = "remote_projection_aux_offset_head.weight"
+        if rel_weight_key in state_dict and offset_weight_key in state_dict:
+            return state_dict
+
+        final_weight_key = None
+        final_index = -1
+        for key, value in state_dict.items():
+            if not key.startswith("remote_projection_aux_pixel_head.") or not key.endswith(".weight"):
+                continue
+            if not hasattr(value, "ndim") or value.ndim != 4 or value.shape[0] != 3:
+                continue
+            if tuple(value.shape[-2:]) != (1, 1):
+                continue
+            parts = key.split(".")
+            if len(parts) < 3 or not parts[1].isdigit():
+                continue
+            index = int(parts[1])
+            if index > final_index:
+                final_index = index
+                final_weight_key = key
+
+        if final_weight_key is None:
+            return state_dict
+
+        final_prefix = final_weight_key.rsplit(".", 1)[0]
+        final_bias_key = f"{final_prefix}.bias"
+        final_weight = state_dict[final_weight_key]
+        state_dict[rel_weight_key] = final_weight[:1].clone()
+        state_dict[offset_weight_key] = final_weight[1:3].clone()
+        if final_bias_key in state_dict:
+            final_bias = state_dict[final_bias_key]
+            state_dict["remote_projection_aux_rel_height_head.bias"] = final_bias[:1].clone()
+            state_dict["remote_projection_aux_offset_head.bias"] = final_bias[1:3].clone()
+        return state_dict
 
     def _apply_remote_projection_aux_head(self, output, source_pointmap, source_image=None):
         if not self.use_remote_projection_aux_head:
@@ -304,7 +411,13 @@ class VGGTWrapper(torch.nn.Module):
                 )
             image_for_stem = source_image.to(device=aux_chw.device, dtype=aux_chw.dtype)
             aux_chw = torch.cat([aux_chw, self.remote_projection_aux_image_stem(image_for_stem)], dim=1)
-        pixel_pred = self.remote_projection_aux_pixel_head(aux_chw)
+        pixel_features = self.remote_projection_aux_pixel_head(aux_chw)
+        if self.remote_projection_aux_split_pixel_heads:
+            rel_height_pred = self.remote_projection_aux_rel_height_head(pixel_features)
+            offset_pred = self.remote_projection_aux_offset_head(pixel_features)
+            pixel_pred = torch.cat([rel_height_pred, offset_pred], dim=1)
+        else:
+            pixel_pred = pixel_features
         pixel_pred = pixel_pred.permute(0, 2, 3, 1).contiguous()
         output["remote_projection_rel_height_pred"] = pixel_pred[..., 0]
         output["remote_projection_offset_xy_pred"] = pixel_pred[..., 1:3]
@@ -649,6 +762,8 @@ class VGGTWrapper(torch.nn.Module):
 
     def _apply_late_remote_to_aerial_fusion(self, aggregated_tokens_list, views):
         self.latest_remote_to_aerial_stats = {}
+        self.latest_remote_scene_matching = {}
+        self.latest_remote_scene_matching_projected = None
         if self.remote_to_aerial_late_fusion_type == "none":
             return aggregated_tokens_list
 
@@ -670,6 +785,11 @@ class VGGTWrapper(torch.nn.Module):
             remote_patch_tokens = tokens[:, remote_mask, patch_start_idx:, :]
             batch_size, num_aerial, num_patches, token_dim = aerial_patch_tokens.shape
             remote_context_tokens = remote_patch_tokens.reshape(batch_size, -1, token_dim)
+            aerial_context_tokens = aerial_patch_tokens.reshape(batch_size, -1, token_dim)
+
+            matching = self.latest_remote_scene_matching
+            matching.setdefault("aerial", []).append(aerial_context_tokens.mean(dim=1).float())
+            matching.setdefault("remote", []).append(remote_context_tokens.mean(dim=1).float())
 
             if self.remote_to_aerial_late_fusion_type == "film":
                 remote_context = remote_context_tokens.mean(dim=1)
@@ -715,6 +835,43 @@ class VGGTWrapper(torch.nn.Module):
             updated_tokens_list.append(updated_tokens)
 
         return updated_tokens_list
+
+    def _finalize_remote_scene_matching_descriptors(self):
+        matching = getattr(self, "latest_remote_scene_matching", None) or {}
+        aerial_values = matching.get("aerial") or []
+        remote_values = matching.get("remote") or []
+        if not aerial_values or not remote_values:
+            self.latest_remote_scene_matching_projected = None
+            return
+
+        aerial_desc = torch.stack(aerial_values, dim=0).mean(dim=0)
+        remote_desc = torch.stack(remote_values, dim=0).mean(dim=0)
+        if hasattr(self, "remote_scene_matching_projection_head"):
+            combined_desc = torch.cat([aerial_desc, remote_desc], dim=0)
+            combined_desc = self.remote_scene_matching_projection_head(combined_desc)
+            aerial_desc, remote_desc = combined_desc.chunk(2, dim=0)
+
+        self.latest_remote_scene_matching_projected = {
+            "aerial": aerial_desc,
+            "remote": remote_desc,
+        }
+
+    def get_remote_scene_matching_descriptors(self):
+        projected = getattr(self, "latest_remote_scene_matching_projected", None)
+        if projected is not None:
+            return projected
+
+        matching = getattr(self, "latest_remote_scene_matching", None) or {}
+        aerial_values = matching.get("aerial") or []
+        remote_values = matching.get("remote") or []
+        if not aerial_values or not remote_values:
+            return None
+        aerial_desc = torch.stack(aerial_values, dim=0).mean(dim=0)
+        remote_desc = torch.stack(remote_values, dim=0).mean(dim=0)
+        return {
+            "aerial": aerial_desc,
+            "remote": remote_desc,
+        }
 
     def get_remote_to_aerial_regularization_terms(self):
         terms = {}
@@ -766,6 +923,7 @@ class VGGTWrapper(torch.nn.Module):
             aggregated_tokens_list = self._apply_late_remote_to_aerial_fusion(
                 aggregated_tokens_list, views
             )
+            self._finalize_remote_scene_matching_descriptors()
             aggregated_tokens_list = self._apply_remote_to_aerial_gated_residual(
                 aggregated_tokens_list, views
             )
