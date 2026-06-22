@@ -20,8 +20,13 @@ if [ -z "${MODEL_NAME:-}" ]; then
 fi
 
 if [ -z "${CKPT_PATH:-}" ]; then
-    echo "CKPT_PATH must be set." >&2
+    echo "CKPT_PATH must be set. Use CKPT_PATH=none for default pretrained weights." >&2
     exit 1
+fi
+
+CHECKPOINT_ARGS=()
+if [ "${CKPT_PATH}" != "none" ]; then
+    CHECKPOINT_ARGS=(checkpoint_path="${CKPT_PATH}")
 fi
 
 if [ -z "${OUTPUT_DIR:-}" ]; then
@@ -48,7 +53,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=${CUDA_DEVICE} python3 \
     dataset.vigor_chicago_wai.val.view_sampling_mode=${VIEW_SAMPLING_MODE} \
     batch_size=${BATCH_SIZE} \
     model=${MODEL_NAME} \
-    checkpoint_path="${CKPT_PATH}" \
+    "${CHECKPOINT_ARGS[@]}" \
     hydra.run.dir="${OUTPUT_DIR}" \
     dataset.vigor_chicago_wai.val.cities=[${CITY}] \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.cities=[${CITY}] \

@@ -806,10 +806,13 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
     if not overlap.any():
         return {
             "rs_point_l1": float("nan"),
+            "rs_point_l1_normalized": float("nan"),
             "rs_point_l1_centered": float("nan"),
             "rs_point_l1_scale_aligned": float("nan"),
             "rs_point_scale_aligned_scale": float("nan"),
             "rs_point_abs_rel": float("nan"),
+            "rs_point_abs_rel_normalized": float("nan"),
+            "rs_point_abs_rel_global": float("nan"),
             "rs_point_abs_rel_centered": float("nan"),
             "rs_point_abs_rel_scale_aligned": float("nan"),
         }
@@ -838,9 +841,28 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
         scale_aligned_l1 = float("nan")
 
     gt_norm = np.linalg.norm(gt_vec, axis=-1)
-    abs_rel = point_err / np.clip(gt_norm, 1e-8, None)
+    global_abs_rel = point_err / np.clip(gt_norm, 1e-8, None)
     gt_centered_norm = np.linalg.norm(gt_centered, axis=-1)
     centered_abs_rel = centered_err / np.clip(gt_centered_norm, 1e-8, None)
+
+    # Match aerial pointmaps_abs_rel for a single remote input: the remote
+    # view is its own reference view, then GT and prediction are normalized
+    # independently with the same avg_dis rule used by dense_n_view.
+    gt_t = torch.from_numpy(gt_vec).view(1, -1, 1, 3).float()
+    pred_t = torch.from_numpy(pred_vec).view(1, -1, 1, 3).float()
+    mask_t = torch.ones((1, gt_vec.shape[0], 1), dtype=torch.bool)
+    gt_normed = normalize_multiple_pointclouds(
+        [gt_t], valid_masks=[mask_t], norm_mode="avg_dis"
+    )[0][0, :, 0].numpy()
+    pred_normed = normalize_multiple_pointclouds(
+        [pred_t], valid_masks=[mask_t], norm_mode="avg_dis"
+    )[0][0, :, 0].numpy()
+    normalized_err = np.linalg.norm(pred_normed - gt_normed, axis=-1)
+    gt_normed_norm = np.linalg.norm(gt_normed, axis=-1)
+    normalized_abs_rel_values = normalized_err / np.clip(gt_normed_norm, 1e-8, None)
+    normalized_l1 = float(np.mean(normalized_err))
+    normalized_abs_rel = float(np.mean(normalized_abs_rel_values))
+
     if denom > 1e-12:
         scale_aligned_abs_rel = scale_aligned_err / np.clip(gt_centered_norm, 1e-8, None)
         scale_aligned_abs_rel = float(np.mean(scale_aligned_abs_rel))
@@ -849,10 +871,13 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
 
     return {
         "rs_point_l1": float(np.mean(point_err)),
+        "rs_point_l1_normalized": normalized_l1,
         "rs_point_l1_centered": float(np.mean(centered_err)),
         "rs_point_l1_scale_aligned": scale_aligned_l1,
         "rs_point_scale_aligned_scale": scale,
-        "rs_point_abs_rel": float(np.mean(abs_rel)),
+        "rs_point_abs_rel": normalized_abs_rel,
+        "rs_point_abs_rel_normalized": normalized_abs_rel,
+        "rs_point_abs_rel_global": float(np.mean(global_abs_rel)),
         "rs_point_abs_rel_centered": float(np.mean(centered_abs_rel)),
         "rs_point_abs_rel_scale_aligned": scale_aligned_abs_rel,
     }
