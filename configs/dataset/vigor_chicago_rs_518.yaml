@@ -29,7 +29,8 @@ vigor_chicago_rs:
         crop_mode='${dataset.vigor_chicago_rs.train.crop_mode}',
         crop_scale_range=${dataset.vigor_chicago_rs.train.crop_scale_range},
         image_resize_mode='${dataset.vigor_chicago_rs.train.image_resize_mode}',
-        label_resize_mode='${dataset.vigor_chicago_rs.train.label_resize_mode}')"
+        label_resize_mode='${dataset.vigor_chicago_rs.train.label_resize_mode}',
+        instance_value='${dataset.vigor_chicago_rs.train.instance_value}')"
     split: 'train'
     dataset_resolution: ${dataset.resolution_train}
     transform: 'imgnorm'
@@ -44,6 +45,7 @@ vigor_chicago_rs:
     crop_scale_range: [0.7, 1.0]
     image_resize_mode: 'nearest'
     label_resize_mode: 'nearest'
+    instance_value: null
     cities: []
   val:
     dataset_str:
@@ -62,7 +64,8 @@ vigor_chicago_rs:
         crop_mode='${dataset.vigor_chicago_rs.val.crop_mode}',
         crop_scale_range=${dataset.vigor_chicago_rs.val.crop_scale_range},
         image_resize_mode='${dataset.vigor_chicago_rs.val.image_resize_mode}',
-        label_resize_mode='${dataset.vigor_chicago_rs.val.label_resize_mode}')"
+        label_resize_mode='${dataset.vigor_chicago_rs.val.label_resize_mode}',
+        instance_value='${dataset.vigor_chicago_rs.val.instance_value}')"
     split: 'val'
     dataset_resolution: ${dataset.resolution_val}
     transform: 'imgnorm'
@@ -77,6 +80,7 @@ vigor_chicago_rs:
     crop_scale_range: [0.7, 1.0]
     image_resize_mode: 'nearest'
     label_resize_mode: 'nearest'
+    instance_value: null
     cities: []
   test:
     dataset_str:
@@ -95,7 +99,8 @@ vigor_chicago_rs:
         crop_mode='${dataset.vigor_chicago_rs.test.crop_mode}',
         crop_scale_range=${dataset.vigor_chicago_rs.test.crop_scale_range},
         image_resize_mode='${dataset.vigor_chicago_rs.test.image_resize_mode}',
-        label_resize_mode='${dataset.vigor_chicago_rs.test.label_resize_mode}')"
+        label_resize_mode='${dataset.vigor_chicago_rs.test.label_resize_mode}',
+        instance_value='${dataset.vigor_chicago_rs.test.instance_value}')"
     split: 'test'
     dataset_resolution: ${dataset.resolution_val}
     transform: 'imgnorm'
@@ -110,4 +115,5 @@ vigor_chicago_rs:
     crop_scale_range: [0.7, 1.0]
     image_resize_mode: 'nearest'
     label_resize_mode: 'nearest'
+    instance_value: null
     cities: []

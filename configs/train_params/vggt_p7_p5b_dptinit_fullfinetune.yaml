@@ -1,0 +1,40 @@
+defaults:
+  - vggt_p7_p5b_shared_norm_projection_aux
+
+# Full VGGT finetune for the Stage-A DPT-initialized projection auxiliary probe.
+# The base config keeps the shared aggregator trainable at the conservative
+# VGGT finetune LR; this file only adds the DPT projection-aux module groups.
+ddp_static_graph: false
+ddp_find_unused_parameters: true
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 5e-07
+    min_lr: 5e-09
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 2e-05
+    min_lr: 2e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_height_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_offset_head:
+    lr: 2e-05
+    min_lr: 2e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_projection_aux_dpt_global_head:
+    lr: 1e-04
+    min_lr: 1e-06
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

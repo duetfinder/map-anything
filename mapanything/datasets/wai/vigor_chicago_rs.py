@@ -58,6 +58,7 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
         crop_scale_range=(1.0, 1.0),
         image_resize_mode='nearest',
         label_resize_mode='nearest',
+        instance_value=None,
     ):
         self.root = Path(ROOT)
         self.split = split
@@ -79,6 +80,7 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
         self.crop_scale_range = tuple(crop_scale_range)
         self.image_resize_mode = image_resize_mode
         self.label_resize_mode = label_resize_mode
+        self.instance_value = instance_value
         normalized_providers = normalize_providers(providers)
         if normalized_providers is None and provider is not None:
             normalized_providers = normalize_providers(provider)
@@ -202,7 +204,8 @@ class VigorChicagoRS(EasyDataset, torch.utils.data.Dataset):
             'data_norm_type': self.data_norm_type,
             'dataset': 'vigor_chicago_rs',
             'label': sample['scene_name'],
-            'instance': sample['remote_provider'],
+            'instance': self.instance_value or sample['remote_provider'],
+            'remote_provider': sample['remote_provider'],
             'remote_pointmap': remote_pointmap,
             'remote_valid_mask': remote_valid_mask,
             'remote_height_map': remote_height_map,

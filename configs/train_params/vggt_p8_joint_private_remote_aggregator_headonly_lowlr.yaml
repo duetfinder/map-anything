@@ -1,0 +1,31 @@
+defaults:
+  - vggt_p8_joint_private_remote_aggregator_lowlr
+
+# Ablation from an already working private-remote-aggregator checkpoint:
+# freeze the private remote aggregator and continue adapting only the remote
+# point head. This separates head calibration from remote trunk adaptation.
+submodule_configs:
+  remote_aggregator.patch_embed:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_aggregator.frame_blocks:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_aggregator.global_blocks:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  remote_point_head:
+    lr: 3e-06
+    min_lr: 3e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}

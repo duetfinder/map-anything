@@ -1,0 +1,105 @@
+#!/bin/bash
+set -euo pipefail
+
+# P7 next-run wrapper: continue from the stable point-residual XYZ branch,
+# keep GPU memory high, and avoid accumulating intermediate checkpoints.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+OUTPUT_ROOT=${OUTPUT_ROOT:-/root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt}
+
+EXP_NAME=${EXP_NAME:-p7_aux_pointresidual_xyz_gt_w10_pm8_cont_e12_b9_2gpu}
+OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXP_NAME}"}
+WARMSTART_CKPT=${WARMSTART_CKPT:-"${OUTPUT_ROOT}/p7_aux_pointresidual_xyz_gt_w10_pm8_allcities_warm2citybest_e8_b9_2gpu/checkpoint-final.pth"}
+
+if [ ! -f "${WARMSTART_CKPT}" ]; then
+    echo "WARMSTART_CKPT does not exist: ${WARMSTART_CKPT}" >&2
+    exit 1
+fi
+
+mkdir -p "${OUTPUT_DIR}"
+
+export NUM_GPUS=${NUM_GPUS:-2}
+export CUDA_DEVICES=${CUDA_DEVICES:-0,1}
+export MASTER_PORT=${MASTER_PORT:-29547}
+export NUM_WORKERS=${NUM_WORKERS:-12}
+export NUM_VIEWS=${NUM_VIEWS:-4}
+export BATCH_SIZE=${BATCH_SIZE:-9}
+export EPOCHS=${EPOCHS:-12}
+export WARMUP_EPOCHS=${WARMUP_EPOCHS:-1}
+export EVAL_FREQ=${EVAL_FREQ:-1}
+export SAVE_FREQ=0
+export KEEP_FREQ=0
+export PRINT_FREQ=${PRINT_FREQ:-20}
+
+export TRAIN_CITIES=${TRAIN_CITIES:-[chicago,newyork,sanfrancisco,seattle]}
+export VAL_CITIES=${VAL_CITIES:-[chicago,newyork,sanfrancisco,seattle]}
+export TEST_CITIES=${TEST_CITIES:-[chicago,newyork,sanfrancisco,seattle]}
+export REMOTE_TRAIN_CROP_MODE=${REMOTE_TRAIN_CROP_MODE:-none}
+export REMOTE_VAL_CROP_MODE=${REMOTE_VAL_CROP_MODE:-none}
+export REMOTE_TEST_CROP_MODE=${REMOTE_TEST_CROP_MODE:-none}
+export RS_PROVIDER=${RS_PROVIDER:-Google_Satellite,Bing_Satellite}
+export REMOTE_PROVIDER_SAMPLING_MODE=${REMOTE_PROVIDER_SAMPLING_MODE:-random}
+
+export LOAD_CUSTOM_CKPT=false
+export PRETRAINED_CKPT=
+export RESUME=${RESUME:-false}
+export WARMSTART_CKPT
+export OUTPUT_DIR
+
+export TRAIN_PARAMS=${TRAIN_PARAMS:-vggt_p7_p5b_shared_norm_projection_aux_tokenlr}
+export LOSS_CONFIG=${LOSS_CONFIG:-vggt_loss_rs_joint_p7_remote_head_projection_aux}
+
+export USE_REMOTE_PRIVATE_POINT_HEAD=true
+export REMOTE_OUTPUT_HEAD=auto
+export REMOTE_PROJECTION_AUX_SOURCE=${REMOTE_PROJECTION_AUX_SOURCE:-tokens}
+export REMOTE_PROJECTION_AUX_HIDDEN_DIM=${REMOTE_PROJECTION_AUX_HIDDEN_DIM:-96}
+export REMOTE_PROJECTION_AUX_NUM_BLOCKS=${REMOTE_PROJECTION_AUX_NUM_BLOCKS:-6}
+export USE_REMOTE_PROJECTION_AUX_TOKEN_RESIDUAL=${USE_REMOTE_PROJECTION_AUX_TOKEN_RESIDUAL:-false}
+
+export LAMBDA_REMOTE_PM=${LAMBDA_REMOTE_PM:-8.0}
+export LAMBDA_REMOTE_RAW_PM=${LAMBDA_REMOTE_RAW_PM:-0.0}
+export REMOTE_POINTMAP_TOP_N_PERCENT=${REMOTE_POINTMAP_TOP_N_PERCENT:-0.0}
+export LAMBDA_REMOTE_PM_GRAD=${LAMBDA_REMOTE_PM_GRAD:-0.0}
+export LAMBDA_REMOTE_PM_MOGE_HEIGHT=${LAMBDA_REMOTE_PM_MOGE_HEIGHT:-0.0}
+export LAMBDA_REMOTE_OVERLAP_PM=${LAMBDA_REMOTE_OVERLAP_PM:-0.0}
+export LAMBDA_REMOTE_HIGH_Z=${LAMBDA_REMOTE_HIGH_Z:-0.0}
+export LAMBDA_REMOTE_Z_DIST=${LAMBDA_REMOTE_Z_DIST:-0.0}
+
+export LAMBDA_PROJ_REL_HEIGHT=${LAMBDA_PROJ_REL_HEIGHT:-0.0}
+export LAMBDA_PROJ_OFFSET=${LAMBDA_PROJ_OFFSET:-0.0}
+export LAMBDA_PROJ_GLOBAL_SLOPE=${LAMBDA_PROJ_GLOBAL_SLOPE:-0.0}
+export LAMBDA_PROJ_GLOBAL_DIR=${LAMBDA_PROJ_GLOBAL_DIR:-0.0}
+export LAMBDA_PROJ_CONSISTENCY=${LAMBDA_PROJ_CONSISTENCY:-0.0}
+export PROJ_REL_HEIGHT_AFFINE_WEIGHT=${PROJ_REL_HEIGHT_AFFINE_WEIGHT:-0.0}
+export PROJ_REL_HEIGHT_BALANCED_WEIGHT=${PROJ_REL_HEIGHT_BALANCED_WEIGHT:-0.0}
+export PROJ_REL_HEIGHT_CONTRAST_WEIGHT=${PROJ_REL_HEIGHT_CONTRAST_WEIGHT:-0.0}
+export PROJ_REL_HEIGHT_BUCKET_MEAN_WEIGHT=${PROJ_REL_HEIGHT_BUCKET_MEAN_WEIGHT:-0.0}
+export PROJ_REL_HEIGHT_LOW_OVERPRED_WEIGHT=${PROJ_REL_HEIGHT_LOW_OVERPRED_WEIGHT:-0.0}
+export PROJ_DENSE_REL_HEIGHT_WEIGHT=${PROJ_DENSE_REL_HEIGHT_WEIGHT:-0.0}
+export PROJ_OFFSET_BALANCED_WEIGHT=${PROJ_OFFSET_BALANCED_WEIGHT:-0.0}
+export PROJ_OFFSET_CONTRAST_WEIGHT=${PROJ_OFFSET_CONTRAST_WEIGHT:-0.0}
+export PROJ_OFFSET_BUCKET_MEAN_WEIGHT=${PROJ_OFFSET_BUCKET_MEAN_WEIGHT:-0.0}
+export PROJ_OFFSET_LOW_OVERPRED_WEIGHT=${PROJ_OFFSET_LOW_OVERPRED_WEIGHT:-0.0}
+export PROJ_DENSE_GLOBAL_OFFSET_WEIGHT=${PROJ_DENSE_GLOBAL_OFFSET_WEIGHT:-0.0}
+export PROJ_POINT_RESIDUAL_XYZ_TO_GT=${PROJ_POINT_RESIDUAL_XYZ_TO_GT:-10.0}
+export PROJ_POINT_RESIDUAL_OFFSET_TO_GT=${PROJ_POINT_RESIDUAL_OFFSET_TO_GT:-0.0}
+export PROJ_POINT_OFFSET_TO_GT=${PROJ_POINT_OFFSET_TO_GT:-0.0}
+
+LOG_FILE="${OUTPUT_DIR}.run.log"
+echo "Launching ${EXP_NAME}"
+echo "OUTPUT_DIR=${OUTPUT_DIR}"
+echo "WARMSTART_CKPT=${WARMSTART_CKPT}"
+echo "CUDA_DEVICES=${CUDA_DEVICES} NUM_GPUS=${NUM_GPUS} BATCH_SIZE=${BATCH_SIZE} NUM_WORKERS=${NUM_WORKERS}"
+
+cd "${REPO_ROOT}"
+bash "${SCRIPT_DIR}/p7_vggt_p5b_shared_norm_projection_aux.sh" "$@" 2>&1 | tee "${LOG_FILE}"
+
+rm -f "${OUTPUT_DIR}"/checkpoint-last.pth "${OUTPUT_DIR}"/checkpoint-[0-9]*.pth "${OUTPUT_DIR}"/checkpoint-debug.pth
+
+if [ -f "${OUTPUT_DIR}/checkpoint-best.pth" ] && [ -f "${OUTPUT_DIR}/checkpoint-final.pth" ]; then
+    rm -f "${OUTPUT_DIR}/checkpoint-best.pth"
+fi
+
+echo "Done. Kept checkpoints:"
+find "${OUTPUT_DIR}" -maxdepth 1 -type f -name 'checkpoint-*.pth' -printf '%f %s bytes\n' | sort

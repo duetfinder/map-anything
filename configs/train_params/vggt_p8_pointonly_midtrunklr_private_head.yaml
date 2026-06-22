@@ -1,0 +1,75 @@
+defaults:
+  - vggt_finetune
+
+# P8 point-only upper-bound probe.
+# Compared with vggt_p6b_joint_remote_alignment_private_head, this keeps the
+# architecture and frozen ordinary heads unchanged, but lets the shared
+# aggregator adapt more strongly to remote point regression.
+lr: 8e-06
+min_lr: 8e-08
+
+submodule_configs:
+  model.aggregator.patch_embed:
+    lr: 1e-06
+    min_lr: 1e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+
+  model.aggregator.frame_blocks:
+    lr: 8e-06
+    min_lr: 8e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.aggregator.global_blocks:
+    lr: 8e-06
+    min_lr: 8e-08
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+
+  model.camera_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.depth_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.track_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+  model.point_head:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+
+  remote_point_head:
+    lr: 3e-05
+    min_lr: 3e-07
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: ${train_params.weight_decay}
+    schedule_type: ${train_params.schedule_type}
+
+  aerial_view_type_embedding:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}
+  remote_view_type_embedding:
+    lr: 0
+    min_lr: 0
+    warmup_epochs: ${train_params.warmup_epochs}
+    weight_decay: 0.0
+    schedule_type: ${train_params.schedule_type}

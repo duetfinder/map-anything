@@ -181,6 +181,21 @@ python scripts/export_pointcloud_ply.py \
     --vggt_export_mode mixed \
     --remote_view_names image.png \
 && \
+# p8 private remote aggregator: ordinary views keep the VGGT path, while remote
+# views use the trained remote_aggregator plus remote_point_head. The private
+# aggregator is auto-detected from checkpoints containing remote_aggregator.*,
+# but the explicit flag is kept here for clarity.
+python scripts/export_pointcloud_ply.py \
+    --model vggt \
+    --checkpoint_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/training/Crossview/vggt/p8_joint_nychicago_4sat_private_remoteagg_fromrsonly_worldgt_e80_b8_2gpu/checkpoint-final.pth \
+    --image_folder /root/autodl-tmp/test/scence/493 \
+    --output_path /root/autodl-tmp/outputs/mapanything_experiments/mapanything/debug/plyview/493/vggt_p8_joint_private_remoteagg_worldgt \
+    --vggt_joint_remote_export \
+    --vggt_export_mode mixed \
+    --vggt_use_remote_private_point_head \
+    --vggt_use_remote_private_aggregator \
+    --remote_view_names image.png \
+&& \
 # p5e default mixed export: ordinary views use camera+depth, remote uses point_head.
 python scripts/export_pointcloud_ply.py \
     --model vggt \
@@ -384,6 +399,7 @@ python scripts/export_pointcloud_ply.py \
 import argparse
 import json
 import os
+import random
 import re
 import sys
 from pathlib import Path
@@ -610,6 +626,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--vggt_use_remote_private_aggregator",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable VGGT remote private aggregator when exporting p8 checkpoints."
+        ),
+    )
+    parser.add_argument(
         "--vggt_p5f_lite_export",
         action="store_true",
         default=False,
@@ -775,12 +799,14 @@ def parse_args() -> argparse.Namespace:
         "--projection_aux_rel_height_scale_mode",
         type=str,
         default="pred_avg_dis",
-        choices=["pred_avg_dis", "pred_z_std", "fixed", "gt_height_range"],
+        choices=["pred_avg_dis", "pred_z_std", "fixed", "gt_height_range", "gt_height_affine"],
         help=(
             "Scale used to convert predicted aux rel-height back from loss space. "
             "pred_avg_dis matches avg_dis-style pointmap normalization approximately. "
             "gt_height_range min-max aligns predicted rel-height to GT rel-height "
-            "quantiles from --projection_aux_gt_remote_dir for diagnostics."
+            "quantiles from --projection_aux_gt_remote_dir for diagnostics. "
+            "gt_height_affine least-squares aligns predicted normalized rel-height "
+            "to GT normalized rel-height before reconstructing points."
         ),
     )
     parser.add_argument(
@@ -808,6 +834,25 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Diagnostic only: use global_slope from GT projection_aux.npz for "
             "projection-aux global reconstruction."
+        ),
+    )
+    parser.add_argument(
+        "--projection_aux_flip_global_reconstruction_direction",
+        action="store_true",
+        default=False,
+        help=(
+            "Diagnostic only: flip the sign of global rel_height*slope*dir when "
+            "exporting projection-aux global/grid_global point clouds. This is for "
+            "visualizing the opposite tilt direction and does not affect training."
+        ),
+    )
+    parser.add_argument(
+        "--projection_aux_use_gt_rel_height",
+        action="store_true",
+        default=False,
+        help=(
+            "Diagnostic only: replace predicted normalized rel-height with GT "
+            "rel_height / GT pointmap avg_dis for projection-aux reconstruction."
         ),
     )
     parser.add_argument(
@@ -877,6 +922,25 @@ def parse_args() -> argparse.Namespace:
         help="Remote point-head z quantile used as the ground reference for aux height reconstruction.",
     )
     parser.add_argument(
+        "--export_projection_aux_point_residual",
+        action="store_true",
+        default=True,
+        help=(
+            "For P7 residual-offset experiments, export remote point clouds corrected "
+            "by remote_projection_offset_xy_pred. Writes one PLY in the point-head "
+            "scale and one normalized PLY matching the training residual loss space."
+        ),
+    )
+    parser.add_argument(
+        "--projection_aux_point_residual_norm_mode",
+        type=str,
+        default="avg_dis",
+        help=(
+            "Pointmap normalization mode used when visualizing aux point-residual "
+            "correction. This should match loss.pointmap_norm_mode."
+        ),
+    )
+    parser.add_argument(
         "--include_remote_points",
         action="store_true",
         default=False,
@@ -940,6 +1004,27 @@ def parse_args() -> argparse.Namespace:
             "RS-joint export. If omitted, common satellite/remote filenames such as "
             "image.png, zimage.png, sate*.png, and *Satellite* are auto-detected."
         ),
+    )
+    parser.add_argument(
+        "--max_images",
+        type=int,
+        default=None,
+        help=(
+            "Keep at most this many loaded images for export. With --random_sample, "
+            "marked remote images are kept and ordinary views are sampled by seed."
+        ),
+    )
+    parser.add_argument(
+        "--random_sample",
+        action="store_true",
+        default=False,
+        help="Randomly sample ordinary input views when --max_images limits the export set.",
+    )
+    parser.add_argument(
+        "--random_seed",
+        type=int,
+        default=0,
+        help="Seed used by --random_sample.",
     )
     parser.add_argument(
         "--memory_efficient_inference",
@@ -1418,7 +1503,21 @@ def use_vggt_remote_to_aerial_gated_residual(args: argparse.Namespace) -> bool:
 
 
 def use_vggt_split_remote_aggregator(args: argparse.Namespace) -> bool:
-    return args.model == "vggt" and resolve_vggt_late_fusion_type(args) != "none"
+    return args.model == "vggt" and (
+        resolve_vggt_late_fusion_type(args) != "none"
+        or use_vggt_remote_private_aggregator(args)
+    )
+
+
+def use_vggt_remote_private_aggregator(args: argparse.Namespace) -> bool:
+    if args.model != "vggt":
+        return False
+    if args.vggt_use_remote_private_aggregator:
+        return True
+    if checkpoint_has_key_prefix(args, "remote_aggregator."):
+        print("Auto-detected remote_aggregator in checkpoint; enabling private remote aggregator.")
+        return True
+    return False
 
 
 def use_vggt_remote_private_point_head(args: argparse.Namespace) -> bool:
@@ -1683,6 +1782,15 @@ def resolve_config_overrides(args: argparse.Namespace):
             or use_p7_p5e_private_viewtype_projection_aux_export(args)
         ):
             overrides.append("model.model_config.output_point_head_for_consistency=true")
+    if use_vggt_remote_private_aggregator(args):
+        overrides.extend(
+            [
+                "model.model_config.use_split_remote_aggregator=true",
+                "model.model_config.use_remote_private_aggregator=true",
+                "model.model_config.remote_to_aerial_late_fusion_type=none",
+                "model.model_config.protect_ordinary_heads_from_remote=true",
+            ]
+        )
 
     return overrides
 
@@ -1941,6 +2049,38 @@ def maybe_assign_remote_instances(views, args: argparse.Namespace):
         )
 
     return forced_views
+
+
+def select_export_views(views, args: argparse.Namespace):
+    if args.max_images is None or args.max_images <= 0 or len(views) <= args.max_images:
+        return views
+
+    remote_indices = set(args.remote_view_indices or [])
+    remote_names = {name for name in (args.remote_view_names or [])}
+    for idx, view in enumerate(views):
+        source_name = view.get("source_name")
+        if source_name is not None and source_name in remote_names:
+            remote_indices.add(idx)
+
+    if len(remote_indices) >= args.max_images:
+        keep_indices = sorted(remote_indices)[: args.max_images]
+    else:
+        ordinary_indices = [idx for idx in range(len(views)) if idx not in remote_indices]
+        ordinary_limit = args.max_images - len(remote_indices)
+        if args.random_sample:
+            rng = random.Random(args.random_seed)
+            ordinary_indices = sorted(rng.sample(ordinary_indices, k=ordinary_limit))
+        else:
+            ordinary_indices = ordinary_indices[:ordinary_limit]
+        keep_indices = sorted(remote_indices.union(ordinary_indices))
+
+    kept = [views[idx] for idx in keep_indices]
+    print(
+        f"Selected {len(kept)}/{len(views)} views "
+        f"(max_images={args.max_images}, random_sample={args.random_sample}, "
+        f"seed={args.random_seed})"
+    )
+    return kept
 
 
 def infer_remote_view_names(views):
@@ -2235,6 +2375,18 @@ def resolve_remote_companion_output_path(output_path: Path) -> Path:
 
 def resolve_aux_reconstruction_output_path(output_path: Path, method: str) -> Path:
     return output_path.with_name(f"{output_path.stem}_aux_{method}_remote{output_path.suffix}")
+
+
+def resolve_aux_point_residual_output_path(
+    output_path: Path,
+    normalized: bool = False,
+    xyz: bool = False,
+) -> Path:
+    if xyz:
+        suffix = "aux_point_residual_xyz_norm_remote" if normalized else "aux_point_residual_xyz_remote"
+    else:
+        suffix = "aux_point_residual_norm_remote" if normalized else "aux_point_residual_remote"
+    return output_path.with_name(f"{output_path.stem}_{suffix}{output_path.suffix}")
 
 
 def resolve_aux_reconstruction_summary_path(output_path: Path) -> Path:
@@ -2573,6 +2725,36 @@ def rel_height_from_gt_height_range(rel_pred: np.ndarray, valid_mask: np.ndarray
     return rel_height, summary
 
 
+def rel_height_from_gt_height_affine(rel_pred: np.ndarray, valid_mask: np.ndarray, args: argparse.Namespace):
+    gt_rel, gt_valid = load_projection_aux_gt_rel_height(args)
+    gt_rel = resize_scalar_nearest(gt_rel, rel_pred.shape[:2]).astype(np.float32)
+    gt_valid = resize_scalar_nearest(gt_valid.astype(np.uint8), rel_pred.shape[:2]).astype(bool)
+    common = valid_mask & gt_valid & np.isfinite(rel_pred) & np.isfinite(gt_rel)
+    if int(common.sum()) < 16:
+        raise ValueError("Not enough valid pixels for gt_height_affine rel-height alignment")
+    gt_scale = compute_gt_pointmap_norm_scale(args)
+    gt_norm = (gt_rel / np.float32(max(gt_scale, 1e-8))).astype(np.float32)
+    rel_pred_affine, affine = affine_align_scalar(rel_pred, gt_norm, common)
+    rel_height = (rel_pred_affine * np.float32(gt_scale)).astype(np.float32)
+    summary = {
+        "mode": "gt_height_affine",
+        "gt_remote_dir": str(args.projection_aux_gt_remote_dir),
+        "common_pixels": int(common.sum()),
+        "gt_pointmap_norm_scale": float(gt_scale),
+        "scale": float(affine["scale"]),
+        "shift": float(affine["shift"]),
+        "norm_mae_before": float(np.abs(rel_pred[common] - gt_norm[common]).mean()),
+        "norm_mae_after": float(np.abs(rel_pred_affine[common] - gt_norm[common]).mean()),
+        "pred_norm_mean_before": float(rel_pred[common].mean()),
+        "pred_norm_std_before": float(rel_pred[common].std()),
+        "pred_norm_mean_after": float(rel_pred_affine[common].mean()),
+        "pred_norm_std_after": float(rel_pred_affine[common].std()),
+        "gt_norm_mean": float(gt_norm[common].mean()),
+        "gt_norm_std": float(gt_norm[common].std()),
+    }
+    return rel_height, rel_pred_affine.astype(np.float32), summary
+
+
 def align_aux_points_to_gt_unit_xy_zrange(points: np.ndarray, args: argparse.Namespace):
     if args.projection_aux_xyz_align_mode not in {
         "gt_pointmap_unit_xy_zrange",
@@ -2642,6 +2824,16 @@ def reconstruct_projection_aux_points_for_view(pred, view, args: argparse.Namesp
     pred_base_pts = _tensor_view0_to_numpy(pred["pts3d"]).astype(np.float32)
     base_pts = pred_base_pts
     rel_pred = _tensor_view0_to_numpy(pred["remote_projection_rel_height_pred"]).astype(np.float32)
+    gt_rel_height_mask_for_valid = None
+    if args.projection_aux_use_gt_rel_height:
+        gt_rel_height, gt_rel_height_mask = load_projection_aux_gt_rel_height(args)
+        gt_rel_height = resize_scalar_nearest(gt_rel_height, rel_pred.shape[:2]).astype(np.float32)
+        gt_rel_height_mask_for_valid = resize_scalar_nearest(
+            gt_rel_height_mask.astype(np.uint8),
+            rel_pred.shape[:2],
+        ).astype(bool)
+        gt_rel_height_scale = compute_gt_pointmap_norm_scale(args)
+        rel_pred = (gt_rel_height / np.float32(max(gt_rel_height_scale, 1e-8))).astype(np.float32)
     offset_pred = _tensor_view0_to_numpy(pred["remote_projection_offset_xy_pred"]).astype(np.float32)
     global_dir = _tensor_view0_to_numpy(pred["remote_projection_global_dir_xy_pred"]).astype(np.float32).reshape(-1)
     global_slope = float(np.asarray(_tensor_view0_to_numpy(pred["remote_projection_global_slope_pred"])).reshape(-1)[0])
@@ -2675,13 +2867,22 @@ def reconstruct_projection_aux_points_for_view(pred, view, args: argparse.Namesp
         & np.isfinite(rel_pred)
         & np.isfinite(offset_pred).all(axis=-1)
     )
+    if gt_rel_height_mask_for_valid is not None:
+        valid_mask = valid_mask & gt_rel_height_mask_for_valid
     if not valid_mask.any():
         return None, {"error": "no finite aux reconstruction points"}
 
     rel_scale = estimate_projection_aux_rel_height_scale(base_pts, valid_mask, args)
     rel_height_alignment = {"mode": args.projection_aux_rel_height_scale_mode}
+    rel_pred_for_grid = rel_pred
     if args.projection_aux_rel_height_scale_mode == "gt_height_range":
         rel_height, rel_height_alignment = rel_height_from_gt_height_range(rel_pred, valid_mask, args)
+    elif args.projection_aux_rel_height_scale_mode == "gt_height_affine":
+        rel_height, rel_pred_for_grid, rel_height_alignment = rel_height_from_gt_height_affine(
+            rel_pred,
+            valid_mask,
+            args,
+        )
     else:
         rel_height = rel_pred * rel_scale
     offset_xy = offset_pred * float(args.projection_aux_offset_scale)
@@ -2700,21 +2901,22 @@ def reconstruct_projection_aux_points_for_view(pred, view, args: argparse.Namesp
     global_recon = base_pts.copy()
     if not args.projection_aux_use_gt_projection_base:
         global_recon[..., 2] = ground_z + rel_height
+    global_sign = -1.0 if args.projection_aux_flip_global_reconstruction_direction else 1.0
     global_recon[..., :2] = (
         base_pts[..., :2]
         + center_xy
-        - rel_height[..., None] * float(global_slope) * global_dir.reshape(1, 1, 2)
+        - global_sign * rel_height[..., None] * float(global_slope) * global_dir.reshape(1, 1, 2)
     )
 
     grid_xy = projection_aux_pixel_grid(rel_pred.shape[:2])
     grid_recon = np.zeros((*rel_pred.shape[:2], 3), dtype=np.float32)
     grid_recon[..., :2] = (
         grid_xy
-        - rel_pred[..., None] * float(global_slope) * global_dir.reshape(1, 1, 2)
+        - global_sign * rel_pred_for_grid[..., None] * float(global_slope) * global_dir.reshape(1, 1, 2)
     )
-    grid_recon[..., 2] = rel_pred
+    grid_recon[..., 2] = rel_pred_for_grid
     grid_valid_mask = (
-        np.isfinite(rel_pred)
+        np.isfinite(rel_pred_for_grid)
         & np.isfinite(grid_recon).all(axis=-1)
     )
 
@@ -2743,6 +2945,7 @@ def reconstruct_projection_aux_points_for_view(pred, view, args: argparse.Namesp
         "ground_z": ground_z,
         "ground_quantile": float(args.projection_aux_ground_quantile),
         "use_gt_projection_base": bool(args.projection_aux_use_gt_projection_base),
+        "use_gt_rel_height": bool(args.projection_aux_use_gt_rel_height),
         "projection_center_xy": [float(v) for v in center_xy.reshape(-1)],
         "global_dir_xy": [float(v) for v in global_dir.reshape(-1)],
         "global_slope": global_slope,
@@ -2750,6 +2953,9 @@ def reconstruct_projection_aux_points_for_view(pred, view, args: argparse.Namesp
         "pred_global_slope": float(pred_global_slope),
         "use_gt_global_direction": bool(args.projection_aux_use_gt_global_direction),
         "use_gt_global_slope": bool(args.projection_aux_use_gt_global_slope),
+        "flip_global_reconstruction_direction": bool(
+            args.projection_aux_flip_global_reconstruction_direction
+        ),
         "rel_height_pred_abs_mean": float(np.mean(np.abs(rel_pred[valid_mask]))),
         "rel_height_world_abs_mean": float(np.mean(np.abs(rel_height[valid_mask]))),
         "offset_pred_norm_mean": float(np.linalg.norm(offset_pred[valid_mask], axis=-1).mean()),
@@ -2824,6 +3030,201 @@ def export_projection_aux_reconstruction(outputs, views, args: argparse.Namespac
     print(f"Saved projection-aux reconstruction summary to: {summary_path}")
 
 
+def build_projection_aux_point_residual_cloud_for_view(pred, view, args: argparse.Namespace):
+    if "pts3d" not in pred or "remote_projection_offset_xy_pred" not in pred:
+        missing = []
+        if "pts3d" not in pred:
+            missing.append("pts3d")
+        if "remote_projection_offset_xy_pred" not in pred:
+            missing.append("remote_projection_offset_xy_pred")
+        return None, None, None, None, {"missing": missing}
+
+    pts_tensor = pred["pts3d"].detach().float().cpu()
+    if pts_tensor.ndim == 3:
+        pts_tensor = pts_tensor.unsqueeze(0)
+    offset_tensor = pred["remote_projection_offset_xy_pred"].detach().float().cpu()
+    if offset_tensor.ndim == 3:
+        offset_tensor = offset_tensor.unsqueeze(0)
+
+    if pts_tensor.shape[0] != 1:
+        pts_tensor = pts_tensor[:1]
+    if offset_tensor.shape[0] != 1:
+        offset_tensor = offset_tensor[:1]
+    if pts_tensor.shape[1:3] != offset_tensor.shape[1:3]:
+        return None, None, None, None, {
+            "error": (
+                "point-residual shape mismatch: "
+                f"pts={tuple(pts_tensor.shape)}, offset={tuple(offset_tensor.shape)}"
+            )
+        }
+    rel_height_tensor = None
+    if "remote_projection_rel_height_pred" in pred:
+        rel_height_tensor = pred["remote_projection_rel_height_pred"].detach().float().cpu()
+        if rel_height_tensor.ndim == 2:
+            rel_height_tensor = rel_height_tensor.unsqueeze(0)
+        if rel_height_tensor.shape[0] != 1:
+            rel_height_tensor = rel_height_tensor[:1]
+        if rel_height_tensor.shape[1:3] != pts_tensor.shape[1:3]:
+            rel_height_tensor = None
+
+    finite_mask = torch.isfinite(pts_tensor).all(dim=-1) & torch.isfinite(offset_tensor).all(dim=-1)
+    if rel_height_tensor is not None:
+        finite_mask = finite_mask & torch.isfinite(rel_height_tensor)
+    if "conf" in pred:
+        conf_tensor = pred["conf"].detach().float().cpu()
+        if conf_tensor.ndim == 4 and conf_tensor.shape[-1] == 1:
+            conf_tensor = conf_tensor[..., 0]
+        if conf_tensor.ndim == 3:
+            finite_mask = finite_mask & torch.isfinite(conf_tensor[:1])
+
+    if not bool(finite_mask.any()):
+        return None, None, None, None, {"error": "no finite point-residual points"}
+
+    norm_mode = args.projection_aux_point_residual_norm_mode
+    point_norm, norm_factor = normalize_multiple_pointclouds(
+        [pts_tensor],
+        [finite_mask],
+        norm_mode,
+        ret_factor=True,
+    )
+
+    corrected_norm = point_norm.clone()
+    corrected_norm[..., :2] = corrected_norm[..., :2] + offset_tensor
+
+    corrected_raw = pts_tensor.clone()
+    corrected_raw[..., :2] = corrected_norm[..., :2] * norm_factor
+    corrected_xyz_norm = corrected_norm.clone()
+    corrected_xyz_raw = None
+    z_residual_abs_mean = None
+    z_residual_abs_p95 = None
+    if rel_height_tensor is not None:
+        corrected_xyz_norm[..., 2] = corrected_xyz_norm[..., 2] + rel_height_tensor
+        corrected_xyz_raw = corrected_xyz_norm * norm_factor
+        z_abs = rel_height_tensor.abs()
+        z_residual_abs_mean = float(z_abs[finite_mask].mean())
+        z_residual_abs_p95 = float(torch.quantile(z_abs[finite_mask], 0.95))
+
+    valid_mask_np = finite_mask[0].numpy().astype(bool)
+    colors_np = get_view_colors(pred, view)
+    corrected_raw_np = corrected_raw[0].numpy()
+    corrected_norm_np = corrected_norm[0].numpy()
+    corrected_xyz_raw_np = corrected_xyz_raw[0].numpy() if corrected_xyz_raw is not None else None
+    corrected_xyz_norm_np = corrected_xyz_norm[0].numpy() if corrected_xyz_raw is not None else None
+
+    residual_mag = torch.linalg.norm(offset_tensor, dim=-1)
+    summary = {
+        "points": int(valid_mask_np.sum()),
+        "norm_mode": str(norm_mode),
+        "norm_factor": float(norm_factor.reshape(-1)[0]),
+        "residual_norm_mean": float(residual_mag[finite_mask].mean()),
+        "residual_norm_p95": float(torch.quantile(residual_mag[finite_mask], 0.95)),
+        "z_residual_abs_norm_mean": z_residual_abs_mean,
+        "z_residual_abs_norm_p95": z_residual_abs_p95,
+    }
+    return (
+        corrected_raw_np[valid_mask_np],
+        colors_np[valid_mask_np],
+    ), (
+        corrected_norm_np[valid_mask_np],
+        colors_np[valid_mask_np],
+    ), (
+        corrected_xyz_raw_np[valid_mask_np],
+        colors_np[valid_mask_np],
+    ) if corrected_xyz_raw_np is not None else None, (
+        corrected_xyz_norm_np[valid_mask_np],
+        colors_np[valid_mask_np],
+    ) if corrected_xyz_norm_np is not None else None, summary
+
+
+def export_projection_aux_point_residual(outputs, views, args: argparse.Namespace, output_path: Path):
+    if not args.export_projection_aux_point_residual:
+        return
+
+    remote_indices = get_remote_view_indices(views)
+    if not remote_indices:
+        return
+
+    raw_points = []
+    raw_colors = []
+    norm_points = []
+    norm_colors = []
+    xyz_raw_points = []
+    xyz_raw_colors = []
+    xyz_norm_points = []
+    xyz_norm_colors = []
+    summaries = []
+    for view_idx in remote_indices:
+        if view_idx >= len(outputs):
+            continue
+        raw_result, norm_result, xyz_raw_result, xyz_norm_result, summary = build_projection_aux_point_residual_cloud_for_view(
+            outputs[view_idx],
+            views[view_idx],
+            args,
+        )
+        summary["view_idx"] = int(view_idx)
+        summary["source_name"] = str(views[view_idx].get("source_name", f"view_{view_idx}"))
+        summaries.append(summary)
+        if raw_result is None or norm_result is None:
+            print(f"View {view_idx}: skipped aux point-residual export ({summary})")
+            continue
+        points, colors = raw_result
+        raw_points.append(points)
+        raw_colors.append(colors)
+        points_norm, colors_norm = norm_result
+        norm_points.append(points_norm)
+        norm_colors.append(colors_norm)
+        if xyz_raw_result is not None and xyz_norm_result is not None:
+            points_xyz, colors_xyz = xyz_raw_result
+            xyz_raw_points.append(points_xyz)
+            xyz_raw_colors.append(colors_xyz)
+            points_xyz_norm, colors_xyz_norm = xyz_norm_result
+            xyz_norm_points.append(points_xyz_norm)
+            xyz_norm_colors.append(colors_xyz_norm)
+        print(
+            f"View {view_idx}: reconstructed {points.shape[0]} aux point-residual "
+            "remote points"
+        )
+
+    if not raw_points:
+        return
+
+    write_point_cloud_ply(
+        np.concatenate(raw_points, axis=0),
+        np.concatenate(raw_colors, axis=0),
+        resolve_aux_point_residual_output_path(output_path, normalized=False),
+        args,
+        description="aux point-residual remote",
+    )
+    write_point_cloud_ply(
+        np.concatenate(norm_points, axis=0),
+        np.concatenate(norm_colors, axis=0),
+        resolve_aux_point_residual_output_path(output_path, normalized=True),
+        args,
+        description="aux point-residual normalized remote",
+    )
+    if xyz_raw_points:
+        write_point_cloud_ply(
+            np.concatenate(xyz_raw_points, axis=0),
+            np.concatenate(xyz_raw_colors, axis=0),
+            resolve_aux_point_residual_output_path(output_path, normalized=False, xyz=True),
+            args,
+            description="aux point-residual xyz remote",
+        )
+        write_point_cloud_ply(
+            np.concatenate(xyz_norm_points, axis=0),
+            np.concatenate(xyz_norm_colors, axis=0),
+            resolve_aux_point_residual_output_path(output_path, normalized=True, xyz=True),
+            args,
+            description="aux point-residual xyz normalized remote",
+        )
+
+    summary_path = output_path.with_name(f"{output_path.stem}_aux_point_residual_summary.json")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    with summary_path.open("w", encoding="utf-8") as f:
+        json.dump({"views": summaries}, f, indent=2)
+    print(f"Saved aux point-residual summary to: {summary_path}")
+
+
 def export_point_cloud_for_views(model, views, args: argparse.Namespace, output_path: Path, label: str | None):
     if label:
         print(f"Running inference for remote-control mode: {label}")
@@ -2874,6 +3275,7 @@ def export_point_cloud_for_views(model, views, args: argparse.Namespace, output_
         args,
         description="remote-only companion",
     )
+    export_projection_aux_point_residual(outputs, views, args, output_path)
     export_projection_aux_reconstruction(outputs, views, args, output_path)
 
 
@@ -2919,6 +3321,7 @@ def main() -> None:
         raise ValueError(f"No images found in {args.image_folder}")
     print(f"Loaded {len(views)} views")
     views = annotate_view_source_names(views, args.image_folder, args.stride)
+    views = select_export_views(views, args)
 
     model_name = getattr(model, "name", effective_model_name)
     views = convert_views_to_identity_if_needed(views, model_name)

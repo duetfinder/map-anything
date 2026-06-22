@@ -294,7 +294,13 @@ def resolve_vggt_late_fusion_type(checkpoint_path):
 
 
 def is_vggt_split_remote_aggregator_checkpoint(checkpoint_path):
-    return resolve_vggt_late_fusion_type(checkpoint_path) != "none"
+    return resolve_vggt_late_fusion_type(checkpoint_path) != "none" or checkpoint_has_key_prefix(
+        checkpoint_path, "remote_aggregator."
+    )
+
+
+def is_vggt_remote_private_aggregator_checkpoint(checkpoint_path):
+    return checkpoint_has_key_prefix(checkpoint_path, "remote_aggregator.")
 
 
 def resolve_config_overrides(args, model_name):
@@ -339,6 +345,23 @@ def resolve_config_overrides(args, model_name):
             [
                 "model.model_config.use_remote_private_point_head=true",
                 "model.model_config.output_point_head_for_consistency=true",
+            ]
+        )
+
+    if model_name == "vggt" and checkpoint_path and is_vggt_remote_private_aggregator_checkpoint(checkpoint_path):
+        overrides.extend(
+            [
+                "model.model_config.load_pretrained_weights=false",
+                "model.model_config.load_custom_ckpt=false",
+                "model.model_config.use_point_head_for_remote=true",
+                "model.model_config.ordinary_output_head=depth",
+                "model.model_config.remote_output_head=point",
+                "model.model_config.use_remote_private_point_head=true",
+                "model.model_config.output_point_head_for_consistency=true",
+                "model.model_config.use_split_remote_aggregator=true",
+                "model.model_config.use_remote_private_aggregator=true",
+                "model.model_config.remote_to_aerial_late_fusion_type=none",
+                "model.model_config.protect_ordinary_heads_from_remote=true",
             ]
         )
 
@@ -787,6 +810,8 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
             "rs_point_l1_scale_aligned": float("nan"),
             "rs_point_scale_aligned_scale": float("nan"),
             "rs_point_abs_rel": float("nan"),
+            "rs_point_abs_rel_centered": float("nan"),
+            "rs_point_abs_rel_scale_aligned": float("nan"),
         }
 
     gt_vec = gt_pts[overlap]
@@ -814,6 +839,13 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
 
     gt_norm = np.linalg.norm(gt_vec, axis=-1)
     abs_rel = point_err / np.clip(gt_norm, 1e-8, None)
+    gt_centered_norm = np.linalg.norm(gt_centered, axis=-1)
+    centered_abs_rel = centered_err / np.clip(gt_centered_norm, 1e-8, None)
+    if denom > 1e-12:
+        scale_aligned_abs_rel = scale_aligned_err / np.clip(gt_centered_norm, 1e-8, None)
+        scale_aligned_abs_rel = float(np.mean(scale_aligned_abs_rel))
+    else:
+        scale_aligned_abs_rel = float("nan")
 
     return {
         "rs_point_l1": float(np.mean(point_err)),
@@ -821,7 +853,41 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
         "rs_point_l1_scale_aligned": scale_aligned_l1,
         "rs_point_scale_aligned_scale": scale,
         "rs_point_abs_rel": float(np.mean(abs_rel)),
+        "rs_point_abs_rel_centered": float(np.mean(centered_abs_rel)),
+        "rs_point_abs_rel_scale_aligned": scale_aligned_abs_rel,
     }
+
+
+def apply_aux_point_residual_to_remote_pts(
+    pred,
+    sample_idx,
+    norm_mode="avg_dis",
+    apply_z=False,
+):
+    """Apply P7 aux normalized xy residual to one remote pointmap prediction."""
+    if "remote_projection_offset_xy_pred" not in pred:
+        return pred["pts3d"][sample_idx]
+
+    pts = pred["pts3d"][sample_idx : sample_idx + 1]
+    offset_xy = pred["remote_projection_offset_xy_pred"][sample_idx : sample_idx + 1]
+    valid_mask = torch.isfinite(pts).all(dim=-1)
+    pts_norm, norm_factor = normalize_multiple_pointclouds(
+        [pts],
+        valid_masks=[valid_mask],
+        norm_mode=norm_mode,
+        ret_factor=True,
+    )
+    corrected_norm = pts_norm.clone()
+    corrected_norm[..., :2] = corrected_norm[..., :2] + offset_xy.to(corrected_norm)
+    if apply_z and "remote_projection_rel_height_pred" in pred:
+        z_residual = pred["remote_projection_rel_height_pred"][
+            sample_idx : sample_idx + 1
+        ].to(corrected_norm)
+        corrected_norm[..., 2] = corrected_norm[..., 2] + z_residual
+    corrected = corrected_norm * norm_factor
+    if not apply_z:
+        corrected[..., 2] = pts[..., 2]
+    return corrected[0]
 
 
 def get_joint_remote_metric_space_pointmaps(batch, joint_preds, remote_sample):
@@ -1167,6 +1233,15 @@ def benchmark(args):
             )
         rs_supports_metric_outputs = model_supports_metric_outputs(rs_preds)
         joint_supports_metric_outputs = model_supports_metric_outputs(joint_preds)
+        use_aux_point_residual_metric = bool(
+            cfg_get(args, "remote_point_metric_use_aux_point_residual", False)
+        )
+        aux_point_residual_norm_mode = str(
+            cfg_get(args, "remote_point_metric_aux_point_residual_norm_mode", "avg_dis")
+        )
+        aux_point_residual_apply_z = bool(
+            cfg_get(args, "remote_point_metric_aux_point_residual_apply_z", False)
+        )
 
         for sample_idx, scene in enumerate(scene_names):
             remote_sample = remote_samples[sample_idx]
@@ -1177,7 +1252,16 @@ def benchmark(args):
             gt_pointmap = remote_sample["remote_pointmap"]
             valid_mask = remote_sample["remote_valid_mask"].astype(bool)
 
-            rs_pts = rs_preds[0]["pts3d"][sample_idx].detach().cpu().numpy()
+            if use_aux_point_residual_metric:
+                rs_pts_tensor = apply_aux_point_residual_to_remote_pts(
+                    rs_preds[0],
+                    sample_idx,
+                    norm_mode=aux_point_residual_norm_mode,
+                    apply_z=aux_point_residual_apply_z,
+                )
+            else:
+                rs_pts_tensor = rs_preds[0]["pts3d"][sample_idx]
+            rs_pts = rs_pts_tensor.detach().cpu().numpy()
             rs_metrics = compute_remote_height_metrics_affine(
                 gt_height,
                 rs_pts,
@@ -1201,7 +1285,16 @@ def benchmark(args):
             rs_per_scene[scene] = rs_metrics
 
             joint_aerial_metrics = joint_aerial_metrics_by_scene[scene]
-            joint_rs_pts = joint_preds[len(batch)]["pts3d"][sample_idx].detach().cpu().numpy()
+            if use_aux_point_residual_metric:
+                joint_rs_pts_tensor = apply_aux_point_residual_to_remote_pts(
+                    joint_preds[len(batch)],
+                    sample_idx,
+                    norm_mode=aux_point_residual_norm_mode,
+                    apply_z=aux_point_residual_apply_z,
+                )
+            else:
+                joint_rs_pts_tensor = joint_preds[len(batch)]["pts3d"][sample_idx]
+            joint_rs_pts = joint_rs_pts_tensor.detach().cpu().numpy()
             joint_rs_metrics = compute_remote_height_metrics_affine(
                 gt_height,
                 joint_rs_pts,

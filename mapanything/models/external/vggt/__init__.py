@@ -61,6 +61,7 @@ class VGGTWrapper(torch.nn.Module):
         remote_to_aerial_residual_hidden_scale=0.25,
         remote_to_aerial_gate_init=0.0,
         use_split_remote_aggregator=False,
+        use_remote_private_aggregator=False,
         remote_to_aerial_late_fusion_type="none",
         remote_to_aerial_late_fusion_hidden_scale=0.25,
         remote_to_aerial_late_fusion_gate_init=0.0,
@@ -98,6 +99,7 @@ class VGGTWrapper(torch.nn.Module):
         self.remote_to_aerial_residual_hidden_scale = remote_to_aerial_residual_hidden_scale
         self.remote_to_aerial_gate_init = remote_to_aerial_gate_init
         self.use_split_remote_aggregator = use_split_remote_aggregator
+        self.use_remote_private_aggregator = use_remote_private_aggregator
         self.remote_to_aerial_late_fusion_type = remote_to_aerial_late_fusion_type
         self.remote_to_aerial_late_fusion_hidden_scale = remote_to_aerial_late_fusion_hidden_scale
         self.remote_to_aerial_late_fusion_gate_init = remote_to_aerial_late_fusion_gate_init
@@ -226,6 +228,9 @@ class VGGTWrapper(torch.nn.Module):
 
         if self.use_remote_private_point_head:
             self.remote_point_head = deepcopy(self.model.point_head)
+
+        if self.use_remote_private_aggregator:
+            self.remote_aggregator = deepcopy(self.model.aggregator)
 
         if self.use_remote_projection_aux_token_residual:
             hidden_dim = max(
@@ -668,6 +673,14 @@ class VGGTWrapper(torch.nn.Module):
     def _run_aggregator(self, images, views):
         return self.model.aggregator(images, **self._aggregator_kwargs(views, images))
 
+    def _run_remote_aggregator(self, images, views):
+        aggregator = (
+            self.remote_aggregator
+            if self.use_remote_private_aggregator
+            else self.model.aggregator
+        )
+        return aggregator(images, **self._aggregator_kwargs(views, images))
+
     def _combine_split_aggregated_tokens(
         self, aerial_tokens_list, remote_tokens_list, remote_mask, num_views
     ):
@@ -881,7 +894,9 @@ class VGGTWrapper(torch.nn.Module):
         remote_views = [view for view in views if self._is_remote_view(view)]
 
         aerial_tokens_list, ps_idx = self._run_aggregator(aerial_images, aerial_views)
-        remote_tokens_list, remote_ps_idx = self._run_aggregator(remote_images, remote_views)
+        remote_tokens_list, remote_ps_idx = self._run_remote_aggregator(
+            remote_images, remote_views
+        )
         if ps_idx != remote_ps_idx:
             raise RuntimeError(
                 f"Split VGGT aggregators returned different patch starts: {ps_idx} vs {remote_ps_idx}"

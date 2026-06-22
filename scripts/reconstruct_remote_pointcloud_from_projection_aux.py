@@ -105,6 +105,66 @@ def export_ply(path: Path, xyz: np.ndarray, rgb: np.ndarray, mask: np.ndarray) -
     return int(points.shape[0])
 
 
+def draw_arrow(draw: ImageDraw.ImageDraw, x0: float, y0: float, dx: float, dy: float, color: tuple[int, int, int]) -> None:
+    x1 = x0 + dx
+    y1 = y0 + dy
+    draw.line((x0, y0, x1, y1), fill=color, width=2)
+    norm = float(np.hypot(dx, dy))
+    if norm < 1e-6:
+        return
+    ux, uy = dx / norm, dy / norm
+    px, py = -uy, ux
+    head = min(max(norm * 0.35, 3.0), 8.0)
+    draw.line((x1, y1, x1 - head * ux + 0.5 * head * px, y1 - head * uy + 0.5 * head * py), fill=color, width=2)
+    draw.line((x1, y1, x1 - head * ux - 0.5 * head * px, y1 - head * uy - 0.5 * head * py), fill=color, width=2)
+
+
+def save_direction_overlay(
+    path: Path,
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    offset_xy: np.ndarray,
+    global_offset_xy: np.ndarray,
+    stride: int = 64,
+) -> dict:
+    h, w = mask.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    sample = mask & (xx % stride == 0) & (yy % stride == 0) & np.isfinite(offset_xy).all(axis=-1)
+    if not sample.any():
+        return {"written": False, "reason": "no sampled valid vectors"}
+
+    vectors = np.concatenate(
+        [
+            offset_xy[sample].reshape(-1, 2),
+            global_offset_xy[sample].reshape(-1, 2),
+        ],
+        axis=0,
+    )
+    mag = np.linalg.norm(vectors, axis=-1)
+    scale = 24.0 / max(float(np.percentile(mag[np.isfinite(mag)], 90)), 1e-6)
+
+    image = Image.fromarray(rgb).convert("RGB")
+    draw = ImageDraw.Draw(image)
+    for x, y, off, goff in zip(xx[sample], yy[sample], offset_xy[sample], global_offset_xy[sample]):
+        # Red: projection offset direction. Green: inverse correction direction used for reconstruction.
+        # Blue: global rel_height*slope*dir approximation to the projection offset.
+        draw_arrow(draw, float(x), float(y), float(off[0] * scale), float(off[1] * scale), (255, 40, 40))
+        draw_arrow(draw, float(x), float(y), float(-off[0] * scale), float(-off[1] * scale), (40, 220, 80))
+        draw_arrow(draw, float(x), float(y), float(goff[0] * scale), float(goff[1] * scale), (40, 120, 255))
+    draw.rectangle((8, 8, 565, 76), fill=(255, 255, 255))
+    draw.text((16, 16), "red: label projection offset = projected - original", fill=(255, 40, 40))
+    draw.text((16, 36), "green: reconstruction correction = original - projected", fill=(40, 160, 60))
+    draw.text((16, 56), "blue: rel_height * slope * global_dir", fill=(40, 80, 220))
+    image.save(path)
+    return {
+        "written": True,
+        "path": str(path),
+        "stride": int(stride),
+        "sampled_vectors": int(sample.sum()),
+        "arrow_scale_pixels_per_world_unit": float(scale),
+    }
+
+
 def estimate_ground_z(
     pointmap: np.ndarray,
     point_valid: np.ndarray,
@@ -258,6 +318,9 @@ def main() -> None:
     recon_from_rel_global = projected.copy()
     recon_from_rel_global[..., :2] = projected[..., :2] + center_xy - offset_from_rel_global
 
+    recon_from_rel_global_plus = projected.copy()
+    recon_from_rel_global_plus[..., :2] = projected[..., :2] + center_xy + offset_from_rel_global
+
     common_mask = (
         valid_mask
         & finite_xyz_mask(pointmap)
@@ -289,10 +352,23 @@ def main() -> None:
             rgb,
             export_mask,
         ),
+        "aux_reconstructed_from_rel_global_plus": export_ply(
+            args.output_dir / "aux_reconstructed_from_rel_global_plus_common.ply",
+            recon_from_rel_global_plus,
+            rgb,
+            export_mask,
+        ),
         "aux_projected_xyz_centered": export_ply(
             args.output_dir / "aux_projected_xyz_centered.ply", projected, rgb, projected_mask
         ),
     }
+    direction_overlay = save_direction_overlay(
+        args.output_dir / "projection_direction_overlay.png",
+        rgb,
+        common_mask,
+        offset_xy,
+        offset_from_rel_global,
+    )
 
     dense_summary = None
     if args.export_dense_pointmap_height:
@@ -437,6 +513,7 @@ def main() -> None:
             "aux_original_xyz_world": xyz_stats(aux_original, common_mask),
             "aux_reconstructed_from_offset": xyz_stats(recon_from_offset, common_mask),
             "aux_reconstructed_from_rel_global": xyz_stats(recon_from_rel_global, common_mask),
+            "aux_reconstructed_from_rel_global_plus": xyz_stats(recon_from_rel_global_plus, common_mask),
             "aux_projected_xyz_centered": xyz_stats(projected, valid_mask),
         },
         "errors_common": {
@@ -444,6 +521,9 @@ def main() -> None:
             "recon_offset_vs_aux_original": error_stats(recon_from_offset, aux_original, common_mask),
             "recon_rel_global_vs_aux_original": error_stats(
                 recon_from_rel_global, aux_original, common_mask
+            ),
+            "recon_rel_global_plus_vs_aux_original": error_stats(
+                recon_from_rel_global_plus, aux_original, common_mask
             ),
             "projected_vs_aux_original": error_stats(projected, aux_original, common_mask),
         },
@@ -453,6 +533,9 @@ def main() -> None:
             "recon_rel_global_vs_aux_original": error_stats(
                 recon_from_rel_global, aux_original, high_mask
             ),
+            "recon_rel_global_plus_vs_aux_original": error_stats(
+                recon_from_rel_global_plus, aux_original, high_mask
+            ),
         },
         "errors_low_rel_height": {
             "aux_original_vs_pixel_to_point_map": error_stats(aux_original, pointmap, low_mask),
@@ -460,7 +543,11 @@ def main() -> None:
             "recon_rel_global_vs_aux_original": error_stats(
                 recon_from_rel_global, aux_original, low_mask
             ),
+            "recon_rel_global_plus_vs_aux_original": error_stats(
+                recon_from_rel_global_plus, aux_original, low_mask
+            ),
         },
+        "direction_overlay": direction_overlay,
         "dense_pointmap_height": dense_summary,
     }
     with (args.output_dir / "summary.json").open("w", encoding="utf-8") as f:

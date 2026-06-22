@@ -31,6 +31,9 @@ model_config:
   remote_to_aerial_gate_init: 0.0
   # P5g: encode ordinary and remote views separately, then fuse remote late.
   use_split_remote_aggregator: false
+  # P8: optional true parameter isolation for remote encoding. When enabled
+  # and use_split_remote_aggregator=true, remote views use a copied aggregator.
+  use_remote_private_aggregator: false
   # One of: none, film, cross_attention.
   remote_to_aerial_late_fusion_type: "none"
   remote_to_aerial_late_fusion_hidden_scale: 0.25

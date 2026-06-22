@@ -1,0 +1,52 @@
+defaults:
+  - vggt_loss_rs_joint_p7_remote_head_projection_aux
+
+# Offset-only P7 auxiliary experiment.
+# Keep the proven remote pointmap supervision, but remove height/global
+# decomposition losses. The aux task predicts the projected->true xy offset in
+# normalized loss space and is weakly tied to the detached remote point head.
+remote_pointmap_loss_weight: 4.0
+remote_raw_pointmap_loss_weight: 0.0
+remote_height_loss_weight: 0.0
+
+remote_projection_rel_height_loss_weight: 0.0
+remote_projection_rel_height_affine_loss_weight: 0.0
+remote_projection_rel_height_balanced_loss_weight: 0.0
+remote_projection_rel_height_contrast_loss_weight: 0.0
+remote_projection_rel_height_bucket_mean_loss_weight: 0.0
+remote_projection_rel_height_low_overpred_loss_weight: 0.0
+remote_projection_dense_rel_height_loss_weight: 0.0
+remote_projection_dense_global_offset_loss_weight: 0.0
+
+remote_projection_offset_loss_weight: 1.0
+remote_projection_offset_mag_loss_weight: 0.0
+remote_projection_offset_dir_loss_weight: 0.0
+remote_projection_offset_to_point_detach_loss_weight: 0.25
+remote_projection_offset_to_point_centered_detach_loss_weight: 0.0
+remote_projection_offset_residual_from_point_detach: false
+remote_projection_point_offset_to_gt_loss_weight: 0.0
+remote_projection_point_offset_to_gt_start_epoch: 0.0
+remote_projection_point_offset_to_gt_ramp_epochs: 0.0
+remote_projection_point_residual_offset_to_gt_loss_weight: 0.0
+remote_projection_point_residual_xyz_to_gt_loss_weight: 0.0
+remote_projection_offset_scale: 32.0
+remote_projection_offset_balanced_loss_weight: 0.5
+remote_projection_offset_contrast_loss_weight: 0.0
+remote_projection_offset_bucket_mean_loss_weight: 0.5
+remote_projection_offset_low_overpred_loss_weight: 0.25
+remote_projection_offset_low_overpred_start_epoch: 2.0
+remote_projection_offset_low_overpred_ramp_epochs: 2.0
+
+remote_projection_global_dir_loss_weight: 0.0
+remote_projection_global_slope_loss_weight: 0.0
+remote_projection_global_vector_loss_weight: 0.0
+remote_projection_consistency_loss_weight: 0.0
+
+remote_projection_reconstruct_offset_to_gt_loss_weight: 0.25
+remote_projection_reconstruct_global_to_gt_loss_weight: 0.0
+remote_projection_reconstruct_offset_to_point_detach_loss_weight: 0.0
+remote_projection_reconstruct_global_to_point_detach_loss_weight: 0.0
+remote_projection_reconstruct_to_gt_use_pointmap_norm: true
+remote_projection_reconstruct_to_gt_high_z_quantile: 0.0
+
+remote_projection_grid_global_to_gt_loss_weight: 0.0

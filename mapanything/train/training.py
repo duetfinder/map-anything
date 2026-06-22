@@ -147,13 +147,31 @@ def train(args):
         ckpt = torch.load(warmstart_ckpt, map_location=device, weights_only=False)
         state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
         model_state = model.state_dict()
+        exclude_prefixes = getattr(args.train_params, "warmstart_exclude_prefixes", None)
+        if exclude_prefixes in (None, "", "None", "none", "null"):
+            exclude_prefixes = []
+        exclude_prefixes = [str(prefix) for prefix in list(exclude_prefixes)]
+        if exclude_prefixes:
+            print("Warm-start excluding key prefixes:")
+            for prefix in exclude_prefixes:
+                print(f"  {prefix}")
         filtered_state_dict = {}
         skipped_shape_mismatch = []
+        skipped_excluded = []
         for key, value in state_dict.items():
+            if any(key.startswith(prefix) for prefix in exclude_prefixes):
+                skipped_excluded.append(key)
+                continue
             if key in model_state and hasattr(value, "shape") and value.shape != model_state[key].shape:
                 skipped_shape_mismatch.append((key, tuple(value.shape), tuple(model_state[key].shape)))
                 continue
             filtered_state_dict[key] = value
+        if skipped_excluded:
+            print(f"Warm-start skipped {len(skipped_excluded)} excluded keys.")
+            for key in skipped_excluded[:50]:
+                print(f"  {key}")
+            if len(skipped_excluded) > 50:
+                print(f"  ... and {len(skipped_excluded) - 50} more")
         if skipped_shape_mismatch:
             print("Warm-start skipped shape-mismatched keys:")
             for key, old_shape, new_shape in skipped_shape_mismatch[:50]:
@@ -181,6 +199,33 @@ def train(args):
             model.remote_point_head.load_state_dict(
                 deepcopy(model.model.point_head.state_dict())
             )
+        reinit_dpt_projection_aux = bool(
+            getattr(
+                args.train_params,
+                "reinitialize_dpt_projection_aux_from_shared_after_warmstart",
+                False,
+            )
+        )
+        if (
+            reinit_dpt_projection_aux
+            and getattr(model, "remote_projection_aux_source", None) == "dpt_init"
+        ):
+            if hasattr(model, "remote_projection_aux_height_head") and hasattr(model.model, "depth_head"):
+                print(
+                    "Reinitializing DPT projection aux height head from warm-started shared depth head"
+                )
+                model.remote_projection_aux_height_head.load_state_dict(
+                    deepcopy(model.model.depth_head.state_dict())
+                )
+                if hasattr(model.remote_projection_aux_height_head, "activation"):
+                    model.remote_projection_aux_height_head.activation = "linear"
+            if hasattr(model, "remote_projection_aux_offset_head") and hasattr(model.model, "point_head"):
+                print(
+                    "Reinitializing DPT projection aux offset head from warm-started shared point head"
+                )
+                model.remote_projection_aux_offset_head.load_state_dict(
+                    deepcopy(model.model.point_head.state_dict())
+                )
         remote_private_init_ckpt = getattr(
             args.train_params, "initialize_remote_private_point_head_ckpt", None
         )
@@ -251,6 +296,65 @@ def train(args):
             )
             print(load_head_result)
             del remote_ckpt, remote_state, head_state, filtered_head_state
+
+        remote_aggregator_init_ckpt = getattr(
+            args.train_params, "initialize_remote_aggregator_ckpt", None
+        )
+        if remote_aggregator_init_ckpt not in (None, "", "None", "none", "null"):
+            if not hasattr(model, "remote_aggregator"):
+                raise ValueError(
+                    "initialize_remote_aggregator_ckpt requires "
+                    "model.use_remote_private_aggregator=true"
+                )
+            source_prefix = str(
+                getattr(
+                    args.train_params,
+                    "initialize_remote_aggregator_source_prefix",
+                    "model.aggregator.",
+                )
+            )
+            print(
+                "Initializing remote_aggregator from checkpoint: "
+                f"{remote_aggregator_init_ckpt} ({source_prefix})"
+            )
+            remote_agg_ckpt = torch.load(
+                remote_aggregator_init_ckpt,
+                map_location=device,
+                weights_only=False,
+            )
+            remote_agg_state = (
+                remote_agg_ckpt["model"]
+                if isinstance(remote_agg_ckpt, dict) and "model" in remote_agg_ckpt
+                else remote_agg_ckpt
+            )
+            agg_state = {
+                key[len(source_prefix):]: value
+                for key, value in remote_agg_state.items()
+                if key.startswith(source_prefix)
+            }
+            if not agg_state and source_prefix != "remote_aggregator.":
+                fallback_prefix = "remote_aggregator."
+                agg_state = {
+                    key[len(fallback_prefix):]: value
+                    for key, value in remote_agg_state.items()
+                    if key.startswith(fallback_prefix)
+                }
+                if agg_state:
+                    print(
+                        "No keys matched requested prefix; using "
+                        "remote_aggregator. fallback"
+                    )
+            if not agg_state:
+                raise ValueError(
+                    "No aggregator keys found for remote aggregator "
+                    f"initialization in {remote_aggregator_init_ckpt} "
+                    f"with prefix {source_prefix}"
+                )
+            load_agg_result = model.remote_aggregator.load_state_dict(
+                agg_state, strict=False
+            )
+            print(load_agg_result)
+            del remote_agg_ckpt, remote_agg_state, agg_state
         del ckpt, state_dict, filtered_state_dict
 
     remote_teacher_model = None
@@ -339,7 +443,7 @@ def train(args):
         param_groups, lr=args.train_params.lr, betas=(0.9, 0.95)
     )
     print(optimizer)
-    loss_scaler = NativeScaler()
+    loss_scaler = NativeScaler(enabled=bool(args.train_params.amp))
 
     def write_log_stats(epoch, train_stats, test_stats):
         """
@@ -745,6 +849,7 @@ def _compute_remote_teacher_anchor_loss(
     use_amp,
     amp_dtype,
     channels,
+    teacher_remote_only=False,
 ):
     if teacher_model is None or not has_joint_remote_supervision(batch):
         return None, {}
@@ -753,7 +858,7 @@ def _compute_remote_teacher_anchor_loss(
     if not remote_gt_views:
         return None, {}
 
-    model_batch = list(batch) + [
+    teacher_remote_views = [
         {
             'img': remote_gt_view['img'],
             'data_norm_type': remote_gt_view['data_norm_type'],
@@ -761,6 +866,7 @@ def _compute_remote_teacher_anchor_loss(
         }
         for remote_gt_view in remote_gt_views
     ]
+    model_batch = teacher_remote_views if teacher_remote_only else list(batch) + teacher_remote_views
     n_aerial = len(batch)
     amp_dtype = _resolve_amp_dtype(use_amp, amp_dtype)
     was_training = teacher_model.training
@@ -777,7 +883,8 @@ def _compute_remote_teacher_anchor_loss(
     teacher_means = []
     for remote_idx, remote_gt_view in enumerate(remote_gt_views):
         student_pred = loss_result[f"pred{n_aerial + remote_idx + 1}"]
-        teacher_pred = teacher_preds[n_aerial + remote_idx]
+        teacher_pred_idx = remote_idx if teacher_remote_only else n_aerial + remote_idx
+        teacher_pred = teacher_preds[teacher_pred_idx]
         student_pts = student_pred['pts3d'].float()
         teacher_pts = teacher_pred['pts3d'].float()
         student_selected, teacher_selected = _select_teacher_anchor_channels(
@@ -936,6 +1043,44 @@ def train_one_epoch(
     if log_writer is not None:
         print("log_dir: {}".format(log_writer.log_dir))
 
+    if hasattr(args.train_params, "get"):
+        debug_update_prefixes = args.train_params.get("debug_param_update_prefixes", [])
+        debug_update_steps = int(args.train_params.get("debug_param_update_steps", 0))
+    else:
+        debug_update_prefixes = _get_train_param(args, "debug_param_update_prefixes", [])
+        debug_update_steps = int(_get_train_param(args, "debug_param_update_steps", 0))
+    if isinstance(debug_update_prefixes, str):
+        debug_update_prefixes = [
+            prefix.strip()
+            for prefix in debug_update_prefixes.split(",")
+            if prefix.strip()
+        ]
+    force_debug_update = os.environ.get("MAPANYTHING_FORCE_PARAM_UPDATE_DEBUG", "")
+    if force_debug_update not in ("", "0", "false", "False"):
+        env_prefixes = os.environ.get("MAPANYTHING_PARAM_UPDATE_DEBUG_PREFIXES", "")
+        if env_prefixes:
+            debug_update_prefixes = [
+                prefix.strip() for prefix in env_prefixes.split(",") if prefix.strip()
+            ]
+        elif not debug_update_prefixes:
+            debug_update_prefixes = [
+                "remote_projection_aux_token_pixel_head",
+                "remote_projection_aux_token_global_head",
+                "remote_projection_aux_token_proj",
+                "remote_projection_aux_image_stem",
+                "model.aggregator.patch_embed",
+                "remote_point_head",
+            ]
+        debug_update_steps = max(debug_update_steps, 1)
+    debug_update_snapshot = None
+    debug_update_reports = 0
+    if debug_update_steps > 0:
+        print(
+            "Param update debug enabled: "
+            f"steps={debug_update_steps} prefixes={list(debug_update_prefixes)}",
+            force=True,
+        )
+
     if hasattr(data_loader, "dataset") and hasattr(data_loader.dataset, "set_epoch"):
         data_loader.dataset.set_epoch(epoch)
     if hasattr(data_loader, "sampler") and hasattr(data_loader.sampler, "set_epoch"):
@@ -952,6 +1097,19 @@ def train_one_epoch(
     ):
         n_views = len(batch)
         epoch_f = epoch + data_iter_step / len(data_loader)
+        update_grad_this_step = (data_iter_step + 1) % accum_iter == 0
+
+        if (
+            debug_update_steps > 0
+            and debug_update_prefixes
+            and update_grad_this_step
+        ):
+            debug_update_snapshot = {
+                name: param.detach().float().clone()
+                for name, param in model_without_ddp.named_parameters()
+                if param.requires_grad
+                and any(name.startswith(prefix) for prefix in debug_update_prefixes)
+            }
 
         # We use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
@@ -986,6 +1144,9 @@ def train_one_epoch(
                 use_amp=bool(args.train_params.amp),
                 amp_dtype=args.train_params.amp_dtype,
                 channels=_get_train_param(args, "remote_teacher_anchor_channels", "z"),
+                teacher_remote_only=bool(
+                    _get_train_param(args, "remote_teacher_anchor_remote_only", False)
+                ),
             )
             if teacher_anchor_loss is not None:
                 weighted_teacher_anchor_loss = teacher_anchor_weight * teacher_anchor_loss
@@ -1155,13 +1316,69 @@ def train_one_epoch(
         loss /= accum_iter
 
         # Compute the scaled gradients (also clip the gradients to max norm of 1)
+        scaler_before = None
+        if hasattr(loss_scaler, "_scaler"):
+            try:
+                scaler_before = float(loss_scaler._scaler.get_scale())
+            except Exception:
+                scaler_before = None
         gradient_norm = loss_scaler(
             loss,
             optimizer,
             parameters=model.parameters(),
-            update_grad=(data_iter_step + 1) % accum_iter == 0,
+            update_grad=update_grad_this_step,
             clip_grad=1.0,
         )
+        scaler_after = None
+        if hasattr(loss_scaler, "_scaler"):
+            try:
+                scaler_after = float(loss_scaler._scaler.get_scale())
+            except Exception:
+                scaler_after = None
+        if (
+            debug_update_steps > 0
+            and debug_update_snapshot is not None
+        ):
+            lines = [
+                "Param update debug: "
+                f"step={data_iter_step} grad_norm={gradient_norm} "
+                f"scaler_before={scaler_before} scaler_after={scaler_after}"
+            ]
+            for prefix in debug_update_prefixes:
+                n_params = 0
+                n_with_grad = 0
+                grad_max = 0.0
+                grad_l2_sq = 0.0
+                changed = 0
+                delta_max = 0.0
+                delta_mean_sum = 0.0
+                for name, param in model_without_ddp.named_parameters():
+                    if not name.startswith(prefix) or name not in debug_update_snapshot:
+                        continue
+                    n_params += 1
+                    if param.grad is not None:
+                        grad = param.grad.detach().float()
+                        n_with_grad += 1
+                        grad_max = max(grad_max, float(grad.abs().max()))
+                        grad_l2_sq += float(grad.pow(2).sum())
+                    delta = (param.detach().float() - debug_update_snapshot[name]).abs()
+                    if delta.numel():
+                        this_delta_max = float(delta.max())
+                        delta_max = max(delta_max, this_delta_max)
+                        delta_mean_sum += float(delta.mean())
+                        if this_delta_max > 0:
+                            changed += 1
+                delta_mean = delta_mean_sum / n_params if n_params else 0.0
+                lines.append(
+                    "  "
+                    f"{prefix}: params={n_params} with_grad={n_with_grad} "
+                    f"grad_l2={grad_l2_sq ** 0.5:.6g} grad_max={grad_max:.6g} "
+                    f"changed={changed} delta_max={delta_max:.6g} "
+                    f"delta_mean={delta_mean:.6g}"
+                )
+            print("\n".join(lines), force=True)
+            debug_update_reports += 1
+            debug_update_snapshot = None
         if (
             data_iter_step == 0
             and bool(_get_train_param(args, "debug_remote_point_head_grads", False))
@@ -1237,6 +1454,9 @@ def train_one_epoch(
             log_writer.add_scalar("train_iter", epoch_1000x, epoch_1000x)
             for name, val in loss_details.items():
                 log_writer.add_scalar("train_" + name, val, epoch_1000x)
+
+        if debug_update_steps > 0 and debug_update_reports >= debug_update_steps:
+            break
 
     # # Gather the stats from all processes
     # metric_logger.synchronize_between_processes()
