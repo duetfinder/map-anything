@@ -797,7 +797,90 @@ def compute_remote_height_metrics_affine(gt_height, pred_pts, valid_mask):
     }
 
 
-def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
+def remote_pointmaps_abs_rel_view0(gt_pts_view0, pred_pts_view0, valid_mask):
+    overlap = (
+        valid_mask
+        & np.isfinite(gt_pts_view0).all(axis=-1)
+        & np.isfinite(pred_pts_view0).all(axis=-1)
+    )
+    if not overlap.any():
+        return float("nan")
+
+    gt_t = torch.from_numpy(gt_pts_view0).unsqueeze(0).float()
+    pred_t = torch.from_numpy(pred_pts_view0).unsqueeze(0).float()
+    mask_t = torch.from_numpy(overlap).unsqueeze(0).bool()
+    gt_normed = normalize_multiple_pointclouds(
+        [gt_t], valid_masks=[mask_t], norm_mode="avg_dis"
+    )[0][0].numpy()
+    pred_normed = normalize_multiple_pointclouds(
+        [pred_t], valid_masks=[mask_t], norm_mode="avg_dis"
+    )[0][0].numpy()
+    return float(m_rel_ae(gt=gt_normed, pred=pred_normed, mask=overlap))
+
+
+def align_points_sim3(pred_pts, gt_pts):
+    pred_center = pred_pts.mean(axis=0, keepdims=True)
+    gt_center = gt_pts.mean(axis=0, keepdims=True)
+    pred_centered = pred_pts - pred_center
+    gt_centered = gt_pts - gt_center
+    pred_var = float(np.mean(np.sum(pred_centered * pred_centered, axis=1)))
+    if pred_var <= 1e-12:
+        return None, float("nan")
+
+    covariance = (gt_centered.T @ pred_centered) / pred_pts.shape[0]
+    u, singular_values, vh = np.linalg.svd(covariance)
+    correction = np.eye(3, dtype=np.float64)
+    if np.linalg.det(u @ vh) < 0:
+        correction[-1, -1] = -1.0
+    rotation = u @ correction @ vh
+    scale = float(np.sum(singular_values * np.diag(correction)) / pred_var)
+    translation = gt_center.reshape(3) - scale * (rotation @ pred_center.reshape(3))
+    aligned = scale * (pred_pts @ rotation.T) + translation
+    return aligned.astype(np.float32), scale
+
+
+def remote_pointmaps_abs_rel_sim3(gt_pts, pred_pts, valid_mask):
+    overlap = (
+        valid_mask
+        & np.isfinite(gt_pts).all(axis=-1)
+        & np.isfinite(pred_pts).all(axis=-1)
+    )
+    if not overlap.any():
+        return {
+            "abs_rel": float("nan"),
+            "l1": float("nan"),
+            "scale": float("nan"),
+        }
+
+    gt_vec = gt_pts[overlap].astype(np.float32)
+    pred_vec = pred_pts[overlap].astype(np.float32)
+    pred_aligned, sim3_scale = align_points_sim3(pred_vec.astype(np.float64), gt_vec.astype(np.float64))
+    if pred_aligned is None:
+        return {
+            "abs_rel": float("nan"),
+            "l1": float("nan"),
+            "scale": sim3_scale,
+        }
+
+    gt_t = torch.from_numpy(gt_vec).view(1, -1, 1, 3).float()
+    pred_t = torch.from_numpy(pred_aligned).view(1, -1, 1, 3).float()
+    mask_t = torch.ones((1, gt_vec.shape[0], 1), dtype=torch.bool)
+    gt_normed, norm_factor = normalize_multiple_pointclouds(
+        [gt_t], valid_masks=[mask_t], norm_mode="avg_dis", ret_factor=True
+    )
+    pred_normed = pred_t / norm_factor
+    gt_np = gt_normed[0, :, 0].numpy()
+    pred_np = pred_normed[0, :, 0].numpy()
+    err = np.linalg.norm(pred_np - gt_np, axis=-1)
+    abs_rel = float(m_rel_ae(gt=gt_np, pred=pred_np))
+    return {
+        "abs_rel": abs_rel,
+        "l1": float(np.mean(err)),
+        "scale": sim3_scale,
+    }
+
+
+def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask, gt_pts_view0=None, pred_pts_view0=None):
     overlap = (
         valid_mask
         & np.isfinite(gt_pts).all(axis=-1)
@@ -812,6 +895,11 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
             "rs_point_scale_aligned_scale": float("nan"),
             "rs_point_abs_rel": float("nan"),
             "rs_point_abs_rel_normalized": float("nan"),
+            "rs_point_abs_rel_sim3": float("nan"),
+            "rs_point_l1_sim3": float("nan"),
+            "rs_point_sim3_scale": float("nan"),
+            "rs_point_abs_rel_view0": float("nan"),
+            "rs_point_abs_rel_flattened": float("nan"),
             "rs_point_abs_rel_global": float("nan"),
             "rs_point_abs_rel_centered": float("nan"),
             "rs_point_abs_rel_scale_aligned": float("nan"),
@@ -845,9 +933,8 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
     gt_centered_norm = np.linalg.norm(gt_centered, axis=-1)
     centered_abs_rel = centered_err / np.clip(gt_centered_norm, 1e-8, None)
 
-    # Match aerial pointmaps_abs_rel for a single remote input: the remote
-    # view is its own reference view, then GT and prediction are normalized
-    # independently with the same avg_dis rule used by dense_n_view.
+    # Legacy flattened remote-only value. Keep it for audit/debugging, but do
+    # not expose it as the primary rs_point_abs_rel metric.
     gt_t = torch.from_numpy(gt_vec).view(1, -1, 1, 3).float()
     pred_t = torch.from_numpy(pred_vec).view(1, -1, 1, 3).float()
     mask_t = torch.ones((1, gt_vec.shape[0], 1), dtype=torch.bool)
@@ -861,7 +948,22 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
     gt_normed_norm = np.linalg.norm(gt_normed, axis=-1)
     normalized_abs_rel_values = normalized_err / np.clip(gt_normed_norm, 1e-8, None)
     normalized_l1 = float(np.mean(normalized_err))
-    normalized_abs_rel = float(np.mean(normalized_abs_rel_values))
+    flattened_abs_rel = float(np.mean(normalized_abs_rel_values))
+
+    if gt_pts_view0 is None:
+        gt_pts_view0 = gt_pts
+    if pred_pts_view0 is None:
+        pred_pts_view0 = pred_pts
+    view0_abs_rel = remote_pointmaps_abs_rel_view0(
+        gt_pts_view0=gt_pts_view0,
+        pred_pts_view0=pred_pts_view0,
+        valid_mask=valid_mask,
+    )
+    sim3_metrics = remote_pointmaps_abs_rel_sim3(
+        gt_pts=gt_pts,
+        pred_pts=pred_pts,
+        valid_mask=valid_mask,
+    )
 
     if denom > 1e-12:
         scale_aligned_abs_rel = scale_aligned_err / np.clip(gt_centered_norm, 1e-8, None)
@@ -872,11 +974,16 @@ def compute_remote_pointmap_metrics(gt_pts, pred_pts, valid_mask):
     return {
         "rs_point_l1": float(np.mean(point_err)),
         "rs_point_l1_normalized": normalized_l1,
+        "rs_point_l1_sim3": sim3_metrics["l1"],
         "rs_point_l1_centered": float(np.mean(centered_err)),
         "rs_point_l1_scale_aligned": scale_aligned_l1,
         "rs_point_scale_aligned_scale": scale,
-        "rs_point_abs_rel": normalized_abs_rel,
-        "rs_point_abs_rel_normalized": normalized_abs_rel,
+        "rs_point_sim3_scale": sim3_metrics["scale"],
+        "rs_point_abs_rel": sim3_metrics["abs_rel"],
+        "rs_point_abs_rel_normalized": sim3_metrics["abs_rel"],
+        "rs_point_abs_rel_sim3": sim3_metrics["abs_rel"],
+        "rs_point_abs_rel_view0": view0_abs_rel,
+        "rs_point_abs_rel_flattened": flattened_abs_rel,
         "rs_point_abs_rel_global": float(np.mean(global_abs_rel)),
         "rs_point_abs_rel_centered": float(np.mean(centered_abs_rel)),
         "rs_point_abs_rel_scale_aligned": scale_aligned_abs_rel,
@@ -913,6 +1020,30 @@ def apply_aux_point_residual_to_remote_pts(
     if not apply_z:
         corrected[..., 2] = pts[..., 2]
     return corrected[0]
+
+
+def divide_metric_scaling_if_present(pred, pts_tensor, sample_idx):
+    if "metric_scaling_factor" not in pred:
+        return pts_tensor
+    scale = pred["metric_scaling_factor"][sample_idx].to(pts_tensor).view(1, 1, 1)
+    return pts_tensor / scale
+
+
+def transform_remote_world_to_aerial_view0(gt_pointmap, camera_pose):
+    gt_pts = torch.from_numpy(gt_pointmap).unsqueeze(0).float()
+    gt_in_camera0 = inv(camera_pose.detach().cpu().float())
+    return geotrf(gt_in_camera0, gt_pts)[0].numpy()
+
+
+def transform_pred_remote_to_joint_view0(joint_preds, remote_pred_pts, sample_idx):
+    pred_camera0 = torch.eye(4, device=joint_preds[0]["cam_quats"].device).unsqueeze(0)
+    pred_camera0[..., :3, :3] = quaternion_to_rotation_matrix(
+        joint_preds[0]["cam_quats"][sample_idx : sample_idx + 1].clone()
+    )
+    pred_camera0[..., :3, 3] = joint_preds[0]["cam_trans"][sample_idx : sample_idx + 1].clone()
+    pred_in_camera0 = inv(pred_camera0).detach().cpu()
+    pred_pts = remote_pred_pts.detach().cpu().unsqueeze(0)
+    return geotrf(pred_in_camera0, pred_pts)[0].numpy()
 
 
 def get_joint_remote_metric_space_pointmaps(batch, joint_preds, remote_sample):
@@ -1286,6 +1417,11 @@ def benchmark(args):
                 )
             else:
                 rs_pts_tensor = rs_preds[0]["pts3d"][sample_idx]
+            rs_pts_tensor = divide_metric_scaling_if_present(
+                rs_preds[0],
+                rs_pts_tensor,
+                sample_idx,
+            )
             rs_pts = rs_pts_tensor.detach().cpu().numpy()
             rs_metrics = compute_remote_height_metrics_affine(
                 gt_height,
@@ -1297,6 +1433,8 @@ def benchmark(args):
                     gt_pointmap,
                     rs_pts,
                     valid_mask,
+                    gt_pts_view0=gt_pointmap,
+                    pred_pts_view0=rs_pts,
                 )
             )
             if rs_supports_metric_outputs:
@@ -1319,6 +1457,11 @@ def benchmark(args):
                 )
             else:
                 joint_rs_pts_tensor = joint_preds[len(batch)]["pts3d"][sample_idx]
+            joint_rs_pts_tensor = divide_metric_scaling_if_present(
+                joint_preds[len(batch)],
+                joint_rs_pts_tensor,
+                sample_idx,
+            )
             joint_rs_pts = joint_rs_pts_tensor.detach().cpu().numpy()
             joint_rs_metrics = compute_remote_height_metrics_affine(
                 gt_height,
@@ -1330,6 +1473,15 @@ def benchmark(args):
                     gt_pointmap,
                     joint_rs_pts,
                     valid_mask,
+                    gt_pts_view0=transform_remote_world_to_aerial_view0(
+                        gt_pointmap,
+                        batch[0]["camera_pose"][sample_idx : sample_idx + 1],
+                    ),
+                    pred_pts_view0=transform_pred_remote_to_joint_view0(
+                        joint_preds,
+                        joint_rs_pts_tensor,
+                        sample_idx,
+                    ),
                 )
             )
             if joint_supports_metric_outputs:

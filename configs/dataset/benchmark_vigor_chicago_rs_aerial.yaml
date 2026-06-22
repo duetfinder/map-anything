@@ -19,7 +19,7 @@ test_dataset_aerial:
     ROOT='${dataset.vigor_chicago_wai.val.ROOT}',
     dataset_metadata_dir='${dataset.vigor_chicago_wai.val.dataset_metadata_dir}',
     overfit_num_sets=None,
-    scene_list_path='${mapanything_dataset_metadata_dir}/Crossview_rs_aerial/val/Crossview_rs_aerial_scene_list_val.npy',
+    scene_list_path='${dataset.vigor_chicago_rs_aerial_benchmark.aerial.scene_list_path}',
     cities=${dataset.vigor_chicago_wai.val.cities},
     variable_num_views=${dataset.val.variable_num_views},
     num_views=${dataset.num_views},
@@ -41,6 +41,8 @@ test_dataset_remote:
     label_resize_mode='${dataset.vigor_chicago_rs_aerial_benchmark.remote.label_resize_mode}')"
 
 vigor_chicago_rs_aerial_benchmark:
+  aerial:
+    scene_list_path: ${mapanything_dataset_metadata_dir}/Crossview_rs_aerial/val/Crossview_rs_aerial_scene_list_val.npy
   remote:
     providers: ['Google_Satellite']
     overfit_num_sets: null

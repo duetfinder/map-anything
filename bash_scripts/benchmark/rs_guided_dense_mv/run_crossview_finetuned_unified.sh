@@ -13,6 +13,7 @@ REMOTE_OVERFIT_NUM_SETS=${REMOTE_OVERFIT_NUM_SETS:-null}
 REMOTE_CONTROL_MODES=${REMOTE_CONTROL_MODES:-[same]}
 BLANK_REMOTE_VALUE=${BLANK_REMOTE_VALUE:-0.5}
 CUDA_DEVICE=${CUDA_DEVICE:-0}
+SCENE_LIST_PATH=${SCENE_LIST_PATH:-}
 
 if [ -z "${MODEL_NAME:-}" ]; then
     echo "MODEL_NAME must be set." >&2
@@ -27,6 +28,13 @@ fi
 CHECKPOINT_ARGS=()
 if [ "${CKPT_PATH}" != "none" ]; then
     CHECKPOINT_ARGS=(checkpoint_path="${CKPT_PATH}")
+fi
+
+SCENE_LIST_ARGS=()
+if [ -n "${SCENE_LIST_PATH}" ]; then
+    SCENE_LIST_ARGS=(
+        dataset.vigor_chicago_rs_aerial_benchmark.aerial.scene_list_path="${SCENE_LIST_PATH}"
+    )
 fi
 
 if [ -z "${OUTPUT_DIR:-}" ]; then
@@ -47,6 +55,7 @@ PYTHONPATH=. CUDA_VISIBLE_DEVICES=${CUDA_DEVICE} python3 \
     dataset.num_workers=0 \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.providers=[${REMOTE_PROVIDER}] \
     dataset.vigor_chicago_rs_aerial_benchmark.remote.overfit_num_sets=${REMOTE_OVERFIT_NUM_SETS} \
+    "${SCENE_LIST_ARGS[@]}" \
     remote_control_modes="${REMOTE_CONTROL_MODES}" \
     blank_remote_value=${BLANK_REMOTE_VALUE} \
     dataset.vigor_chicago_wai.val.covisibility_thres=${COVISIBILITY_THRES} \

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the New York RS guided mini benchmark for all Crossview checkpoints."""
+"""Run Crossview RS guided benchmarks for selected Crossview checkpoints."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ TRAIN_ROOT = Path(
 )
 DEFAULT_OUT_ROOT = Path(
     "/root/autodl-tmp/outputs/mapanything_experiments/mapanything/benchmarking/"
-    "rs_guided_dense_mv/crossview_all_models_4v_n2_n8"
+    "rs_guided_dense_mv/crossview_num_views_hard20_no_p7p8"
 )
 RUNNER = "bash_scripts/benchmark/rs_guided_dense_mv/run_crossview_finetuned_unified.sh"
 RESULT_JSON = "rs_aerial_benchmark_results.json"
@@ -427,10 +427,13 @@ def run_job(
     out_root: Path,
     cuda_device: str,
     force: bool,
-    n_scenes: int | None,
+    num_views: int,
     remote_control_modes: str,
+    batch_size: int,
+    scene_list_path: Path | None,
+    max_scenes: int | None,
 ) -> dict[str, object]:
-    output_dir = out_root / f"n{n_scenes}" / job.label if n_scenes else out_root / "all" / job.label
+    output_dir = out_root / f"v{num_views}" / job.label
     result_path = output_dir / RESULT_JSON
     output_dir.mkdir(parents=True, exist_ok=True)
     if result_path.exists() and not force:
@@ -441,15 +444,18 @@ def run_job(
             "result_json": str(result_path),
             "model_name": job.model_name,
             "ckpt": job.ckpt_env,
-            "n_scenes": n_scenes,
+            "num_views": num_views,
+            "batch_size": batch_size,
+            "scene_list_path": str(scene_list_path) if scene_list_path else None,
+            "max_scenes": max_scenes,
         }
 
     env = os.environ.copy()
     env.update(
         {
-            "NUM_VIEWS": "4",
-            "BATCH_SIZE": "1",
-            "REMOTE_OVERFIT_NUM_SETS": str(n_scenes) if n_scenes else "null",
+            "NUM_VIEWS": str(num_views),
+            "BATCH_SIZE": str(batch_size),
+            "REMOTE_OVERFIT_NUM_SETS": str(max_scenes) if max_scenes else "null",
             "REMOTE_CONTROL_MODES": remote_control_modes,
             "CUDA_DEVICE": cuda_device,
             "MODEL_NAME": job.model_name,
@@ -457,6 +463,8 @@ def run_job(
             "OUTPUT_DIR": str(output_dir),
         }
     )
+    if scene_list_path:
+        env["SCENE_LIST_PATH"] = str(scene_list_path)
     cmd = ["bash", RUNNER, *job.args]
     started = time.time()
     log_path = output_dir / "codex_run.log"
@@ -465,7 +473,7 @@ def run_job(
         log_file.write(json.dumps({k: env[k] for k in sorted(env) if k in {
             "NUM_VIEWS", "BATCH_SIZE", "REMOTE_OVERFIT_NUM_SETS",
             "REMOTE_CONTROL_MODES", "CUDA_DEVICE", "MODEL_NAME",
-            "CKPT_PATH", "OUTPUT_DIR",
+            "CKPT_PATH", "OUTPUT_DIR", "SCENE_LIST_PATH",
         }}, indent=2) + "\n")
         log_file.flush()
         proc = subprocess.run(
@@ -487,7 +495,10 @@ def run_job(
         "log": str(log_path),
         "model_name": job.model_name,
         "ckpt": job.ckpt_env,
-        "n_scenes": n_scenes,
+        "num_views": num_views,
+        "batch_size": batch_size,
+        "scene_list_path": str(scene_list_path) if scene_list_path else None,
+        "max_scenes": max_scenes,
     }
 
 
@@ -501,14 +512,32 @@ def main() -> int:
         help="Comma-separated devices for parallel execution, e.g. 0,1. Overrides --cuda-device.",
     )
     parser.add_argument("--workers", type=int, default=None)
-    parser.add_argument("--n-scenes", type=int, nargs="+", default=[2, 8])
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--num-views", type=int, nargs="+", default=[2, 4, 8, 16, 32])
+    parser.add_argument(
+        "--scene-list-path",
+        type=Path,
+        default=None,
+        help="Optional .npy scene list. Use this for fixed-scene NUM_VIEWS sweeps.",
+    )
+    parser.add_argument(
+        "--max-scenes",
+        type=int,
+        default=None,
+        help="Optional remote overfit/truncation count. Leave unset with fixed scene lists.",
+    )
     parser.add_argument("--remote-control-modes", default="none")
     parser.add_argument("--skip-missing", action="store_true")
     parser.add_argument("--discover-checkpoints", action="store_true")
     parser.add_argument(
         "--exclude-patterns",
-        default="debug,smoke,overfit,probe",
+        default="debug,smoke,overfit,probe,p7,p8",
         help="Comma-separated lowercase substrings excluded by --discover-checkpoints.",
+    )
+    parser.add_argument(
+        "--exclude-label-patterns",
+        default="p7,p8",
+        help="Comma-separated lowercase substrings excluded from registered/discovered job labels and checkpoint paths.",
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument(
@@ -529,9 +558,25 @@ def main() -> int:
         discovered_jobs = discover_checkpoint_jobs(JOBS, exclude_patterns)
         selected_jobs = [*selected_jobs, *discovered_jobs]
         print(f"Discovered {len(discovered_jobs)} additional checkpoint jobs.")
+    exclude_label_patterns = [
+        item.strip().lower()
+        for item in args.exclude_label_patterns.split(",")
+        if item.strip()
+    ]
+    if exclude_label_patterns:
+        before = len(selected_jobs)
+        selected_jobs = [
+            job
+            for job in selected_jobs
+            if not any(
+                pattern in job.label.lower() or pattern in job.ckpt.lower()
+                for pattern in exclude_label_patterns
+            )
+        ]
+        print(f"Excluded {before - len(selected_jobs)} jobs by label/path patterns: {exclude_label_patterns}")
     if args.only:
         requested = set(args.only)
-        selected_jobs = [job for job in JOBS if job.label in requested]
+        selected_jobs = [job for job in selected_jobs if job.label in requested]
         missing_labels = requested - {job.label for job in selected_jobs}
         if missing_labels:
             print("Unknown job labels:", file=sys.stderr)
@@ -542,12 +587,8 @@ def main() -> int:
     missing = []
     for job in selected_jobs:
         result_paths = [
-            (
-                args.out_root / f"n{n_scenes}" / job.label / RESULT_JSON
-                if n_scenes
-                else args.out_root / "all" / job.label / RESULT_JSON
-            )
-            for n_scenes in args.n_scenes
+            args.out_root / f"v{num_views}" / job.label / RESULT_JSON
+            for num_views in args.num_views
         ]
         if all(path.exists() for path in result_paths) and not args.force:
             continue
@@ -564,6 +605,9 @@ def main() -> int:
             return 2
 
     args.out_root.mkdir(parents=True, exist_ok=True)
+    if args.scene_list_path and not args.scene_list_path.exists():
+        print(f"Scene list does not exist: {args.scene_list_path}", file=sys.stderr)
+        return 2
     summary_path = args.out_root / "run_summary.jsonl"
     cuda_devices = (
         [dev.strip() for dev in args.cuda_devices.split(",") if dev.strip()]
@@ -572,19 +616,21 @@ def main() -> int:
     )
     workers = args.workers or len(cuda_devices)
     tasks = [
-        (n_scenes, job)
-        for n_scenes in args.n_scenes
+        (num_views, job)
+        for num_views in args.num_views
         for job in selected_jobs
     ]
     print(
-        f"Running {len(tasks)} tasks ({len(selected_jobs)} jobs x {len(args.n_scenes)} n_scenes). "
-        f"Output: {args.out_root}. Devices: {','.join(cuda_devices)}. Workers: {workers}"
+        f"Running {len(tasks)} tasks ({len(selected_jobs)} jobs x {len(args.num_views)} num_views). "
+        f"Output: {args.out_root}. Devices: {','.join(cuda_devices)}. "
+        f"Workers: {workers}. Batch size: {args.batch_size}. "
+        f"Scene list: {args.scene_list_path or 'default'}"
     )
     with summary_path.open("a", encoding="utf-8") as summary:
-        def submit_task(task_idx: int, n_scenes: int, job: Job) -> dict[str, object]:
+        def submit_task(task_idx: int, num_views: int, job: Job) -> dict[str, object]:
             cuda_device = cuda_devices[(task_idx - 1) % len(cuda_devices)]
             print(
-                f"[{task_idx}/{len(tasks)}] n={n_scenes} {job.label} on cuda:{cuda_device}",
+                f"[{task_idx}/{len(tasks)}] views={num_views} {job.label} on cuda:{cuda_device}",
                 flush=True,
             )
             return run_job(
@@ -592,30 +638,33 @@ def main() -> int:
                 args.out_root,
                 cuda_device,
                 args.force,
-                n_scenes,
+                num_views,
                 args.remote_control_modes,
+                args.batch_size,
+                args.scene_list_path,
+                args.max_scenes,
             )
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_task = {
-                executor.submit(submit_task, idx, n_scenes, job): (idx, n_scenes, job)
-                for idx, (n_scenes, job) in enumerate(tasks, 1)
+                executor.submit(submit_task, idx, num_views, job): (idx, num_views, job)
+                for idx, (num_views, job) in enumerate(tasks, 1)
             }
             for future in as_completed(future_to_task):
-                _, n_scenes, job = future_to_task[future]
+                _, num_views, job = future_to_task[future]
                 try:
                     record = future.result()
                 except Exception as exc:
                     record = {
                         "label": job.label,
-                        "n_scenes": n_scenes,
+                        "num_views": num_views,
                         "status": "failed_exception",
                         "error": str(exc),
                     }
                 summary.write(json.dumps(record, ensure_ascii=False) + "\n")
                 summary.flush()
                 print(
-                    f"  -> n={record.get('n_scenes')} {record['label']} "
+                    f"  -> views={record.get('num_views')} {record['label']} "
                     f"{record['status']} ({record.get('seconds', 0)}s)",
                     flush=True,
                 )
